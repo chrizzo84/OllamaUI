@@ -1,17 +1,15 @@
 import { NextRequest } from 'next/server';
-import { getEnv } from '@/lib/env';
+import { resolveOllamaHost } from '@/lib/env';
 
 export const runtime = 'edge';
 
 // Ollama default list models endpoint: GET /api/tags
 // We proxy to avoid CORS / client network exposure and to allow future auth.
 
-const { OLLAMA_HOST: OLLAMA_BASE } = getEnv();
-
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
-    // Potential future use for auth / logging: req.headers.get('authorization')
-    const res = await fetch(`${OLLAMA_BASE}/api/tags`, {
+    const base = resolveOllamaHost(req);
+    const res = await fetch(`${base}/api/tags`, {
       method: 'GET',
       headers: { Accept: 'application/json' },
       // Edge fetch: ensure no caching stale data
