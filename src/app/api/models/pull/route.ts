@@ -1,8 +1,7 @@
 import { NextRequest } from 'next/server';
-import { getEnv } from '@/lib/env';
+import { resolveOllamaHost } from '@/lib/env';
 
 export const runtime = 'edge';
-const { OLLAMA_HOST: OLLAMA_BASE } = getEnv();
 
 export async function POST(req: NextRequest) {
   try {
@@ -12,7 +11,8 @@ export async function POST(req: NextRequest) {
       return new Response(JSON.stringify({ error: 'Missing model name' }), { status: 400 });
     }
 
-    const upstream = await fetch(`${OLLAMA_BASE}/api/pull`, {
+    const base = resolveOllamaHost(req);
+    const upstream = await fetch(`${base}/api/pull`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ model }),
