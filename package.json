@@ -11,6 +11,7 @@
     "prepare": "husky"
   },
   "dependencies": {
+    "ajv": "^8.17.1",
     "@hookform/resolvers": "^5.2.1",
     "@tanstack/react-query": "^5.84.1",
     "clsx": "^2.1.1",

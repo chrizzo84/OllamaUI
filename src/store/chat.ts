@@ -16,6 +16,7 @@ interface ChatState {
   append(msg: Omit<ChatMessage, 'id' | 'createdAt'>): string; // returns new id
   update(id: string, patch: Partial<Pick<ChatMessage, 'content' | 'role' | 'raw'>>): void;
   clear(): void;
+  restore(messages: ChatMessage[]): void; // replace full history (used for undo)
 }
 
 export const useChatStore = create<ChatState>((set) => ({
@@ -32,4 +33,5 @@ export const useChatStore = create<ChatState>((set) => ({
       messages: s.messages.map((m) => (m.id === id ? { ...m, ...patch } : m)),
     })),
   clear: () => set({ messages: [] }),
+  restore: (messages: ChatMessage[]) => set({ messages: messages.slice(-500) }),
 }));
