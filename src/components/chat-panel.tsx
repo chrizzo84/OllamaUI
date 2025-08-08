@@ -1,6 +1,7 @@
 'use client';
 import { useState, useRef, useEffect } from 'react';
 import { useChatStore } from '@/store/chat';
+import { useSystemPromptStore, LamaProfile } from '@/store/system-prompt';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Button } from './ui/button';
@@ -22,6 +23,35 @@ async function fetchModels(): Promise<TagsResponse> {
 export function ChatPanel() {
   const { data } = useQuery({ queryKey: ['ollama-model-tags'], queryFn: fetchModels });
   const [model, setModel] = useState<string>('');
+  const lamaState = useSystemPromptStore((s) => s);
+  const {
+    currentId,
+    profiles,
+    setCurrent,
+    create,
+    updatePrompt,
+    remove,
+    duplicate,
+    resetPrompt,
+    setTags,
+    importProfiles,
+    exportProfiles,
+  } = lamaState;
+  const activeProfile: LamaProfile | undefined = profiles.find(
+    (p: LamaProfile) => p.id === currentId,
+  );
+  const activePrompt = activeProfile?.prompt || '';
+  const [showSys, setShowSys] = useState(false);
+  const [lamaDeleteConfirm, setLamaDeleteConfirm] = useState<string | null>(null);
+  const [editingName, setEditingName] = useState(false);
+  const [lamaSearch, setLamaSearch] = useState('');
+  const [tagEdit, setTagEdit] = useState('');
+  const [showDebug, setShowDebug] = useState(false);
+  interface SentPayload {
+    model: string;
+    messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>;
+  }
+  const [lastPayload, setLastPayload] = useState<SentPayload | null>(null);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [coldStart, setColdStart] = useState(false);
@@ -31,6 +61,13 @@ export function ChatPanel() {
   const [expandedThinkIds, setExpandedThinkIds] = useState<Set<string>>(new Set());
   const append = useChatStore((s) => s.append);
   const update = useChatStore((s) => s.update);
+  const clear = useChatStore((s) => s.clear);
+  const restore = useChatStore(
+    (s) => (s as unknown as { restore: (m: typeof messages) => void }).restore,
+  );
+  const [pendingConfirm, setPendingConfirm] = useState(false);
+  const [lastSnapshot, setLastSnapshot] = useState<typeof messages | null>(null);
+  const [undoTimeoutId, setUndoTimeoutId] = useState<ReturnType<typeof setTimeout> | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -58,6 +95,15 @@ export function ChatPanel() {
     }
   }
 
+  // ensure at least one profile exists for convenience
+  useEffect(() => {
+    if (profiles.length === 0) {
+      create({ name: 'Standard', prompt: '' });
+    } else if (!currentId) {
+      setCurrent(profiles[0].id);
+    }
+  }, [profiles, currentId, create, setCurrent]);
+
   async function send() {
     if (!input.trim() || !model) return;
     const userContent = input.trim();
@@ -73,14 +119,19 @@ export function ChatPanel() {
     setLoading(true);
     try {
       const current = useChatStore.getState().messages; // fresh state
-      const upstreamMessages = current
-        .filter((m) => m.role !== 'assistant' || m.content) // skip empty assistant placeholders
-        .map((m) => ({ role: m.role, content: m.content }));
+      const upstreamMessages = [
+        ...(activePrompt.trim() ? [{ role: 'system' as const, content: activePrompt.trim() }] : []),
+        ...current
+          .filter((m) => m.role !== 'assistant' || m.content) // skip empty assistant placeholders
+          .map((m) => ({ role: m.role, content: m.content })),
+      ];
       // last user already included
+      const payload = { model, messages: upstreamMessages };
+      setLastPayload(payload);
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model, messages: upstreamMessages }),
+        body: JSON.stringify(payload),
       });
       if (!res.body) throw new Error('No body');
       const reader = res.body.getReader();
@@ -166,7 +217,241 @@ export function ChatPanel() {
             <span>Modell wird geladen… {coldElapsed}s</span>
           </div>
         )}
+        <button
+          type="button"
+          onClick={() => setShowSys((v) => !v)}
+          className="text-[10px] uppercase tracking-wide text-white/50 hover:text-white/80 transition underline-offset-2 hover:underline"
+        >
+          {showSys ? 'System-Prompt verbergen' : 'System-Prompt anzeigen'}
+        </button>
+        {activePrompt.trim() && (
+          <span className="text-[10px] px-2 py-0.5 rounded bg-indigo-500/20 border border-indigo-500/30 text-indigo-200/80 self-start">
+            Lama aktiv
+          </span>
+        )}
+        <button
+          type="button"
+          onClick={() => setShowDebug((v) => !v)}
+          className="text-[10px] ml-auto px-2 py-0.5 rounded border border-white/10 hover:border-white/20 bg-white/5 text-white/50 hover:text-white/80 transition"
+        >
+          {showDebug ? 'Debug aus' : 'Debug an'}
+        </button>
       </div>
+      {model && /(^|[^0-9])1b([^0-9]|$)/i.test(model) && (
+        <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-200/80">
+          Hinweis: Dieses ausgewählte 1B‑Modell beachtet System-Prompts häufig nur teilweise oder
+          gar nicht. Für verlässlichere Einhaltung bitte ein Modell ≥ 7B wählen.
+        </div>
+      )}
+      {showSys && (
+        <div className="rounded-md border border-indigo-500/30 bg-indigo-500/5 p-3 flex flex-col gap-3">
+          <div className="flex flex-wrap gap-2 items-center">
+            <span className="text-[11px] font-medium text-indigo-200/80">Lamas</span>
+            <input
+              value={lamaSearch}
+              onChange={(e) => setLamaSearch(e.target.value)}
+              placeholder="Suchen..."
+              className="text-xs bg-white/10 border border-white/15 rounded px-2 py-1 text-white focus:outline-none"
+            />
+            <select
+              value={currentId || ''}
+              onChange={(e) => setCurrent(e.target.value || null)}
+              className="text-xs bg-white/10 border border-white/15 rounded px-2 py-1 text-white focus:outline-none"
+            >
+              {profiles
+                .filter((p: LamaProfile) => {
+                  if (!lamaSearch.trim()) return true;
+                  const q = lamaSearch.toLowerCase();
+                  return (
+                    p.name.toLowerCase().includes(q) ||
+                    (p.tags || []).some((t) => t.toLowerCase().includes(q))
+                  );
+                })
+                .map((p: LamaProfile) => (
+                  <option key={p.id} value={p.id} className="bg-neutral-900">
+                    {p.name}
+                  </option>
+                ))}
+            </select>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                const id = create({ name: 'Neu', prompt: '' });
+                setCurrent(id);
+                setEditingName(true);
+              }}
+            >
+              + Neu
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                const data = exportProfiles();
+                const blob = new Blob([JSON.stringify(data, null, 2)], {
+                  type: 'application/json',
+                });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'lamas.json';
+                a.click();
+                URL.revokeObjectURL(url);
+              }}
+            >
+              Export
+            </Button>
+            <label className="text-[10px] px-2 py-1 rounded border border-white/15 bg-white/10 cursor-pointer hover:bg-white/20 transition">
+              <input
+                type="file"
+                accept="application/json"
+                className="hidden"
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  try {
+                    const txt = await file.text();
+                    const json = JSON.parse(txt);
+                    type ImportLike = {
+                      id?: string;
+                      name?: string;
+                      prompt?: string;
+                      tags?: unknown;
+                      updatedAt?: number;
+                    };
+                    const normalize = (arr: unknown[]): ImportLike[] =>
+                      arr.filter((x): x is ImportLike => !!x && typeof x === 'object');
+                    const adapt = (arr: ImportLike[]) =>
+                      arr.map((o) => ({
+                        name: o.name || 'Import',
+                        prompt: o.prompt || '',
+                        tags: Array.isArray(o.tags)
+                          ? o.tags.filter((t) => typeof t === 'string').slice(0, 20)
+                          : [],
+                      }));
+                    if (Array.isArray(json)) {
+                      importProfiles(adapt(normalize(json)));
+                    } else if (
+                      typeof json === 'object' &&
+                      json &&
+                      Array.isArray((json as { profiles?: unknown }).profiles)
+                    ) {
+                      importProfiles(adapt(normalize((json as { profiles: unknown[] }).profiles)));
+                    }
+                  } catch {
+                    /* ignore */
+                  }
+                  e.target.value = '';
+                }}
+              />
+              Import
+            </label>
+            {currentId && (
+              <Button size="sm" variant="outline" onClick={() => duplicate(currentId)}>
+                Duplizieren
+              </Button>
+            )}
+            {currentId && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  if (lamaDeleteConfirm === currentId) {
+                    remove(currentId);
+                    setLamaDeleteConfirm(null);
+                  } else {
+                    setLamaDeleteConfirm(currentId);
+                    setTimeout(() => setLamaDeleteConfirm(null), 4000);
+                  }
+                }}
+              >
+                {lamaDeleteConfirm === currentId ? 'Sicher?' : 'Löschen'}
+              </Button>
+            )}
+            {currentId && activePrompt && (
+              <Button size="sm" variant="outline" onClick={() => resetPrompt(currentId)}>
+                Prompt leeren
+              </Button>
+            )}
+          </div>
+          {activeProfile && (
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center gap-2">
+                {editingName ? (
+                  <input
+                    value={activeProfile.name}
+                    onChange={(e) => updatePrompt(activeProfile.id, { name: e.target.value })}
+                    onBlur={() => setEditingName(false)}
+                    className="text-xs bg-white/10 border border-white/15 rounded px-2 py-1 text-white focus:outline-none"
+                    autoFocus
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setEditingName(true)}
+                    className="text-left text-xs font-medium text-indigo-100 hover:underline"
+                    title="Namen bearbeiten"
+                  >
+                    {activeProfile.name}
+                  </button>
+                )}
+                <span className="text-[10px] text-white/30">
+                  {new Date(activeProfile.updatedAt).toLocaleTimeString()}
+                </span>
+              </div>
+              <textarea
+                value={activePrompt}
+                onChange={(e) => updatePrompt(activeProfile.id, { prompt: e.target.value })}
+                placeholder="System-Anweisung für dieses Lama..."
+                className="min-h-[90px] rounded-md border border-white/15 bg-white/10 px-2 py-2 text-xs text-white placeholder:text-white/30 focus:outline-none focus:ring-2 focus:ring-indigo-500/60"
+              />
+              <input
+                value={tagEdit}
+                onChange={(e) => setTagEdit(e.target.value)}
+                onBlur={() => {
+                  const tags = tagEdit
+                    .split(',')
+                    .map((t) => t.trim())
+                    .filter(Boolean)
+                    .slice(0, 10);
+                  setTags(activeProfile.id, tags);
+                }}
+                placeholder="Tags (kommagetrennt)"
+                className="text-xs bg-white/10 border border-white/15 rounded px-2 py-1 text-white focus:outline-none"
+              />
+              {activeProfile.tags && activeProfile.tags.length > 0 && (
+                <div className="flex flex-wrap gap-1">
+                  {activeProfile.tags.map((t) => (
+                    <span
+                      key={t}
+                      className="text-[10px] px-2 py-0.5 rounded bg-white/10 border border-white/15 text-white/70"
+                    >
+                      {t}
+                    </span>
+                  ))}
+                </div>
+              )}
+              <div className="text-[10px] text-white/40 flex justify-between">
+                <span>{activePrompt.trim().length} Zeichen</span>
+                {activePrompt && <span>wird jeder Anfrage vorangestellt</span>}
+              </div>
+              {activePrompt.trim().length > 8000 && (
+                <div className="text-[10px] text-amber-300/80 bg-amber-500/10 border border-amber-500/30 rounded px-2 py-1">
+                  Warnung: Sehr langer Prompt – Risiko von Token- / Kontext-Trunkierung.
+                </div>
+              )}
+            </div>
+          )}
+          {!activeProfile && <div className="text-[11px] text-white/40">Kein Lama ausgewählt.</div>}
+        </div>
+      )}
+      {showDebug && lastPayload && (
+        <div className="rounded-md border border-pink-500/30 bg-pink-500/5 p-3 text-[11px] font-mono whitespace-pre-wrap max-h-40 overflow-auto">
+          <div className="mb-1 text-pink-200/70">Letzter gesendeter Payload:</div>
+          {JSON.stringify(lastPayload, null, 2)}
+        </div>
+      )}
       <div
         ref={containerRef}
         className="h-72 overflow-auto rounded-md bg-black/30 p-3 text-sm space-y-3"
@@ -245,6 +530,51 @@ export function ChatPanel() {
           >
             Senden
           </Button>
+          {!pendingConfirm && (
+            <Button
+              onClick={() => setPendingConfirm(true)}
+              size="sm"
+              variant="secondary"
+              disabled={loading || messages.length === 0}
+            >
+              Verlauf löschen
+            </Button>
+          )}
+          {pendingConfirm && (
+            <div className="flex items-center gap-2 text-[11px]">
+              <span className="text-white/50">Sicher?</span>
+              <Button
+                size="sm"
+                variant="danger"
+                onClick={() => {
+                  setPendingConfirm(false);
+                  setLastSnapshot(messages);
+                  clear();
+                  if (undoTimeoutId) clearTimeout(undoTimeoutId);
+                  const id = setTimeout(() => setLastSnapshot(null), 8000);
+                  setUndoTimeoutId(id);
+                }}
+              >
+                Ja
+              </Button>
+              <Button size="sm" variant="secondary" onClick={() => setPendingConfirm(false)}>
+                Nein
+              </Button>
+            </div>
+          )}
+          {lastSnapshot && !pendingConfirm && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                restore(lastSnapshot);
+                setLastSnapshot(null);
+                if (undoTimeoutId) clearTimeout(undoTimeoutId);
+              }}
+            >
+              Undo
+            </Button>
+          )}
         </div>
       </div>
     </div>
