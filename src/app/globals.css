@@ -1,15 +1,13 @@
-@import "tailwindcss";
+@import 'tailwindcss';
 
 :root {
   --background: #ffffff;
   --foreground: #171717;
-}
-
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --accent: #6366f1; /* indigo-500 */
+  --accent-glow: 99 102 241; /* rgb triplet for alpha usage */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 16px;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -22,5 +20,43 @@
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family:
+    var(--font-geist-sans),
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont;
+}
+
+/* Fancy focus outline fallback */
+:focus-visible {
+  outline: 2px solid rgba(var(--accent-glow) / 0.8);
+  outline-offset: 2px;
+}
+
+/* Scrollbar styling (WebKit) */
+*::-webkit-scrollbar {
+  width: 10px;
+}
+*::-webkit-scrollbar-track {
+  background: #0f121a;
+}
+*::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #6366f1, #a855f7, #ec4899);
+  border-radius: 999px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  filter: brightness(1.1);
+}
+
+::selection {
+  background: #6366f1aa;
+  color: #fff;
+}
+
+/* Container helper (use as composed utility classes in markup) */
+.container-fluid {
+  max-width: 1600px;
+  margin-inline: auto;
+  padding-inline: clamp(1.5rem, 2.5vw, 3rem);
 }
