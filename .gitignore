@@ -39,3 +39,44 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# logs & diagnostics
+logs
+*.log
+*.log.*
+*.pid
+*.seed
+*.pid.lock
+report.*.json
+
+# core dumps
+core
+*.stackdump
+
+# editor
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+
+# local env overrides
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# pnpm store (global can appear if misconfigured)
+.pnpm-store
+
+# storybook / build caches (if added later)
+storybook-static
+.storybook-out
+
+# playwright / test artifacts
+test-results/
+playwright-report/
+blob-report/
+
+# husky temp
+.husky/_/*.sh
+
