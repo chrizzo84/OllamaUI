@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from 'next/font/google';
 import './globals.css';
 import { AppQueryProvider } from '@/components/query-provider';
 import Link from 'next/link';
+import { SiteNav } from '@/components/site-nav';
 import { Toaster } from '@/components/toaster';
 
 const geistSans = Geist({
@@ -22,6 +23,11 @@ export const metadata: Metadata = {
   },
   description: 'A fancy & cool desktop-first interface.',
   metadataBase: new URL('https://example.com'),
+  icons: {
+    icon: '/ollama-ui.ico',
+    shortcut: '/ollama-ui.ico',
+    apple: '/ollama-ui.ico',
+  },
   openGraph: {
     title: 'Ollama UI',
     description: 'A fancy & cool desktop-first interface.',
@@ -49,17 +55,14 @@ export default function RootLayout({
           <div className="mx-auto flex min-h-screen w-full max-w-7xl flex-col">
             <header className="sticky top-0 z-40 backdrop-blur supports-[backdrop-filter]:bg-white/5 border-b border-white/10 bg-white/5">
               <div className="flex h-14 items-center gap-6 px-6">
-                <Link href="/" className="font-bold tracking-tight text-white/90 hover:text-white">
-                  Ollama UI
+                <Link
+                  href="/"
+                  className="flex items-center gap-2 font-semibold tracking-tight text-white/90 hover:text-white"
+                >
+                  <img src="/ollama-ui.ico" alt="Logo" className="h-6 w-6" />
+                  <span>Ollama UI</span>
                 </Link>
-                <nav className="flex items-center gap-4 text-sm text-white/60">
-                  <Link href="/models" className="hover:text-white transition-colors">
-                    Modelle
-                  </Link>
-                </nav>
-                <div className="ml-auto text-[10px] uppercase tracking-wider text-white/30 hidden md:block">
-                  Desktop Prototype
-                </div>
+                <SiteNav />
               </div>
             </header>
             <main className="flex-1">{children}</main>
