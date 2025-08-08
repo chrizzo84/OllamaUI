@@ -24,6 +24,9 @@ export function ChatPanel() {
   const [model, setModel] = useState<string>('');
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
+  const [coldStart, setColdStart] = useState(false);
+  const [coldStartSince, setColdStartSince] = useState<number | null>(null);
+  const [coldElapsed, setColdElapsed] = useState(0);
   const messages = useChatStore((s) => s.messages);
   const [expandedThinkIds, setExpandedThinkIds] = useState<Set<string>>(new Set());
   const append = useChatStore((s) => s.append);
@@ -35,12 +38,38 @@ export function ChatPanel() {
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages]);
 
+  useEffect(() => {
+    if (!coldStart || !coldStartSince) return;
+    const id = setInterval(() => {
+      setColdElapsed(Math.floor((Date.now() - coldStartSince) / 1000));
+    }, 500);
+    return () => clearInterval(id);
+  }, [coldStart, coldStartSince]);
+
+  async function isModelLoaded(target: string): Promise<boolean> {
+    try {
+      const r = await fetch('/api/ps', { cache: 'no-store' });
+      if (!r.ok) return true;
+      const j = (await r.json()) as { models?: Array<{ name?: string; model?: string }> };
+      if (!j.models) return true;
+      return j.models.some((m) => m.name === target || m.model === target.split(':')[0]);
+    } catch {
+      return true;
+    }
+  }
+
   async function send() {
     if (!input.trim() || !model) return;
     const userContent = input.trim();
     setInput('');
     append({ role: 'user', content: userContent, model });
     const assistantId = append({ role: 'assistant', content: '', model });
+    const loaded = await isModelLoaded(model);
+    if (!loaded) {
+      setColdStart(true);
+      setColdStartSince(Date.now());
+      setColdElapsed(0);
+    }
     setLoading(true);
     try {
       const current = useChatStore.getState().messages; // fresh state
@@ -68,6 +97,7 @@ export function ChatPanel() {
             const obj = JSON.parse(line);
             if (typeof obj.token === 'string') {
               assistantRaw += obj.token;
+              if (coldStart) setColdStart(false);
             } else if (obj.done && typeof obj.content === 'string') {
               assistantRaw = obj.content; // final cumulative
             } else if (obj.error) {
@@ -99,6 +129,7 @@ export function ChatPanel() {
       update(assistantId, { content: '[Fehler beim Chat]' });
     } finally {
       setLoading(false);
+      setColdStart(false);
     }
   }
 
@@ -126,6 +157,15 @@ export function ChatPanel() {
             </option>
           ))}
         </select>
+        {coldStart && (
+          <div className="flex items-center gap-2 text-[11px] text-white/60">
+            <span className="relative flex h-2 w-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-indigo-300"></span>
+            </span>
+            <span>Modell wird geladen… {coldElapsed}s</span>
+          </div>
+        )}
       </div>
       <div
         ref={containerRef}
