@@ -1,6 +1,7 @@
 'use client';
 import { Button } from '@/components/ui/button';
 import { StreamDemo } from '@/components/stream-demo';
+import { ChatPanel } from '@/components/chat-panel';
 import { motion } from 'framer-motion';
 
 export default function Home() {
@@ -48,8 +49,9 @@ export default function Home() {
             }}
           />
         </motion.div>
-        <div className="mt-4">
+        <div className="grid gap-8 md:grid-cols-2 mt-4">
           <StreamDemo />
+          <ChatPanel />
         </div>
       </section>
       <footer className="mt-auto flex items-center justify-between border-t border-white/10 pt-6 text-xs text-white/40">
