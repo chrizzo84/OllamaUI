@@ -18,6 +18,11 @@ jobs:
       run:
         working-directory: ollama-ui
     steps:
+      - name: Install pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 8
+          
       - name: Checkout
         uses: actions/checkout@v4
 
