@@ -293,7 +293,7 @@ export default function ModelsPage() {
           <div className="flex items-center gap-3">
             <div className="h-2 flex-1 overflow-hidden rounded bg-white/10">
               <div
-                className="h-full bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 transition-all"
+                className="h-full bg-gradient-to-r from-slate-500 via-slate-600 to-blue-900 transition-all"
                 style={{ width: `${Math.min(progress, 100)}%` }}
               />
             </div>
