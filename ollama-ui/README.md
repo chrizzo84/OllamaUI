@@ -34,3 +34,21 @@ You can check out [the Next.js GitHub repository](https://github.com/vercel/next
 The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+
+## Model Catalog Scraper (Monorepo Root)
+
+A standalone Python scraper lives at the repository root in the `Scraper/` directory (outside this `ollama-ui/` app). It asynchronously crawls the public Ollama model pages and exports structured JSON (slugs, name, pulls, capabilities, description, and variant table: tag, size, context, input tokens).
+
+Quick usage (from repo root):
+
+```bash
+cd Scraper
+python -m venv .venv && source .venv/bin/activate  # first time
+pip install -r requirements.txt
+python ollama_scraper.py --limit 10  # scrape first 10 models
+python ollama_scraper.py              # full scrape
+```
+
+Outputs: `out/models.json` (timestamp + array of model objects). Re-run to refresh; file is overwritten.
+
+The previous nested `ollama-ui/Scraper/` copy was removed after relocation.
