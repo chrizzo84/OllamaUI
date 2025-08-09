@@ -192,7 +192,7 @@ export function ChatPanel() {
   }
 
   return (
-    <div className="rounded-xl border border-white/10 bg-white/5 p-6 flex flex-col gap-4">
+    <div className="rounded-xl border border-white/10 bg-white/5 p-6 flex flex-col gap-4 flex-1 min-h-0 overflow-hidden">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
         <select
           value={model}
@@ -454,7 +454,7 @@ export function ChatPanel() {
       )}
       <div
         ref={containerRef}
-        className="h-72 overflow-auto rounded-md bg-black/30 p-3 text-sm space-y-3"
+        className="flex-1 min-h-0 overflow-auto rounded-md bg-black/30 p-3 text-sm space-y-3"
       >
         {messages.length === 0 && (
           <div className="text-white/40 text-xs">Noch keine Nachrichten.</div>
