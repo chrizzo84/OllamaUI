@@ -1,26 +1,54 @@
-<h1 align="center">Ollama UI</h1>
 
-Modern, reactive web interface for exploring Ollama models, browsing a scraped public catalog, pulling variants with streaming progress, and managing locally installed models.
+
+
+<details>
+<summary><strong>⚡️ Disclaimer: Vibe Coding & Copilot ⚡️</strong></summary>
+
+<p align="center">
+<em>
+🚀 This app was created exclusively through <strong>Vibe Coding</strong> – basically just as a test of GPT-5 via GitHub Copilot.<br>
+🤖 The code is more or less unreviewed, spontaneous, and full of AI magic.<br>
+🐛 If you find bugs, feel free to keep them or just continue developing with the vibe.<br>
+<br>
+<strong>⚠️ Use at your own risk – but with maximum fun! 🎉</strong>
+</em>
+</p>
+</details>
+
+
+<p align="center">
+  <img src="./ollama-ui/public/ollama-ui.ico" alt="Ollama UI Icon" width="80" />
+</p>
+
+<h1 align="center">🦙 Ollama UI 🦙</h1>
+
+
+<p align="center">
+  <b>Modern, reactive web interface for exploring Ollama models, browsing a scraped public catalog, pulling variants with streaming progress, and managing locally installed models.</b>
+</p>
 
 ---
 
-## 1. Features
 
-- Browse locally installed Ollama models (name, size, digest, modified date)
-- Pull / re-pull models (streamed NDJSON progress with derived percentage)
-- Delete installed models
-- Searchable remote model catalog (slug, name & capabilities filtering)
-- Expandable variant lists with size info and one‑click pull
-- Global pull lock (avoids concurrent overwriting / race conditions)
-- Host configuration (cookie + header + env fallback resolution)
-- Consistent gradient UI theme + custom scrollbars
-- Toast notifications (success / error / info)
-- Lightweight state management with Zustand & React Query caching
-- Python scraper (separate directory) to periodically refresh the catalog JSON
+## 1. Features ✨
+
+
+- 🦙 Browse locally installed Ollama models (name, size, digest, modified date)
+- ⏬ Pull / re-pull models (streamed NDJSON progress with derived percentage)
+- 🗑️ Delete installed models
+- 🌎 Searchable remote model catalog (slug, name & capabilities filtering)
+- 🧩 Expandable variant lists with size info and one‑click pull
+- 🔒 Global pull lock (avoids concurrent overwriting / race conditions)
+- 🏠 Host configuration (cookie + header + env fallback resolution)
+- 🎨 Consistent gradient UI theme + custom scrollbars
+- 🔔 Toast notifications (success / error / info)
+- ⚡️ Lightweight state management with Zustand & React Query caching
+- 🐍 Python scraper (separate directory) to periodically refresh the catalog JSON
 
 ---
 
-## 2. Repository Layout
+
+## 2. Repository Layout 🗂️
 
 ```
 ollama-ui/        # Next.js (App Router) application
@@ -35,7 +63,8 @@ You run / build only inside `ollama-ui/`. The Python scraper is optional and onl
 
 ---
 
-## 3. Prerequisites
+
+## 3. Prerequisites 🛠️
 
 - Node.js 18.18+ or 20+ (recommended LTS)
 - pnpm (preferred) OR npm / yarn / bun
@@ -44,7 +73,8 @@ You run / build only inside `ollama-ui/`. The Python scraper is optional and onl
 
 ---
 
-## 4. Quick Start (UI Only)
+
+## 4. Quick Start (UI Only) 🚦
 
 ```bash
 cd ollama-ui
@@ -58,7 +88,8 @@ If you already have an Ollama instance running locally at the default fallback (
 
 ---
 
-## 5. Host Resolution Logic
+
+## 5. Host Resolution Logic 🌐
 
 Order of precedence (first valid wins):
 1. Request header: `x-ollama-host`
@@ -87,7 +118,8 @@ curl -H "x-ollama-host: http://other-host:11434" http://localhost:3000/api/model
 
 ---
 
-## 6. API Routes Overview
+
+## 6. API Routes Overview 📡
 
 Base path: `/api`
 
@@ -111,7 +143,8 @@ Client logic (React) merges these events into a progress bar; a final `{ done: t
 
 ---
 
-## 7. Frontend Architecture
+
+## 7. Frontend Architecture 🏗️
 
 - **Next.js App Router**: Server + edge runtime mixing (pull uses Edge for low latency, catalog read uses Node for FS access).
 - **React Query**: Data caching & stale control for models and catalog.
@@ -127,7 +160,8 @@ State highlights:
 
 ---
 
-## 8. Python Scraper
+
+## 8. Python Scraper 🐍
 
 Location: `Scraper/`
 
@@ -154,7 +188,8 @@ Use `cron` or a CI workflow to periodically update the file. Example cron entry 
 
 ---
 
-## 9. Development Workflow
+
+## 9. Development Workflow 🧑‍💻
 
 Common scripts:
 ```bash
@@ -169,7 +204,8 @@ After updating `models.json`, no restart is strictly required (catalog route rea
 
 ---
 
-## 10. Deployment
+
+## 10. Deployment 🚀
 
 You can deploy like any standard Next.js app (Vercel, Docker, etc.). Requirements:
 - Ensure `models.json` is present in the build output (it is read at runtime, so keep it in project root of the app).
@@ -263,7 +299,8 @@ Or on host: `nvidia-smi` (NVIDIA) while a model runs.
 
 ---
 
-## 11. Troubleshooting
+
+## 11. Troubleshooting 🕵️‍♂️
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
@@ -275,7 +312,8 @@ Or on host: `nvidia-smi` (NVIDIA) while a model runs.
 
 ---
 
-## 12. Roadmap / Ideas
+
+## 12. Roadmap / Ideas 🗺️
 
 - Persist catalog search & expansion state (localStorage)
 - Per-variant progress indicator (when layers known)
@@ -286,7 +324,8 @@ Or on host: `nvidia-smi` (NVIDIA) while a model runs.
 
 ---
 
-## 13. Contributing
+
+## 13. Contributing 🤝
 
 1. Fork & clone
 2. Create a branch: `feat/my-feature`
@@ -296,13 +335,15 @@ Or on host: `nvidia-smi` (NVIDIA) while a model runs.
 
 ---
 
-## 14. License
+
+## 14. License 📜
 
 Distributed under the MIT License. See the `LICENSE` file for full text.
 
 ---
 
-## 15. At A Glance
+
+## 15. At A Glance 👀
 
 | Stack | Key Tools |
 |-------|-----------|
@@ -315,4 +356,7 @@ Distributed under the MIT License. See the `LICENSE` file for full text.
 
 ---
 
-Happy hacking! Pull, explore, iterate.
+
+<p align="center">
+  🚀 Happy hacking! Pull, explore, iterate. 🦙
+</p>

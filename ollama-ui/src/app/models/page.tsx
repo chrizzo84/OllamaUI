@@ -19,9 +19,8 @@ interface TagsResponse {
 }
 
 async function fetchModels(): Promise<TagsResponse> {
-  const url = 'https://raw.githubusercontent.com/chrizzo84/OllamaScraper/refs/heads/main/out/ollama_models.json';
-  const res = await fetch(url, { cache: 'no-store' });
-  if (!res.ok) throw new Error('Failed to load models from remote');
+  const res = await fetch('/api/models', { cache: 'no-store' });
+  if (!res.ok) throw new Error('Failed to load models');
   return res.json();
 }
 
@@ -30,12 +29,24 @@ interface CatalogVariant { tag: string; size_text?: string; size_bytes?: number;
 interface CatalogModel { slug: string; name?: string; pulls?: number | null; pulls_text?: string | null; capabilities?: string[]; blurb?: string | null; description?: string | null; tags_count?: number | null; variants?: CatalogVariant[] }
 interface CatalogResponse { scraped_at: string; total: number; count: number; models: CatalogModel[] }
 async function fetchCatalog(query: string, limit: number): Promise<CatalogResponse> {
-  const qp = new URLSearchParams();
-  if (query) qp.set('q', query);
-  if (limit) qp.set('limit', String(limit));
-  const res = await fetch(`/api/models/catalog?${qp.toString()}`, { cache: 'no-store' });
-  if (!res.ok) throw new Error('Failed to load catalog');
-  return res.json();
+  const url = 'https://raw.githubusercontent.com/chrizzo84/OllamaScraper/refs/heads/main/out/ollama_models.json';
+  const res = await fetch(url, { cache: 'no-store' });
+  if (!res.ok) throw new Error('Failed to load catalog from remote');
+  const catalog: CatalogResponse = await res.json();
+  // Optional: Filter/Search/Limit clientseitig, falls query/limit genutzt werden soll
+  let models = catalog.models;
+  if (query) {
+    const q = query.toLowerCase();
+    models = models.filter(m =>
+      m.slug.toLowerCase().includes(q) ||
+      (m.name && m.name.toLowerCase().includes(q)) ||
+      (m.capabilities && m.capabilities.some(c => c.toLowerCase().includes(q)))
+    );
+  }
+  if (limit && limit > 0) {
+    models = models.slice(0, limit);
+  }
+  return { ...catalog, count: models.length, models };
 }
 
 function formatSize(bytes?: number) {
