@@ -21,7 +21,7 @@ async function fetchModels(): Promise<TagsResponse> {
 }
 
 export function ChatPanel() {
-  const { data } = useQuery({ queryKey: ['ollima-model-tags'], queryFn: fetchModels });
+  const { data } = useQuery({ queryKey: ['ollama-model-tags'], queryFn: fetchModels });
   const [model, setModel] = useState<string>('');
   const lamaState = useSystemPromptStore((s) => s);
   const { systemEnabled, toggleSystemEnabled, setSystemEnabled } = lamaState;
