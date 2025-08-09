@@ -351,7 +351,7 @@ export default function ModelsPage() {
               </div>
               <div className="mt-4 flex gap-2">
                 <Button
-                  variant="ghost"
+                  variant="primary"
                   size="sm"
                   disabled={anyPullActive || deleteMutation.status === 'pending'}
                   onClick={() => pullMutation.mutate(m.name)}
@@ -456,12 +456,12 @@ export default function ModelsPage() {
                 </div>
                 {cm.blurb && <p className="text-xs text-white/50 line-clamp-3">{cm.blurb}</p>}
                 {cm.variants && cm.variants.length>0 && (
-                  <div className="flex flex-col gap-2 max-h-52 overflow-auto pr-1">
+                  <div className="flex flex-col gap-2 max-h-52 overflow-auto pr-1 py-2">
                     {(expandedVariants[cm.slug] ? cm.variants : cm.variants.slice(0,12)).map(v => (
                       <div key={v.tag} className="flex items-center gap-2 text-[11px] text-white/60">
                         <code className="flex-1 truncate font-mono text-white/70" title={v.tag}>{v.tag}</code>
                         {v.size_text && <span className="text-white/40" title={v.size_bytes ? formatSize(v.size_bytes) : v.size_text}>{v.size_text}</span>}
-                        <Button variant="outline" size="sm" disabled={anyPullActive} onClick={()=>startPull(v.tag)} title={anyPullActive ? 'A pull is already in progress' : `Pull variant ${v.tag}`}>
+                        <Button variant="primary" size="sm" disabled={anyPullActive} onClick={()=>startPull(v.tag)} title={anyPullActive ? 'A pull is already in progress' : `Pull variant ${v.tag}`}>
                           {currentPullModel === v.tag && isStreamingPull ? 'Pulling…' : 'Pull'}
                         </Button>
                       </div>
