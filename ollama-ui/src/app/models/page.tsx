@@ -25,11 +25,33 @@ async function fetchModels(): Promise<TagsResponse> {
 }
 
 // Catalog related types and fetcher
-interface CatalogVariant { tag: string; size_text?: string; size_bytes?: number; context?: string | null; input?: string | null }
-interface CatalogModel { slug: string; name?: string; pulls?: number | null; pulls_text?: string | null; capabilities?: string[]; blurb?: string | null; description?: string | null; tags_count?: number | null; variants?: CatalogVariant[] }
-interface CatalogResponse { scraped_at: string; total: number; count: number; models: CatalogModel[] }
+interface CatalogVariant {
+  tag: string;
+  size_text?: string;
+  size_bytes?: number;
+  context?: string | null;
+  input?: string | null;
+}
+interface CatalogModel {
+  slug: string;
+  name?: string;
+  pulls?: number | null;
+  pulls_text?: string | null;
+  capabilities?: string[];
+  blurb?: string | null;
+  description?: string | null;
+  tags_count?: number | null;
+  variants?: CatalogVariant[];
+}
+interface CatalogResponse {
+  scraped_at: string;
+  total: number;
+  count: number;
+  models: CatalogModel[];
+}
 async function fetchCatalog(query: string, limit: number): Promise<CatalogResponse> {
-  const url = 'https://raw.githubusercontent.com/chrizzo84/OllamaScraper/refs/heads/main/out/ollama_models.json';
+  const url =
+    'https://raw.githubusercontent.com/chrizzo84/OllamaScraper/refs/heads/main/out/ollama_models.json';
   const res = await fetch(url, { cache: 'no-store' });
   if (!res.ok) throw new Error('Failed to load catalog from remote');
   const catalog: CatalogResponse = await res.json();
@@ -37,10 +59,11 @@ async function fetchCatalog(query: string, limit: number): Promise<CatalogRespon
   let models = catalog.models;
   if (query) {
     const q = query.toLowerCase();
-    models = models.filter(m =>
-      m.slug.toLowerCase().includes(q) ||
-      (m.name && m.name.toLowerCase().includes(q)) ||
-      (m.capabilities && m.capabilities.some(c => c.toLowerCase().includes(q)))
+    models = models.filter(
+      (m) =>
+        m.slug.toLowerCase().includes(q) ||
+        (m.name && m.name.toLowerCase().includes(q)) ||
+        (m.capabilities && m.capabilities.some((c) => c.toLowerCase().includes(q))),
     );
   }
   if (limit && limit > 0) {
@@ -255,12 +278,24 @@ export default function ModelsPage() {
       setCurrentPullModel(null);
     }
   }
-  async function handlePullSubmit(e: React.FormEvent) { e.preventDefault(); if (pullInput.trim()) await startPull(pullInput.trim()); }
-  function abortPull() { if (abortRef.current) abortRef.current.abort(); }
+  async function handlePullSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (pullInput.trim()) await startPull(pullInput.trim());
+  }
+  function abortPull() {
+    if (abortRef.current) abortRef.current.abort();
+  }
 
   const [catalogSearch, setCatalogSearch] = useState('');
   const [catalogLimit, setCatalogLimit] = useState(60);
-  const { data: catalog, isLoading: catalogLoading, isError: catalogIsError, error: catalogError, refetch: refetchCatalog, isFetching: catalogFetching } = useQuery({
+  const {
+    data: catalog,
+    isLoading: catalogLoading,
+    isError: catalogIsError,
+    error: catalogError,
+    refetch: refetchCatalog,
+    isFetching: catalogFetching,
+  } = useQuery({
     queryKey: ['ollama-catalog', catalogSearch, catalogLimit],
     queryFn: () => fetchCatalog(catalogSearch, catalogLimit),
     refetchOnWindowFocus: false,
@@ -270,16 +305,22 @@ export default function ModelsPage() {
   const anyPullActive = isStreamingPull || pullMutation.status === 'pending';
   const [expandedVariants, setExpandedVariants] = useState<Record<string, boolean>>({});
   function toggleVariants(slug: string) {
-    setExpandedVariants(prev => ({ ...prev, [slug]: !prev[slug] }));
+    setExpandedVariants((prev) => ({ ...prev, [slug]: !prev[slug] }));
   }
 
   return (
     <div className="relative mx-auto flex min-h-[calc(100vh-3.5rem)] w-full max-w-6xl flex-col gap-10 px-10 py-14">
       <div className="flex flex-wrap items-center gap-4">
-  <h1 className="text-2xl font-bold tracking-tight bg-gradient-to-br from-white via-white/80 to-white/40 bg-clip-text text-transparent">
+        <h1 className="text-2xl font-bold tracking-tight bg-gradient-to-br from-white via-white/80 to-white/40 bg-clip-text text-transparent">
           Installed Models
         </h1>
-        <Button onClick={() => refetch()} variant="outline" size="sm" loading={isFetching} title="Refresh installed models">
+        <Button
+          onClick={() => refetch()}
+          variant="outline"
+          size="sm"
+          loading={isFetching}
+          title="Refresh installed models"
+        >
           Refresh
         </Button>
         <div className="ml-auto flex items-center gap-2 text-xs text-white/40">
@@ -292,7 +333,12 @@ export default function ModelsPage() {
       >
         <div className="flex flex-1 flex-col gap-1">
           <div className="flex items-start justify-between gap-2 flex-wrap">
-            <label htmlFor="ollama-host-input" className="text-[10px] uppercase tracking-wide text-white/40 flex-1">Ollama Host</label>
+            <label
+              htmlFor="ollama-host-input"
+              className="text-[10px] uppercase tracking-wide text-white/40 flex-1"
+            >
+              Ollama Host
+            </label>
             <span
               className="text-[10px] font-mono text-white/50 px-2 py-0.5 rounded bg-white/5 border border-white/10 break-all whitespace-pre-wrap max-w-full"
               title={host || 'Not set'}
@@ -371,9 +417,13 @@ export default function ModelsPage() {
                 <Button
                   variant="primary"
                   size="sm"
-                  disabled={anyPullActive || deleteMutation.status === 'pending'}
-                  onClick={() => pullMutation.mutate(m.name)}
-                  title={anyPullActive ? 'A pull is already in progress' : `Pull installed model ${m.name}`}
+                  disabled={anyPullActive}
+                  onClick={() => startPull(m.name)}
+                  title={
+                    anyPullActive
+                      ? 'A pull is already in progress'
+                      : `Pull installed model ${m.name}`
+                  }
                 >
                   Pull
                 </Button>
@@ -396,11 +446,27 @@ export default function ModelsPage() {
       {/* Catalog Section */}
       <div className="mt-10 flex flex-col gap-4">
         <div className="flex flex-wrap items-center gap-4 w-full">
-          <h2 className="text-2xl font-bold tracking-tight bg-gradient-to-br from-white via-white/80 to-white/40 bg-clip-text text-transparent">Model Catalog (available variants)</h2>
-          <Button onClick={() => refetchCatalog()} variant="outline" size="sm" loading={catalogFetching} title="Reload catalog data">Refresh</Button>
+          <h2 className="text-2xl font-bold tracking-tight bg-gradient-to-br from-white via-white/80 to-white/40 bg-clip-text text-transparent">
+            Model Catalog (available variants)
+          </h2>
+          <Button
+            onClick={() => refetchCatalog()}
+            variant="outline"
+            size="sm"
+            loading={catalogFetching}
+            title="Reload catalog data"
+          >
+            Refresh
+          </Button>
           <div className="ml-auto flex items-center gap-2 text-xs text-white/40">
             <span>Snapshot:</span>
-            {catalogLoading ? <span className="animate-pulse">loading…</span> : catalog?.scraped_at ? <time>{new Date(catalog.scraped_at).toLocaleString()}</time> : '—'}
+            {catalogLoading ? (
+              <span className="animate-pulse">loading…</span>
+            ) : catalog?.scraped_at ? (
+              <time>{new Date(catalog.scraped_at).toLocaleString()}</time>
+            ) : (
+              '—'
+            )}
           </div>
         </div>
         {/* Search & limit controls row */}
@@ -415,32 +481,67 @@ export default function ModelsPage() {
         </div>
         {/* Pull Control relocated into catalog section */}
         <div className="rounded-xl border border-white/10 bg-white/5 p-4 flex flex-col gap-4">
-          <form onSubmit={handlePullSubmit} className="flex flex-col gap-3 sm:flex-row sm:items-center">
+          <form
+            onSubmit={handlePullSubmit}
+            className="flex flex-col gap-3 sm:flex-row sm:items-center"
+          >
             <input
               value={pullInput}
               onChange={(e) => setPullInput(e.target.value)}
               placeholder="model:tag (e.g. llama3.1:8b)"
               className="flex-1 rounded-md border border-white/15 bg-white/10 px-3 py-2 text-sm text-white placeholder:text-white/30 focus:outline-none focus:ring-2 focus:ring-indigo-500/60"
             />
-            <Button type="submit" size="sm" disabled={!pullInput.trim() || anyPullActive} title={pullInput.trim() ? (anyPullActive ? 'A pull is already in progress' : `Pull ${pullInput.trim()}`) : 'Enter model:tag to pull'}>Pull</Button>
+            <Button
+              type="submit"
+              size="sm"
+              disabled={!pullInput.trim() || anyPullActive}
+              title={
+                pullInput.trim()
+                  ? anyPullActive
+                    ? 'A pull is already in progress'
+                    : `Pull ${pullInput.trim()}`
+                  : 'Enter model:tag to pull'
+              }
+            >
+              Pull
+            </Button>
             {abortRef.current && (
-              <Button type="button" variant="outline" size="sm" onClick={abortPull} title="Abort current pull">Abort</Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={abortPull}
+                title="Abort current pull"
+              >
+                Abort
+              </Button>
             )}
           </form>
           {progress !== null && (
             <div className="flex items-center gap-3">
               <div className="h-2 flex-1 overflow-hidden rounded bg-white/10">
-                <div className="h-full bg-gradient-to-r from-slate-500 via-slate-600 to-blue-900 transition-all" style={{ width: `${Math.min(progress, 100)}%` }} />
+                <div
+                  className="h-full bg-gradient-to-r from-slate-500 via-slate-600 to-blue-900 transition-all"
+                  style={{ width: `${Math.min(progress, 100)}%` }}
+                />
               </div>
-              <span className="w-12 text-right text-xs tabular-nums text-white/60">{progress}%</span>
+              <span className="w-12 text-right text-xs tabular-nums text-white/60">
+                {progress}%
+              </span>
             </div>
           )}
           {pullLog && (
-            <pre className="max-h-60 overflow-auto whitespace-pre-wrap rounded-md bg-black/30 p-3 text-xs text-white/70">{pullLog}</pre>
+            <pre className="max-h-60 overflow-auto whitespace-pre-wrap rounded-md bg-black/30 p-3 text-xs text-white/70">
+              {pullLog}
+            </pre>
           )}
         </div>
         {catalogLoading && <div className="text-white/50 animate-pulse">Catalog loading…</div>}
-        {catalogIsError && <div className="rounded-md border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-200">Error loading catalog: {(catalogError as Error).message}</div>}
+        {catalogIsError && (
+          <div className="rounded-md border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-200">
+            Error loading catalog: {(catalogError as Error).message}
+          </div>
+        )}
         {catalog && (
           <div className="flex items-center flex-wrap gap-4 text-xs text-white/40">
             <div className="flex items-center gap-2">
@@ -450,50 +551,103 @@ export default function ModelsPage() {
                 onChange={(e) => setCatalogLimit(Number(e.target.value))}
                 className="rounded-md border border-white/15 bg-white/10 px-2 py-1 text-xs text-white focus:outline-none"
               >
-                {[30,60,120,240,0].map(n => <option key={n} value={n}>{n===0 ? 'All' : n}</option>)}
+                {[30, 60, 120, 240, 0].map((n) => (
+                  <option key={n} value={n}>
+                    {n === 0 ? 'All' : n}
+                  </option>
+                ))}
               </select>
             </div>
-            <div>Showing {catalog.count} of {catalog.total} models</div>
+            <div>
+              Showing {catalog.count} of {catalog.total} models
+            </div>
           </div>
         )}
-        {catalog && catalog.models.length === 0 && !catalogLoading && <div className="text-white/40 text-sm">No results.</div>}
+        {catalog && catalog.models.length === 0 && !catalogLoading && (
+          <div className="text-white/40 text-sm">No results.</div>
+        )}
         {catalog && catalog.models.length > 0 && (
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            {catalog.models.map(cm => (
-              <div key={cm.slug} className="rounded-xl border border-white/10 bg-white/[0.04] p-5 flex flex-col gap-3">
+            {catalog.models.map((cm) => (
+              <div
+                key={cm.slug}
+                className="rounded-xl border border-white/10 bg-white/[0.04] p-5 flex flex-col gap-3"
+              >
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <h3 className="font-semibold text-white/90 tracking-tight">{cm.slug}</h3>
-                    {cm.capabilities && cm.capabilities.length>0 && (
+                    {cm.capabilities && cm.capabilities.length > 0 && (
                       <div className="mt-1 flex flex-wrap gap-1">
-                        {cm.capabilities.slice(0,6).map(c => <span key={c} className="rounded bg-indigo-500/20 px-2 py-[2px] text-[10px] uppercase tracking-wide text-indigo-200/80">{c}</span>)}
+                        {cm.capabilities.slice(0, 6).map((c) => (
+                          <span
+                            key={c}
+                            className="rounded bg-indigo-500/20 px-2 py-[2px] text-[10px] uppercase tracking-wide text-indigo-200/80"
+                          >
+                            {c}
+                          </span>
+                        ))}
                       </div>
                     )}
                   </div>
-                  {typeof cm.pulls === 'number' && <span className="rounded-full bg-white/10 px-2 py-1 text-[10px] font-medium text-white/60" title={cm.pulls_text || String(cm.pulls)}>{(cm.pulls/1_000_000).toFixed(1)}M</span>}
+                  {typeof cm.pulls === 'number' && (
+                    <span
+                      className="rounded-full bg-white/10 px-2 py-1 text-[10px] font-medium text-white/60"
+                      title={cm.pulls_text || String(cm.pulls)}
+                    >
+                      {(cm.pulls / 1_000_000).toFixed(1)}M
+                    </span>
+                  )}
                 </div>
                 {cm.blurb && <p className="text-xs text-white/50 line-clamp-3">{cm.blurb}</p>}
-                {cm.variants && cm.variants.length>0 && (
+                {cm.variants && cm.variants.length > 0 && (
                   <div className="flex flex-col gap-2 max-h-52 overflow-auto pr-1 py-2">
-                    {(expandedVariants[cm.slug] ? cm.variants : cm.variants.slice(0,12)).map(v => (
-                      <div key={v.tag} className="flex items-center gap-2 text-[11px] text-white/60">
-                        <code className="flex-1 truncate font-mono text-white/70" title={v.tag}>{v.tag}</code>
-                        {v.size_text && <span className="text-white/40" title={v.size_bytes ? formatSize(v.size_bytes) : v.size_text}>{v.size_text}</span>}
-                        <Button variant="primary" size="sm" disabled={anyPullActive} onClick={()=>startPull(v.tag)} title={anyPullActive ? 'A pull is already in progress' : `Pull variant ${v.tag}`}>
-                          {currentPullModel === v.tag && isStreamingPull ? 'Pulling…' : 'Pull'}
-                        </Button>
-                      </div>
-                    ))}
-                    {cm.variants.length>12 && (
+                    {(expandedVariants[cm.slug] ? cm.variants : cm.variants.slice(0, 12)).map(
+                      (v) => (
+                        <div
+                          key={v.tag}
+                          className="flex items-center gap-2 text-[11px] text-white/60"
+                        >
+                          <code className="flex-1 truncate font-mono text-white/70" title={v.tag}>
+                            {v.tag}
+                          </code>
+                          {v.size_text && (
+                            <span
+                              className="text-white/40"
+                              title={v.size_bytes ? formatSize(v.size_bytes) : v.size_text}
+                            >
+                              {v.size_text}
+                            </span>
+                          )}
+                          <Button
+                            variant="primary"
+                            size="sm"
+                            disabled={anyPullActive}
+                            onClick={() => startPull(v.tag)}
+                            title={
+                              anyPullActive
+                                ? 'A pull is already in progress'
+                                : `Pull variant ${v.tag}`
+                            }
+                          >
+                            {currentPullModel === v.tag && isStreamingPull ? 'Pulling…' : 'Pull'}
+                          </Button>
+                        </div>
+                      ),
+                    )}
+                    {cm.variants.length > 12 && (
                       <div className="pt-1">
                         <Button
                           variant="ghost"
                           size="sm"
                           className="h-6 text-[11px] px-2"
-                          onClick={()=>toggleVariants(cm.slug)}
-                          title={expandedVariants[cm.slug] ? 'Collapse variants' : 'Show all variants'}
+                          onClick={() => toggleVariants(cm.slug)}
+                          title={
+                            expandedVariants[cm.slug] ? 'Collapse variants' : 'Show all variants'
+                          }
                         >
-                          {expandedVariants[cm.slug] ? 'Show less' : `Show all (${cm.variants.length})`}
+                          {expandedVariants[cm.slug]
+                            ? 'Show less'
+                            : `Show all (${cm.variants.length})`}
                         </Button>
                       </div>
                     )}
