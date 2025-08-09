@@ -34,20 +34,26 @@ body {
   outline-offset: 2px;
 }
 
-/* Scrollbar styling (WebKit) */
-*::-webkit-scrollbar {
-  width: 10px;
+/* Scrollbar styling */
+/* Firefox */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #3b4258 #0d0f17;
 }
+/* WebKit */
+*::-webkit-scrollbar { width: 10px; height: 10px; }
 *::-webkit-scrollbar-track {
-  background: #0f121a;
+  background: linear-gradient(180deg, #0d0f17, #141b2d 55%, #1d1329);
 }
 *::-webkit-scrollbar-thumb {
-  background: linear-gradient(180deg, #6366f1, #a855f7, #ec4899);
+  background: linear-gradient(180deg, #2a3244, #3b4258 45%, #4c2b5e);
   border-radius: 999px;
+  border: 2px solid #0d0f17; /* creates pill and contrast gap */
 }
 *::-webkit-scrollbar-thumb:hover {
-  filter: brightness(1.1);
+  background: linear-gradient(180deg, #354055, #49516a 45%, #5a376d);
 }
+*::-webkit-scrollbar-corner { background: #0d0f17; }
 
 ::selection {
   background: #6366f1aa;

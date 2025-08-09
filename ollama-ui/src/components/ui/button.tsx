@@ -9,9 +9,10 @@ export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElemen
 
 const variantClasses: Record<NonNullable<ButtonProps['variant']>, string> = {
   primary:
-    'bg-gradient-to-br from-slate-500 via-slate-600 to-blue-900 text-white shadow-md hover:shadow-lg hover:brightness-110 hover:-translate-y-[1px]',
+    // Harmonize with page background gradient (#0d0f17 -> #141b2d -> #1d1329) but brighter for contrast
+    'bg-gradient-to-br from-[#2a3244] via-[#3b4258] to-[#4c2b5e] text-white shadow-sm hover:shadow-md hover:brightness-110 hover:-translate-y-[1px] border border-white/5 hover:border-white/15',
   secondary:
-    'bg-foreground/10 text-foreground hover:bg-foreground/20 dark:bg-foreground/20 dark:hover:bg-foreground/30 hover:-translate-y-[1px]',
+    'bg-white/5 text-white/80 hover:text-white hover:bg-white/10 dark:bg-white/10 dark:hover:bg-white/15 hover:-translate-y-[1px] border border-white/10',
   // Make ghost clearly visible on hover with subtle background + outline highlight.
   ghost:
     'bg-transparent text-white/80 hover:text-white hover:bg-white/10 hover:ring-1 hover:ring-white/25 dark:hover:bg-white/10 hover:-translate-y-[1px]',
