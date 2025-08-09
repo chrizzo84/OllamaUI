@@ -19,8 +19,9 @@ interface TagsResponse {
 }
 
 async function fetchModels(): Promise<TagsResponse> {
-  const res = await fetch('/api/models', { cache: 'no-store' });
-  if (!res.ok) throw new Error('Failed to load models');
+  const url = 'https://raw.githubusercontent.com/chrizzo84/OllamaScraper/refs/heads/main/out/ollama_models.json';
+  const res = await fetch(url, { cache: 'no-store' });
+  if (!res.ok) throw new Error('Failed to load models from remote');
   return res.json();
 }
 

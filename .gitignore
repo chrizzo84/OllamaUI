@@ -61,3 +61,6 @@ Thumbs.db
 .vscode/
 *.suo
 *.sw?
+ollama-ui/data/app.db
+ollama-ui/data/app.db-shm
+ollama-ui/data/app.db-wal
