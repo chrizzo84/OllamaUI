@@ -9,7 +9,7 @@ export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElemen
 
 const variantClasses: Record<NonNullable<ButtonProps['variant']>, string> = {
   primary:
-    'bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 text-white shadow-md hover:shadow-lg hover:opacity-95',
+    'bg-gradient-to-br from-slate-500 via-slate-600 to-blue-900 text-white shadow-md hover:shadow-lg hover:brightness-110',
   secondary:
     'bg-foreground/10 text-foreground hover:bg-foreground/20 dark:bg-foreground/20 dark:hover:bg-foreground/30',
   ghost: 'bg-transparent hover:bg-foreground/10 dark:hover:bg-foreground/20',

@@ -80,3 +80,7 @@ blob-report/
 # husky temp
 .husky/_/*.sh
 
+data/app.db
+data/app.db-shm
+.gitignore
+data/app.db-wal

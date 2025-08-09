@@ -45,7 +45,7 @@ export function ChatPanel() {
   const [lamaDeleteConfirm, setLamaDeleteConfirm] = useState<string | null>(null);
   const [editingName, setEditingName] = useState(false);
   const [lamaSearch, setLamaSearch] = useState('');
-  const [tagEdit, setTagEdit] = useState('');
+  const [tagInput, setTagInput] = useState('');
   const [showDebug, setShowDebug] = useState(false);
   interface SentPayload {
     model: string;
@@ -57,14 +57,14 @@ export function ChatPanel() {
   const [coldStart, setColdStart] = useState(false);
   const [coldStartSince, setColdStartSince] = useState<number | null>(null);
   const [coldElapsed, setColdElapsed] = useState(0);
-  const messages = useChatStore((s) => s.messages);
+  const allMessages = useChatStore((s) => s.messages);
+  const messages = allMessages.filter((m) => m.profileId === currentId);
   const [expandedThinkIds, setExpandedThinkIds] = useState<Set<string>>(new Set());
   const append = useChatStore((s) => s.append);
   const update = useChatStore((s) => s.update);
   const clear = useChatStore((s) => s.clear);
-  const restore = useChatStore(
-    (s) => (s as unknown as { restore: (m: typeof messages) => void }).restore,
-  );
+  const restore = useChatStore((s) => s.restore);
+  const tagUntagged = useChatStore((s) => s.tagUntagged);
   const [pendingConfirm, setPendingConfirm] = useState(false);
   const [lastSnapshot, setLastSnapshot] = useState<typeof messages | null>(null);
   const [undoTimeoutId, setUndoTimeoutId] = useState<ReturnType<typeof setTimeout> | null>(null);
@@ -97,19 +97,31 @@ export function ChatPanel() {
 
   // ensure at least one profile exists for convenience
   useEffect(() => {
+    // nur einmal hydratisieren
+    lamaState.hydrate?.();
+  }, [lamaState]);
+
+  useEffect(() => {
+    // erst nach Hydration entscheiden ob Standard angelegt werden muss
+    if (!lamaState.hydrated) return;
     if (profiles.length === 0) {
       create({ name: 'Standard', prompt: '' });
     } else if (!currentId) {
       setCurrent(profiles[0].id);
     }
-  }, [profiles, currentId, create, setCurrent]);
+  }, [profiles, currentId, create, setCurrent, lamaState.hydrated]);
 
   async function send() {
     if (!input.trim() || !model) return;
     const userContent = input.trim();
     setInput('');
-    append({ role: 'user', content: userContent, model });
-    const assistantId = append({ role: 'assistant', content: '', model });
+    append({ role: 'user', content: userContent, model, profileId: currentId || undefined });
+    const assistantId = append({
+      role: 'assistant',
+      content: '',
+      model,
+      profileId: currentId || undefined,
+    });
     const loaded = await isModelLoaded(model);
     if (!loaded) {
       setColdStart(true);
@@ -118,7 +130,7 @@ export function ChatPanel() {
     }
     setLoading(true);
     try {
-      const current = useChatStore.getState().messages; // fresh state
+      const current = useChatStore.getState().messages.filter((m) => m.profileId === currentId); // fresh state for this profile
       const upstreamMessages = [
         ...(activePrompt.trim() ? [{ role: 'system' as const, content: activePrompt.trim() }] : []),
         ...current
@@ -191,6 +203,11 @@ export function ChatPanel() {
     }
   }
 
+  // migrate legacy messages (no profileId) to current profile when user selects one
+  useEffect(() => {
+    if (currentId) tagUntagged(currentId);
+  }, [currentId, tagUntagged]);
+
   return (
     <div className="rounded-xl border border-white/10 bg-white/5 p-6 flex flex-col gap-4 flex-1 min-h-0 overflow-hidden">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
@@ -217,25 +234,36 @@ export function ChatPanel() {
             <span>Modell wird geladen… {coldElapsed}s</span>
           </div>
         )}
-        <button
-          type="button"
-          onClick={() => setShowSys((v) => !v)}
-          className="text-[10px] uppercase tracking-wide text-white/50 hover:text-white/80 transition underline-offset-2 hover:underline"
-        >
-          {showSys ? 'System-Prompt verbergen' : 'System-Prompt anzeigen'}
-        </button>
-        {activePrompt.trim() && (
-          <span className="text-[10px] px-2 py-0.5 rounded bg-indigo-500/20 border border-indigo-500/30 text-indigo-200/80 self-start">
-            Lama aktiv
+        {activePrompt.trim() && activeProfile && (
+          <span
+            className="text-[10px] px-2 py-0.5 rounded bg-indigo-500/20 border border-indigo-500/30 text-indigo-200/80 self-start max-w-[200px] truncate"
+            title={activeProfile.name + ' aktiv'}
+          >
+            {activeProfile.name} aktiv
           </span>
         )}
-        <button
+      </div>
+      <div className="-mt-1 flex gap-2">
+        <Button
           type="button"
-          onClick={() => setShowDebug((v) => !v)}
-          className="text-[10px] ml-auto px-2 py-0.5 rounded border border-white/10 hover:border-white/20 bg-white/5 text-white/50 hover:text-white/80 transition"
+          size="sm"
+          variant={showSys ? 'primary' : 'outline'}
+          onClick={() => setShowSys((v) => !v)}
+          className="flex-1 justify-start gap-2"
         >
-          {showDebug ? 'Debug aus' : 'Debug an'}
-        </button>
+          <span>{showSys ? '🧠 System-Prompt verbergen' : '🧠 System-Prompt anzeigen'}</span>
+          <span className="ml-auto text-[11px] opacity-80">{showSys ? '▲' : '▼'}</span>
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant={showDebug ? 'primary' : 'outline'}
+          onClick={() => setShowDebug((v) => !v)}
+          className="flex-1 justify-start gap-2"
+        >
+          <span>{showDebug ? '🔍 Inspector aus' : '🔍 Payload Inspector'}</span>
+          <span className="ml-auto text-[11px] opacity-80">{showDebug ? '▲' : '▼'}</span>
+        </Button>
       </div>
       {model && /(^|[^0-9])1b([^0-9]|$)/i.test(model) && (
         <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-200/80">
@@ -406,32 +434,72 @@ export function ChatPanel() {
                 placeholder="System-Anweisung für dieses Lama..."
                 className="min-h-[90px] rounded-md border border-white/15 bg-white/10 px-2 py-2 text-xs text-white placeholder:text-white/30 focus:outline-none focus:ring-2 focus:ring-indigo-500/60"
               />
-              <input
-                value={tagEdit}
-                onChange={(e) => setTagEdit(e.target.value)}
-                onBlur={() => {
-                  const tags = tagEdit
-                    .split(',')
-                    .map((t) => t.trim())
-                    .filter(Boolean)
-                    .slice(0, 10);
-                  setTags(activeProfile.id, tags);
-                }}
-                placeholder="Tags (kommagetrennt)"
-                className="text-xs bg-white/10 border border-white/15 rounded px-2 py-1 text-white focus:outline-none"
-              />
-              {activeProfile.tags && activeProfile.tags.length > 0 && (
-                <div className="flex flex-wrap gap-1">
-                  {activeProfile.tags.map((t) => (
-                    <span
-                      key={t}
-                      className="text-[10px] px-2 py-0.5 rounded bg-white/10 border border-white/15 text-white/70"
+              <div className="flex flex-col gap-2">
+                <div className="flex gap-2">
+                  <input
+                    value={tagInput}
+                    onChange={(e) => setTagInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        const raw = tagInput.trim();
+                        if (!raw) return;
+                        const tags = Array.from(
+                          new Set([
+                            ...(activeProfile.tags || []),
+                            ...raw
+                              .split(',')
+                              .map((t) => t.trim())
+                              .filter(Boolean),
+                          ]),
+                        ).slice(0, 20);
+                        setTags(activeProfile.id, tags);
+                        setTagInput('');
+                      }
+                      if (e.key === 'Backspace' && !tagInput) {
+                        // remove last
+                        const current = activeProfile.tags || [];
+                        if (current.length > 0) {
+                          setTags(activeProfile.id, current.slice(0, current.length - 1));
+                        }
+                      }
+                    }}
+                    placeholder="Tag eingeben + Enter"
+                    className="text-xs bg-white/10 border border-white/15 rounded px-2 py-1 text-white focus:outline-none flex-1"
+                  />
+                  {activeProfile.tags && activeProfile.tags.length > 0 && (
+                    <button
+                      type="button"
+                      title="Alle Tags löschen"
+                      onClick={() => setTags(activeProfile.id, [])}
+                      className="text-[10px] px-2 py-1 rounded border border-white/15 bg-white/5 hover:bg-white/10 text-white/60 hover:text-white/80 transition"
                     >
-                      {t}
-                    </span>
-                  ))}
+                      Reset
+                    </button>
+                  )}
                 </div>
-              )}
+                {activeProfile.tags && activeProfile.tags.length > 0 && (
+                  <div className="flex flex-wrap gap-1">
+                    {activeProfile.tags.map((t) => (
+                      <button
+                        key={t}
+                        type="button"
+                        onClick={() =>
+                          setTags(
+                            activeProfile.id,
+                            (activeProfile.tags || []).filter((x) => x !== t),
+                          )
+                        }
+                        className="group text-[10px] px-2 py-0.5 rounded bg-white/10 border border-white/15 text-white/70 hover:bg-pink-500/20 hover:border-pink-500/40 hover:text-white flex items-center gap-1"
+                        title="Tag entfernen"
+                      >
+                        {t}
+                        <span className="opacity-0 group-hover:opacity-80 transition">×</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
               <div className="text-[10px] text-white/40 flex justify-between">
                 <span>{activePrompt.trim().length} Zeichen</span>
                 {activePrompt && <span>wird jeder Anfrage vorangestellt</span>}
@@ -504,9 +572,17 @@ export function ChatPanel() {
                       </button>
                     </div>
                   )}
-                  <div className="prose prose-invert max-w-none text-white/90 prose-p:my-2 prose-ul:my-2 prose-li:my-1 prose-pre:my-3 prose-code:px-1 prose-code:py-0.5 prose-code:bg-white/10 prose-code:rounded">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content || '…'}</ReactMarkdown>
-                  </div>
+                  {m.content === '…' ? (
+                    <div className="flex items-center gap-1 h-6">
+                      <span className="animate-bounce [animation-delay:-0.25s]">🦙</span>
+                      <span className="animate-bounce [animation-delay:-0.15s]">🦙</span>
+                      <span className="animate-bounce [animation-delay:-0.05s]">🦙</span>
+                    </div>
+                  ) : (
+                    <div className="prose prose-invert max-w-none text-white/90 prose-p:my-2 prose-ul:my-2 prose-li:my-1 prose-pre:my-3 prose-code:px-1 prose-code:py-0.5 prose-code:bg-white/10 prose-code:rounded">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content || '…'}</ReactMarkdown>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -549,7 +625,7 @@ export function ChatPanel() {
                 onClick={() => {
                   setPendingConfirm(false);
                   setLastSnapshot(messages);
-                  clear();
+                  clear(currentId || undefined);
                   if (undoTimeoutId) clearTimeout(undoTimeoutId);
                   const id = setTimeout(() => setLastSnapshot(null), 8000);
                   setUndoTimeoutId(id);
@@ -567,7 +643,7 @@ export function ChatPanel() {
               size="sm"
               variant="outline"
               onClick={() => {
-                restore(lastSnapshot);
+                restore(lastSnapshot, currentId || undefined);
                 setLastSnapshot(null);
                 if (undoTimeoutId) clearTimeout(undoTimeoutId);
               }}

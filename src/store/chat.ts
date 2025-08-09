@@ -9,14 +9,16 @@ export interface ChatMessage {
   raw?: string;
   createdAt: number;
   model?: string;
+  profileId?: string; // zugehöriges Lama Profil
 }
 
 interface ChatState {
   messages: ChatMessage[];
   append(msg: Omit<ChatMessage, 'id' | 'createdAt'>): string; // returns new id
   update(id: string, patch: Partial<Pick<ChatMessage, 'content' | 'role' | 'raw'>>): void;
-  clear(): void;
-  restore(messages: ChatMessage[]): void; // replace full history (used for undo)
+  clear(profileId?: string): void;
+  restore(messages: ChatMessage[], profileId?: string): void; // replace full history (used for undo)
+  tagUntagged(profileId: string): void; // migriert alte Nachrichten ohne Profil
 }
 
 export const useChatStore = create<ChatState>((set) => ({
@@ -32,6 +34,18 @@ export const useChatStore = create<ChatState>((set) => ({
     set((s) => ({
       messages: s.messages.map((m) => (m.id === id ? { ...m, ...patch } : m)),
     })),
-  clear: () => set({ messages: [] }),
-  restore: (messages: ChatMessage[]) => set({ messages: messages.slice(-500) }),
+  clear: (profileId) =>
+    set((s) => ({
+      messages: profileId ? s.messages.filter((m) => m.profileId !== profileId) : [],
+    })),
+  restore: (messages: ChatMessage[], profileId) =>
+    set((s) => ({
+      messages: profileId
+        ? [...s.messages.filter((m) => m.profileId !== profileId), ...messages].slice(-500)
+        : messages.slice(-500),
+    })),
+  tagUntagged: (profileId: string) =>
+    set((s) => ({
+      messages: s.messages.map((m) => (m.profileId ? m : { ...m, profileId })),
+    })),
 }));
