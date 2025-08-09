@@ -9,13 +9,17 @@ export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElemen
 
 const variantClasses: Record<NonNullable<ButtonProps['variant']>, string> = {
   primary:
-    'bg-gradient-to-br from-slate-500 via-slate-600 to-blue-900 text-white shadow-md hover:shadow-lg hover:brightness-110',
+    'bg-gradient-to-br from-slate-500 via-slate-600 to-blue-900 text-white shadow-md hover:shadow-lg hover:brightness-110 hover:-translate-y-[1px]',
   secondary:
-    'bg-foreground/10 text-foreground hover:bg-foreground/20 dark:bg-foreground/20 dark:hover:bg-foreground/30',
-  ghost: 'bg-transparent hover:bg-foreground/10 dark:hover:bg-foreground/20',
-  outline: 'border border-foreground/20 hover:bg-foreground/10 dark:hover:bg-foreground/20',
+    'bg-foreground/10 text-foreground hover:bg-foreground/20 dark:bg-foreground/20 dark:hover:bg-foreground/30 hover:-translate-y-[1px]',
+  // Make ghost clearly visible on hover with subtle background + outline highlight.
+  ghost:
+    'bg-transparent text-white/80 hover:text-white hover:bg-white/10 hover:ring-1 hover:ring-white/25 dark:hover:bg-white/10 hover:-translate-y-[1px]',
+  // Outline: stronger border + background tint on hover.
+  outline:
+    'border border-white/15 text-white/80 hover:text-white hover:border-white/40 hover:bg-white/10 dark:hover:bg-white/10 hover:-translate-y-[1px]',
   danger:
-    'bg-gradient-to-br from-rose-500 via-red-500 to-orange-500 text-white shadow-md hover:shadow-lg hover:brightness-110',
+    'bg-gradient-to-br from-rose-500 via-red-500 to-orange-500 text-white shadow-md hover:shadow-lg hover:brightness-110 hover:-translate-y-[1px]',
 };
 
 const sizeClasses: Record<NonNullable<ButtonProps['size']>, string> = {
@@ -34,7 +38,7 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
         data-size={size}
         disabled={disabled || loading}
         className={cn(
-          'relative inline-flex items-center justify-center font-medium transition-colors outline-none focus-visible:ring-2 ring-offset-2 ring-offset-background ring-indigo-500 disabled:opacity-60 disabled:cursor-not-allowed select-none',
+          'relative inline-flex items-center justify-center font-medium transition-all duration-150 outline-none focus-visible:ring-2 ring-offset-2 ring-offset-background ring-indigo-500 disabled:opacity-60 disabled:cursor-not-allowed select-none will-change-transform',
           variantClasses[variant],
           sizeClasses[size],
           className,
