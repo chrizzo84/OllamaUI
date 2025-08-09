@@ -3,13 +3,13 @@ import { create } from 'zustand';
 export interface ChatMessage {
   id: string;
   role: 'user' | 'assistant' | 'system';
-  // content is the displayed (sanitized) content (think-Blöcke entfernt)
+  // content is the displayed (sanitized) content (think blocks removed)
   content: string;
-  // raw kann vollständigen Stream enthalten (inkl. <think>…</think>)
+  // raw may contain full streamed content (including <think>...</think>)
   raw?: string;
   createdAt: number;
   model?: string;
-  profileId?: string; // zugehöriges Lama Profil
+  profileId?: string; // associated profile id
 }
 
 interface ChatState {
@@ -18,7 +18,7 @@ interface ChatState {
   update(id: string, patch: Partial<Pick<ChatMessage, 'content' | 'role' | 'raw'>>): void;
   clear(profileId?: string): void;
   restore(messages: ChatMessage[], profileId?: string): void; // replace full history (used for undo)
-  tagUntagged(profileId: string): void; // migriert alte Nachrichten ohne Profil
+  tagUntagged(profileId: string): void; // migrate legacy messages without profile
 }
 
 export const useChatStore = create<ChatState>((set) => ({

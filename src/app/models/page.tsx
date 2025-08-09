@@ -61,10 +61,10 @@ export default function ModelsPage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['ollama-model-tags'] });
-      pushToast({ type: 'success', message: 'Modell entfernt.' });
+      pushToast({ type: 'success', message: 'Model removed.' });
     },
     onError: (e: unknown) => {
-      const msg = e instanceof Error ? e.message : 'Delete fehlgeschlagen';
+      const msg = e instanceof Error ? e.message : 'Delete failed';
       pushToast({ type: 'error', message: msg });
     },
   });
@@ -101,10 +101,10 @@ export default function ModelsPage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['ollama-model-tags'] });
-      pushToast({ type: 'success', message: 'Pull abgeschlossen.' });
+      pushToast({ type: 'success', message: 'Pull finished.' });
     },
     onError: (e: unknown) => {
-      const msg = e instanceof Error ? e.message : 'Pull fehlgeschlagen';
+      const msg = e instanceof Error ? e.message : 'Pull failed';
       pushToast({ type: 'error', message: msg });
     },
   });
@@ -145,13 +145,13 @@ export default function ModelsPage() {
         body: JSON.stringify({ host: value }),
       });
       const j = await res.json();
-      if (!res.ok) throw new Error(j.error || 'Setzen fehlgeschlagen');
+      if (!res.ok) throw new Error(j.error || 'Update failed');
       setHost(j.host);
-      pushToast({ type: 'success', message: 'Host aktualisiert.' });
+      pushToast({ type: 'success', message: 'Host updated.' });
       // refresh models after host change
       refetch();
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Unbekannter Fehler';
+      const msg = err instanceof Error ? err.message : 'Unknown error';
       pushToast({ type: 'error', message: msg });
     } finally {
       setUpdatingHost(false);
@@ -193,7 +193,7 @@ export default function ModelsPage() {
         body: JSON.stringify({ model }),
         signal: controller.signal,
       });
-      if (!res.body) throw new Error('Kein Stream');
+      if (!res.body) throw new Error('No stream');
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       while (true) {
@@ -213,13 +213,13 @@ export default function ModelsPage() {
         }
       }
       await queryClient.invalidateQueries({ queryKey: ['ollama-model-tags'] });
-      pushToast({ type: 'success', message: 'Pull abgeschlossen.' });
+      pushToast({ type: 'success', message: 'Pull finished.' });
     } catch (err: unknown) {
       if (err instanceof DOMException && err.name === 'AbortError') {
-        setPullLog((prev: string) => prev + '\nABORTIERT');
-        pushToast({ type: 'info', message: 'Pull abgebrochen.' });
+        setPullLog((prev: string) => prev + '\nABORTED');
+        pushToast({ type: 'info', message: 'Pull aborted.' });
       } else {
-        const msg = err instanceof Error ? err.message : 'Unbekannter Fehler';
+        const msg = err instanceof Error ? err.message : 'Unknown error';
         setPullLog((prev: string) => prev + '\nERROR: ' + msg);
         pushToast({ type: 'error', message: msg });
       }
@@ -236,7 +236,7 @@ export default function ModelsPage() {
     <div className="relative mx-auto flex min-h-[calc(100vh-3.5rem)] w-full max-w-6xl flex-col gap-10 px-10 py-14">
       <div className="flex flex-wrap items-center gap-4">
         <h1 className="text-4xl font-bold tracking-tight bg-gradient-to-br from-white via-white/80 to-white/40 bg-clip-text text-transparent">
-          Installierte Modelle
+          Installed Models
         </h1>
         <Button onClick={() => refetch()} variant="outline" size="sm" loading={isFetching}>
           Refresh
@@ -263,10 +263,10 @@ export default function ModelsPage() {
           disabled={updatingHost || !hostInput.trim() || hostInput.trim() === host}
           className="sm:self-end"
         >
-          {updatingHost ? 'Speichere…' : 'Host setzen'}
+          {updatingHost ? 'Saving…' : 'Set host'}
         </Button>
         <div className="text-xs text-white/40 whitespace-nowrap sm:self-end pb-0 sm:pb-[2px]">
-          Aktuell: {host || '—'}
+          Current: {host || '—'}
         </div>
       </form>
       <div className="rounded-xl border border-white/10 bg-white/5 p-6 flex flex-col gap-4">
@@ -277,7 +277,7 @@ export default function ModelsPage() {
           <input
             value={pullInput}
             onChange={(e) => setPullInput(e.target.value)}
-            placeholder="modellname:tag (z.B. llama3:latest)"
+            placeholder="modelname:tag (e.g. llama3:latest)"
             className="flex-1 rounded-md border border-white/15 bg-white/10 px-3 py-2 text-sm text-white placeholder:text-white/30 focus:outline-none focus:ring-2 focus:ring-indigo-500/60"
           />
           <Button type="submit" size="sm" loading={false} disabled={!pullInput.trim()}>
@@ -306,10 +306,10 @@ export default function ModelsPage() {
           </pre>
         )}
       </div>
-      {isLoading && <div className="text-white/50 animate-pulse">Lade Modelle…</div>}
+      {isLoading && <div className="text-white/50 animate-pulse">Loading models…</div>}
       {isError && (
         <div className="rounded-md border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-200">
-          Fehler beim Laden: {(error as Error).message}
+          Error loading: {(error as Error).message}
         </div>
       )}
       {!isLoading && !isError && data && (
@@ -321,7 +321,7 @@ export default function ModelsPage() {
         >
           {data.models.length === 0 && (
             <li className="col-span-full rounded-lg border border-white/10 bg-white/5 p-6 text-center text-white/50">
-              Keine Modelle gefunden.
+              No models found.
             </li>
           )}
           {data.models.map((m) => (

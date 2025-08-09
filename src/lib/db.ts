@@ -49,7 +49,7 @@ export function createLama(data: { id: string; name: string; prompt?: string; ta
     )
     .run({
       id: data.id,
-      name: data.name || 'Unbenannt',
+      name: data.name || 'Untitled',
       prompt: data.prompt || '',
       tags: JSON.stringify(data.tags || []),
       updated_at: now,

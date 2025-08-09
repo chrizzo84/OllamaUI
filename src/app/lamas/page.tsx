@@ -65,12 +65,12 @@ export default function LamaAdminPage() {
     <div className="mx-auto max-w-5xl px-8 py-12 flex flex-col gap-8">
       <header>
         <h1 className="text-3xl font-bold tracking-tight bg-gradient-to-r from-white via-white/80 to-white/40 bg-clip-text text-transparent">
-          Lamas verwalten
+          Manage Profiles
         </h1>
-        <p className="text-white/50 text-sm mt-2">System-Prompts zentral in SQLite gespeichert.</p>
+        <p className="text-white/50 text-sm mt-2">System prompts centrally stored in SQLite.</p>
       </header>
       <section className="flex flex-col gap-4 p-4 rounded-lg border border-white/10 bg-white/5">
-        <h2 className="text-sm font-semibold text-white/80">Neues Lama</h2>
+        <h2 className="text-sm font-semibold text-white/80">New Profile</h2>
         <input
           value={newName}
           onChange={(e) => setNewName(e.target.value)}
@@ -92,18 +92,18 @@ export default function LamaAdminPage() {
           }}
           disabled={createMut.isPending}
         >
-          Anlegen
+          Create
         </Button>
       </section>
       <section className="flex flex-col gap-3">
-        <h2 className="text-sm font-semibold text-white/80">Vorhandene Lamas</h2>
-        {isLoading && <div className="text-white/40 text-sm">Lade…</div>}
+        <h2 className="text-sm font-semibold text-white/80">Existing Profiles</h2>
+        {isLoading && <div className="text-white/40 text-sm">Loading…</div>}
         <div className="grid gap-4">
           {data?.map((l) => (
             <LamaItem key={l.id} lama={l} onUpdate={updateMut.mutate} onDelete={deleteMut.mutate} />
           ))}
           {data && data.length === 0 && (
-            <div className="text-white/40 text-sm">Noch keine Lamas.</div>
+            <div className="text-white/40 text-sm">No profiles yet.</div>
           )}
         </div>
       </section>
@@ -148,13 +148,13 @@ function LamaItem({
         />
       ) : (
         <div className="text-xs text-white/70 whitespace-pre-wrap leading-relaxed max-h-40 overflow-auto">
-          {lama.prompt || <span className="opacity-40">(leer)</span>}
+          {lama.prompt || <span className="opacity-40">(empty)</span>}
         </div>
       )}
       <div className="flex gap-2 mt-1">
         {!editing && (
           <Button size="sm" variant="outline" onClick={() => setEditing(true)}>
-            Bearbeiten
+            Edit
           </Button>
         )}
         {editing && (
@@ -167,7 +167,7 @@ function LamaItem({
                 setEditing(false);
               }}
             >
-              Speichern
+              Save
             </Button>
             <Button
               size="sm"
@@ -178,12 +178,12 @@ function LamaItem({
                 setEditing(false);
               }}
             >
-              Abbrechen
+              Cancel
             </Button>
           </>
         )}
         <Button size="sm" variant="danger" onClick={() => onDelete(lama.id)}>
-          Löschen
+          Delete
         </Button>
       </div>
     </div>

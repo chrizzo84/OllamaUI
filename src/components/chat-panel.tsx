@@ -97,15 +97,15 @@ export function ChatPanel() {
 
   // ensure at least one profile exists for convenience
   useEffect(() => {
-    // nur einmal hydratisieren
+    // hydrate only once
     lamaState.hydrate?.();
   }, [lamaState]);
 
   useEffect(() => {
-    // erst nach Hydration entscheiden ob Standard angelegt werden muss
+    // after hydration decide if a default profile must be created
     if (!lamaState.hydrated) return;
     if (profiles.length === 0) {
-      create({ name: 'Standard', prompt: '' });
+      create({ name: 'Default', prompt: '' });
     } else if (!currentId) {
       setCurrent(profiles[0].id);
     }
@@ -189,7 +189,7 @@ export function ChatPanel() {
         }
       }
     } catch {
-      update(assistantId, { content: '[Fehler beim Chat]' });
+      update(assistantId, { content: '[Chat error]' });
     } finally {
       setLoading(false);
       setColdStart(false);
@@ -217,7 +217,7 @@ export function ChatPanel() {
           className="w-full sm:w-60 rounded-md border border-white/15 bg-white/10 px-2 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/60"
         >
           <option value="" disabled>
-            Modell wählen
+            Select model
           </option>
           {data?.models.map((m) => (
             <option key={m.name} value={m.name} className="bg-neutral-900">
@@ -231,15 +231,15 @@ export function ChatPanel() {
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
               <span className="relative inline-flex h-2 w-2 rounded-full bg-indigo-300"></span>
             </span>
-            <span>Modell wird geladen… {coldElapsed}s</span>
+            <span>Loading model… {coldElapsed}s</span>
           </div>
         )}
         {activePrompt.trim() && activeProfile && (
           <span
             className="text-[10px] px-2 py-0.5 rounded bg-indigo-500/20 border border-indigo-500/30 text-indigo-200/80 self-start max-w-[200px] truncate"
-            title={activeProfile.name + ' aktiv'}
+            title={activeProfile.name + ' active'}
           >
-            {activeProfile.name} aktiv
+            {activeProfile.name} active
           </span>
         )}
       </div>
@@ -251,7 +251,7 @@ export function ChatPanel() {
           onClick={() => setShowSys((v) => !v)}
           className="flex-1 justify-start gap-2"
         >
-          <span>{showSys ? '🧠 System-Prompt verbergen' : '🧠 System-Prompt anzeigen'}</span>
+          <span>{showSys ? '🧠 Hide system prompt' : '🧠 Show system prompt'}</span>
           <span className="ml-auto text-[11px] opacity-80">{showSys ? '▲' : '▼'}</span>
         </Button>
         <Button
@@ -261,24 +261,24 @@ export function ChatPanel() {
           onClick={() => setShowDebug((v) => !v)}
           className="flex-1 justify-start gap-2"
         >
-          <span>{showDebug ? '🔍 Inspector aus' : '🔍 Payload Inspector'}</span>
+          <span>{showDebug ? '🔍 Hide inspector' : '🔍 Payload Inspector'}</span>
           <span className="ml-auto text-[11px] opacity-80">{showDebug ? '▲' : '▼'}</span>
         </Button>
       </div>
       {model && /(^|[^0-9])1b([^0-9]|$)/i.test(model) && (
         <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-200/80">
-          Hinweis: Dieses ausgewählte 1B‑Modell beachtet System-Prompts häufig nur teilweise oder
-          gar nicht. Für verlässlichere Einhaltung bitte ein Modell ≥ 7B wählen.
+          Note: This selected 1B model often only partially respects system prompts or ignores them.
+          For more reliable adherence choose a model ≥ 7B.
         </div>
       )}
       {showSys && (
         <div className="rounded-md border border-indigo-500/30 bg-indigo-500/5 p-3 flex flex-col gap-3">
           <div className="flex flex-wrap gap-2 items-center">
-            <span className="text-[11px] font-medium text-indigo-200/80">Lamas</span>
+            <span className="text-[11px] font-medium text-indigo-200/80">Profiles</span>
             <input
               value={lamaSearch}
               onChange={(e) => setLamaSearch(e.target.value)}
-              placeholder="Suchen..."
+              placeholder="Search..."
               className="text-xs bg-white/10 border border-white/15 rounded px-2 py-1 text-white focus:outline-none"
             />
             <select
@@ -305,12 +305,12 @@ export function ChatPanel() {
               size="sm"
               variant="outline"
               onClick={() => {
-                const id = create({ name: 'Neu', prompt: '' });
+                const id = create({ name: 'New', prompt: '' });
                 setCurrent(id);
                 setEditingName(true);
               }}
             >
-              + Neu
+              + New
             </Button>
             <Button
               size="sm"
@@ -377,7 +377,7 @@ export function ChatPanel() {
             </label>
             {currentId && (
               <Button size="sm" variant="outline" onClick={() => duplicate(currentId)}>
-                Duplizieren
+                Duplicate
               </Button>
             )}
             {currentId && (
@@ -394,12 +394,12 @@ export function ChatPanel() {
                   }
                 }}
               >
-                {lamaDeleteConfirm === currentId ? 'Sicher?' : 'Löschen'}
+                {lamaDeleteConfirm === currentId ? 'Sure?' : 'Delete'}
               </Button>
             )}
             {currentId && activePrompt && (
               <Button size="sm" variant="outline" onClick={() => resetPrompt(currentId)}>
-                Prompt leeren
+                Clear prompt
               </Button>
             )}
           </div>
@@ -419,7 +419,7 @@ export function ChatPanel() {
                     type="button"
                     onClick={() => setEditingName(true)}
                     className="text-left text-xs font-medium text-indigo-100 hover:underline"
-                    title="Namen bearbeiten"
+                    title="Edit name"
                   >
                     {activeProfile.name}
                   </button>
@@ -431,7 +431,7 @@ export function ChatPanel() {
               <textarea
                 value={activePrompt}
                 onChange={(e) => updatePrompt(activeProfile.id, { prompt: e.target.value })}
-                placeholder="System-Anweisung für dieses Lama..."
+                placeholder="System instruction for this profile..."
                 className="min-h-[90px] rounded-md border border-white/15 bg-white/10 px-2 py-2 text-xs text-white placeholder:text-white/30 focus:outline-none focus:ring-2 focus:ring-indigo-500/60"
               />
               <div className="flex flex-col gap-2">
@@ -464,13 +464,13 @@ export function ChatPanel() {
                         }
                       }
                     }}
-                    placeholder="Tag eingeben + Enter"
+                    placeholder="Enter tag + Enter"
                     className="text-xs bg-white/10 border border-white/15 rounded px-2 py-1 text-white focus:outline-none flex-1"
                   />
                   {activeProfile.tags && activeProfile.tags.length > 0 && (
                     <button
                       type="button"
-                      title="Alle Tags löschen"
+                      title="Remove all tags"
                       onClick={() => setTags(activeProfile.id, [])}
                       className="text-[10px] px-2 py-1 rounded border border-white/15 bg-white/5 hover:bg-white/10 text-white/60 hover:text-white/80 transition"
                     >
@@ -491,7 +491,7 @@ export function ChatPanel() {
                           )
                         }
                         className="group text-[10px] px-2 py-0.5 rounded bg-white/10 border border-white/15 text-white/70 hover:bg-pink-500/20 hover:border-pink-500/40 hover:text-white flex items-center gap-1"
-                        title="Tag entfernen"
+                        title="Remove tag"
                       >
                         {t}
                         <span className="opacity-0 group-hover:opacity-80 transition">×</span>
@@ -501,22 +501,22 @@ export function ChatPanel() {
                 )}
               </div>
               <div className="text-[10px] text-white/40 flex justify-between">
-                <span>{activePrompt.trim().length} Zeichen</span>
-                {activePrompt && <span>wird jeder Anfrage vorangestellt</span>}
+                <span>{activePrompt.trim().length} characters</span>
+                {activePrompt && <span>prepended to every request</span>}
               </div>
               {activePrompt.trim().length > 8000 && (
                 <div className="text-[10px] text-amber-300/80 bg-amber-500/10 border border-amber-500/30 rounded px-2 py-1">
-                  Warnung: Sehr langer Prompt – Risiko von Token- / Kontext-Trunkierung.
+                  Warning: Very long prompt – risk of token/context truncation.
                 </div>
               )}
             </div>
           )}
-          {!activeProfile && <div className="text-[11px] text-white/40">Kein Lama ausgewählt.</div>}
+          {!activeProfile && <div className="text-[11px] text-white/40">No profile selected.</div>}
         </div>
       )}
       {showDebug && lastPayload && (
         <div className="rounded-md border border-pink-500/30 bg-pink-500/5 p-3 text-[11px] font-mono whitespace-pre-wrap max-h-40 overflow-auto">
-          <div className="mb-1 text-pink-200/70">Letzter gesendeter Payload:</div>
+          <div className="mb-1 text-pink-200/70">Last sent payload:</div>
           {JSON.stringify(lastPayload, null, 2)}
         </div>
       )}
@@ -524,9 +524,7 @@ export function ChatPanel() {
         ref={containerRef}
         className="flex-1 min-h-0 overflow-auto rounded-md bg-black/30 p-3 text-sm space-y-3"
       >
-        {messages.length === 0 && (
-          <div className="text-white/40 text-xs">Noch keine Nachrichten.</div>
-        )}
+        {messages.length === 0 && <div className="text-white/40 text-xs">No messages yet.</div>}
         {messages.map((m) => {
           const isUser = m.role === 'user';
           const hasThink =
@@ -561,14 +559,14 @@ export function ChatPanel() {
                       {expanded && thinkContent ? (
                         <div className="whitespace-pre-wrap mb-2 opacity-90">{thinkContent}</div>
                       ) : (
-                        <div className="italic opacity-70">Versteckte Gedanken verborgen</div>
+                        <div className="italic opacity-70">Hidden reasoning collapsed</div>
                       )}
                       <button
                         type="button"
                         onClick={toggle}
                         className="mt-1 rounded bg-amber-500/20 px-2 py-1 text-[10px] font-medium text-amber-100 hover:bg-amber-500/30 transition"
                       >
-                        {expanded ? 'Gedanken verstecken' : 'Gedanken anzeigen'}
+                        {expanded ? 'Hide reasoning' : 'Show reasoning'}
                       </button>
                     </div>
                   )}
@@ -594,7 +592,7 @@ export function ChatPanel() {
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={onKey}
-          placeholder={model ? 'Nachricht eingeben…' : 'Erst Modell wählen'}
+          placeholder={model ? 'Type a message…' : 'Select a model first'}
           className="min-h-[80px] rounded-md border border-white/15 bg-white/10 px-3 py-2 text-sm text-white placeholder:text-white/30 focus:outline-none focus:ring-2 focus:ring-indigo-500/60"
         />
         <div className="flex gap-2">
@@ -604,7 +602,7 @@ export function ChatPanel() {
             disabled={!input.trim() || !model || loading}
             loading={loading}
           >
-            Senden
+            Send
           </Button>
           {!pendingConfirm && (
             <Button
@@ -613,12 +611,12 @@ export function ChatPanel() {
               variant="secondary"
               disabled={loading || messages.length === 0}
             >
-              Verlauf löschen
+              Clear history
             </Button>
           )}
           {pendingConfirm && (
             <div className="flex items-center gap-2 text-[11px]">
-              <span className="text-white/50">Sicher?</span>
+              <span className="text-white/50">Sure?</span>
               <Button
                 size="sm"
                 variant="danger"
@@ -631,10 +629,10 @@ export function ChatPanel() {
                   setUndoTimeoutId(id);
                 }}
               >
-                Ja
+                Yes
               </Button>
               <Button size="sm" variant="secondary" onClick={() => setPendingConfirm(false)}>
-                Nein
+                No
               </Button>
             </div>
           )}
