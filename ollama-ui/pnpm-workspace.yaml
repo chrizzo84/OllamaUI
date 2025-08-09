@@ -1,7 +1,6 @@
 
 packages:
   - src/*
-  - Scraper
 
 onlyBuiltDependencies:
   - better-sqlite3
