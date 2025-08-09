@@ -32,7 +32,7 @@ RUN ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
 COPY --from=builder /build/ollama-ui/.next/standalone ./
 COPY --from=builder /build/ollama-ui/.next/static ./.next/static
 COPY --from=builder /build/ollama-ui/public ./public
-COPY --from=builder /build/ollama-ui/models.json ./models.json
+# (No local models.json needed; catalog fetched at runtime from remote repository)
 
 # Optional: default env (can be overridden). Use internal service host.
 ENV OLLAMA_HOST="http://localhost:11434" \
