@@ -5,6 +5,7 @@ import { AppQueryProvider } from '@/components/query-provider';
 import Link from 'next/link';
 import { SiteNav } from '@/components/site-nav';
 import { Toaster } from '@/components/toaster';
+import { SiteFooter } from '@/components/site-footer';
 
 const geistSans = Geist({
   variable: '--font-geist-sans',
@@ -66,6 +67,7 @@ export default function RootLayout({
               </div>
             </header>
             <main className="flex-1">{children}</main>
+            <SiteFooter />
             <Toaster />
           </div>
         </AppQueryProvider>
