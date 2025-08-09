@@ -1,3 +1,0 @@
-#!/bin/sh
-# Simplified for Husky >=9 (deprecated shim removed)
-npx lint-staged
