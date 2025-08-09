@@ -11,7 +11,7 @@ interface NavItem {
 
 const items: NavItem[] = [
   { href: '/', label: 'Chat', match: (p) => p === '/' },
-  { href: '/models', label: 'Modelle', match: (p) => p.startsWith('/models') },
+  { href: '/models', label: 'Models', match: (p) => p.startsWith('/models') },
 ];
 
 export function SiteNav() {

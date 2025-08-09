@@ -5,7 +5,7 @@ export interface LamaProfile {
   name: string;
   prompt: string;
   updatedAt: number;
-  tags?: string[]; // einfache Tag Liste
+  tags?: string[]; // simple tag list
 }
 
 interface LamaState {
@@ -59,7 +59,7 @@ export const useSystemPromptStore = create<LamaState>()((set, get) => ({
             .slice(0, 20);
           return {
             id: typeof o.id === 'string' ? o.id : crypto.randomUUID(),
-            name: typeof o.name === 'string' && o.name.trim() ? o.name : 'Unbenannt',
+            name: typeof o.name === 'string' && o.name.trim() ? o.name : 'Untitled',
             prompt: typeof o.prompt === 'string' ? o.prompt : '',
             tags,
             updatedAt: typeof o.updatedAt === 'number' ? o.updatedAt : Date.now(),
@@ -76,7 +76,7 @@ export const useSystemPromptStore = create<LamaState>()((set, get) => ({
     const tempId = crypto.randomUUID();
     const profile: LamaProfile = {
       id: tempId,
-      name: name || 'Unbenannt',
+      name: name || 'Untitled',
       prompt: prompt || '',
       updatedAt: Date.now(),
       tags: [],
@@ -124,7 +124,7 @@ export const useSystemPromptStore = create<LamaState>()((set, get) => ({
   duplicate: (id) => {
     const src = get().profiles.find((p) => p.id === id);
     if (!src) return null;
-    return get().create({ name: src.name + ' Kopie', prompt: src.prompt });
+    return get().create({ name: src.name + ' Copy', prompt: src.prompt });
   },
   resetPrompt: (id) => get().updatePrompt(id, { prompt: '' }),
   setTags: (id, tags) => get().updatePrompt(id, { tags }),
