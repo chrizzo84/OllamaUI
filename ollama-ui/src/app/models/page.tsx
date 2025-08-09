@@ -279,8 +279,17 @@ export default function ModelsPage() {
         className="flex flex-col gap-3 rounded-xl border border-white/10 bg-white/5 p-4 sm:flex-row sm:items-end"
       >
         <div className="flex flex-1 flex-col gap-1">
-          <label className="text-[10px] uppercase tracking-wide text-white/40">Ollama Host</label>
+          <div className="flex items-start justify-between gap-2 flex-wrap">
+            <label htmlFor="ollama-host-input" className="text-[10px] uppercase tracking-wide text-white/40 flex-1">Ollama Host</label>
+            <span
+              className="text-[10px] font-mono text-white/50 px-2 py-0.5 rounded bg-white/5 border border-white/10 break-all whitespace-pre-wrap max-w-full"
+              title={host || 'Not set'}
+            >
+              {host || '—'}
+            </span>
+          </div>
           <input
+            id="ollama-host-input"
             value={hostInput}
             onChange={(e) => setHostInput(e.target.value)}
             className="rounded-md border border-white/15 bg-white/10 px-3 py-2 text-sm text-white placeholder:text-white/30 focus:outline-none focus:ring-2 focus:ring-indigo-500/60"
@@ -298,9 +307,6 @@ export default function ModelsPage() {
         >
           {updatingHost ? 'Saving…' : 'Set host'}
         </Button>
-        <div className="text-xs text-white/40 whitespace-nowrap sm:self-end pb-0 sm:pb-[2px]">
-          Current: {host || '—'}
-        </div>
       </form>
       {/* Installed models list section (restored) */}
       {isLoading && <div className="text-white/50 animate-pulse">Loading models…</div>}
@@ -378,11 +384,11 @@ export default function ModelsPage() {
       {/* Catalog Section */}
       <div className="mt-10 flex flex-col gap-4">
         <div className="flex flex-wrap items-center gap-4 w-full">
-          <h2 className="text-2xl font-bold tracking-tight bg-gradient-to-br from-white via-white/80 to-white/40 bg-clip-text text-transparent flex-1">Model Catalog (available variants)</h2>
-          <div className="flex items-center gap-2 text-xs text-white/40">
-            <span>Catalog snapshot:</span>
+          <h2 className="text-2xl font-bold tracking-tight bg-gradient-to-br from-white via-white/80 to-white/40 bg-clip-text text-transparent">Model Catalog (available variants)</h2>
+          <Button onClick={() => refetchCatalog()} variant="outline" size="sm" loading={catalogFetching} title="Reload catalog data">Refresh</Button>
+          <div className="ml-auto flex items-center gap-2 text-xs text-white/40">
+            <span>Snapshot:</span>
             {catalogLoading ? <span className="animate-pulse">loading…</span> : catalog?.scraped_at ? <time>{new Date(catalog.scraped_at).toLocaleString()}</time> : '—'}
-            <Button onClick={() => refetchCatalog()} variant="outline" size="sm" loading={catalogFetching} className="ml-2" title="Reload catalog data">Refresh Catalog</Button>
           </div>
         </div>
         {/* Search & limit controls row */}
