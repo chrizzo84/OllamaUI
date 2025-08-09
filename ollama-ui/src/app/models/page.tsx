@@ -256,6 +256,10 @@ export default function ModelsPage() {
 
   const isStreamingPull = !!abortRef.current; // active streaming pull (catalog variant)
   const anyPullActive = isStreamingPull || pullMutation.status === 'pending';
+  const [expandedVariants, setExpandedVariants] = useState<Record<string, boolean>>({});
+  function toggleVariants(slug: string) {
+    setExpandedVariants(prev => ({ ...prev, [slug]: !prev[slug] }));
+  }
 
   return (
     <div className="relative mx-auto flex min-h-[calc(100vh-3.5rem)] w-full max-w-6xl flex-col gap-10 px-10 py-14">
@@ -453,16 +457,28 @@ export default function ModelsPage() {
                 {cm.blurb && <p className="text-xs text-white/50 line-clamp-3">{cm.blurb}</p>}
                 {cm.variants && cm.variants.length>0 && (
                   <div className="flex flex-col gap-2 max-h-52 overflow-auto pr-1">
-                    {cm.variants.slice(0,12).map(v => (
+                    {(expandedVariants[cm.slug] ? cm.variants : cm.variants.slice(0,12)).map(v => (
                       <div key={v.tag} className="flex items-center gap-2 text-[11px] text-white/60">
-                        <code className="flex-1 truncate font-mono text-white/70">{v.tag}</code>
+                        <code className="flex-1 truncate font-mono text-white/70" title={v.tag}>{v.tag}</code>
                         {v.size_text && <span className="text-white/40" title={v.size_bytes ? formatSize(v.size_bytes) : v.size_text}>{v.size_text}</span>}
                         <Button variant="outline" size="sm" disabled={anyPullActive} onClick={()=>startPull(v.tag)} title={anyPullActive ? 'A pull is already in progress' : `Pull variant ${v.tag}`}>
                           {currentPullModel === v.tag && isStreamingPull ? 'Pulling…' : 'Pull'}
                         </Button>
                       </div>
                     ))}
-                    {cm.variants.length>12 && <div className="text-[10px] text-white/30">… {cm.variants.length-12} more variants</div>}
+                    {cm.variants.length>12 && (
+                      <div className="pt-1">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-6 text-[11px] px-2"
+                          onClick={()=>toggleVariants(cm.slug)}
+                          title={expandedVariants[cm.slug] ? 'Collapse variants' : 'Show all variants'}
+                        >
+                          {expandedVariants[cm.slug] ? 'Show less' : `Show all (${cm.variants.length})`}
+                        </Button>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
