@@ -21,9 +21,10 @@ async function fetchModels(): Promise<TagsResponse> {
 }
 
 export function ChatPanel() {
-  const { data } = useQuery({ queryKey: ['ollama-model-tags'], queryFn: fetchModels });
+  const { data } = useQuery({ queryKey: ['ollima-model-tags'], queryFn: fetchModels });
   const [model, setModel] = useState<string>('');
   const lamaState = useSystemPromptStore((s) => s);
+  const { systemEnabled, toggleSystemEnabled, setSystemEnabled } = lamaState;
   const {
     currentId,
     profiles,
@@ -132,9 +133,9 @@ export function ChatPanel() {
     try {
       const current = useChatStore.getState().messages.filter((m) => m.profileId === currentId); // fresh state for this profile
       const upstreamMessages = [
-        ...(activePrompt.trim() ? [{ role: 'system' as const, content: activePrompt.trim() }] : []),
+        ...((systemEnabled && activePrompt.trim()) ? [{ role: 'system' as const, content: activePrompt.trim() }] : []),
         ...current
-          .filter((m) => m.role !== 'assistant' || m.content) // skip empty assistant placeholders
+          .filter((m) => m.role !== 'assistant' || m.content)
           .map((m) => ({ role: m.role, content: m.content })),
       ];
       // last user already included
@@ -234,44 +235,57 @@ export function ChatPanel() {
             <span>Loading model… {coldElapsed}s</span>
           </div>
         )}
-        {activePrompt.trim() && activeProfile && (
+        {activePrompt.trim() && activeProfile && systemEnabled && (
           <span
-            className="text-[10px] px-2 py-0.5 rounded bg-indigo-500/20 border border-indigo-500/30 text-indigo-200/80 self-start max-w-[200px] truncate"
+            className="flex items-center text-[11px] px-3 py-2 rounded-md bg-indigo-500/15 border border-indigo-500/40 text-indigo-100/90 self-start max-w-[260px] truncate h-10 leading-none"
             title={activeProfile.name + ' active'}
           >
-            {activeProfile.name} active
+            <span className="font-semibold mr-2 text-indigo-300/80">Profile:</span>
+            <span className="truncate">{activeProfile.name}</span>
           </span>
         )}
       </div>
-      <div className="-mt-1 flex gap-2">
-        <Button
-          type="button"
-          size="sm"
-          variant={showSys ? 'primary' : 'outline'}
-          onClick={() => setShowSys((v) => !v)}
-          className="flex-1 justify-start gap-2"
-        >
-          <span>{showSys ? '🧠 Hide system prompt' : '🧠 Show system prompt'}</span>
-          <span className="ml-auto text-[11px] opacity-80">{showSys ? '▲' : '▼'}</span>
-        </Button>
+      <div className="-mt-1 flex gap-2 flex-wrap">
+        <label className={`flex items-center gap-2 text-[11px] px-2.5 py-1.5 rounded-md border transition select-none min-w-[140px] justify-start
+          ${systemEnabled ? 'bg-white/10 border-white/15 hover:border-white/25 hover:bg-white/15' : 'bg-white/5 border-white/10 opacity-70'}
+        `}>
+          <input
+            type="checkbox"
+            className="h-3.5 w-3.5 accent-indigo-500 rounded-sm border border-white/30 bg-neutral-900"
+            checked={systemEnabled}
+            onChange={(e) => setSystemEnabled(e.target.checked)}
+          />
+          <span className="whitespace-nowrap leading-none">System prompt {systemEnabled ? 'enabled' : 'disabled'}</span>
+        </label>
+        {systemEnabled && (
+          <Button
+            type="button"
+            size="sm"
+            variant={showSys ? 'primary' : 'outline'}
+            onClick={() => setShowSys((v) => !v)}
+            className="flex-1 justify-start gap-2 min-w-[140px]"
+          >
+            <span>{showSys ? '🧠 Hide system prompt' : '🧠 Show system prompt'}</span>
+            <span className="ml-auto text-[11px] opacity-80">{showSys ? '▲' : '▼'}</span>
+          </Button>
+        )}
         <Button
           type="button"
           size="sm"
           variant={showDebug ? 'primary' : 'outline'}
           onClick={() => setShowDebug((v) => !v)}
-          className="flex-1 justify-start gap-2"
+          className="flex-1 justify-start gap-2 min-w-[140px]"
         >
           <span>{showDebug ? '🔍 Hide inspector' : '🔍 Payload Inspector'}</span>
           <span className="ml-auto text-[11px] opacity-80">{showDebug ? '▲' : '▼'}</span>
         </Button>
       </div>
-      {model && /(^|[^0-9])1b([^0-9]|$)/i.test(model) && (
+      {model && /(^|[^0-9])([0-6](?:\.[0-9]+)?)b([^0-9]|$)/i.test(model) && (
         <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-200/80">
-          Note: This selected 1B model often only partially respects system prompts or ignores them.
-          For more reliable adherence choose a model ≥ 7B.
+          Note: This selected sub‑7B model may only partially respect system prompts or ignore them. For more reliable adherence choose a model ≥ 7B.
         </div>
       )}
-      {showSys && (
+      {showSys && systemEnabled && (
         <div className="rounded-md border border-indigo-500/30 bg-indigo-500/5 p-3 flex flex-col gap-3">
           <div className="flex flex-wrap gap-2 items-center">
             <span className="text-[11px] font-medium text-indigo-200/80">Profiles</span>

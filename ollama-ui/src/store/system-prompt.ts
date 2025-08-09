@@ -23,12 +23,21 @@ interface LamaState {
   setProfiles: (list: LamaProfile[]) => void;
   hydrate: () => Promise<void>;
   hydrated: boolean;
+  systemEnabled: boolean;
+  setSystemEnabled: (v: boolean) => void;
+  toggleSystemEnabled: () => void;
 }
 
 export const useSystemPromptStore = create<LamaState>()((set, get) => ({
   currentId: null,
   profiles: [],
   hydrated: false,
+  systemEnabled: true,
+  setSystemEnabled: (v) => {
+    set({ systemEnabled: v });
+    if (typeof window !== 'undefined') try { localStorage.setItem('systemEnabled', JSON.stringify(v)); } catch {/*ignore*/}
+  },
+  toggleSystemEnabled: () => get().setSystemEnabled(!get().systemEnabled),
   setCurrent: (id) => set({ currentId: id }),
   setProfiles: (list) =>
     set((s) => ({
@@ -68,6 +77,9 @@ export const useSystemPromptStore = create<LamaState>()((set, get) => ({
       get().setProfiles(normalized);
     } catch {
       /* ignore */
+    }
+    if (typeof window !== 'undefined') {
+      try { const raw = localStorage.getItem('systemEnabled'); if (raw !== null) { const val = JSON.parse(raw); if (typeof val === 'boolean') set({ systemEnabled: val }); } } catch { /* ignore */ }
     }
     set({ hydrated: true });
   },
