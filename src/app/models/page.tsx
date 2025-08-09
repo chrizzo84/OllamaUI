@@ -244,7 +244,7 @@ export default function ModelsPage() {
       </div>
       <form
         onSubmit={submitHost}
-        className="flex flex-col gap-3 rounded-xl border border-white/10 bg-white/5 p-4 sm:flex-row sm:items-center"
+        className="flex flex-col gap-3 rounded-xl border border-white/10 bg-white/5 p-4 sm:flex-row sm:items-end"
       >
         <div className="flex flex-1 flex-col gap-1">
           <label className="text-[10px] uppercase tracking-wide text-white/40">Ollama Host</label>
@@ -261,10 +261,13 @@ export default function ModelsPage() {
           variant="outline"
           loading={updatingHost}
           disabled={updatingHost || !hostInput.trim() || hostInput.trim() === host}
+          className="sm:self-end"
         >
           {updatingHost ? 'Speichere…' : 'Host setzen'}
         </Button>
-        <div className="text-xs text-white/40 whitespace-nowrap">Aktuell: {host || '—'}</div>
+        <div className="text-xs text-white/40 whitespace-nowrap sm:self-end pb-0 sm:pb-[2px]">
+          Aktuell: {host || '—'}
+        </div>
       </form>
       <div className="rounded-xl border border-white/10 bg-white/5 p-6 flex flex-col gap-4">
         <form
