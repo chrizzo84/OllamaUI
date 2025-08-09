@@ -264,7 +264,7 @@ export default function ModelsPage() {
   return (
     <div className="relative mx-auto flex min-h-[calc(100vh-3.5rem)] w-full max-w-6xl flex-col gap-10 px-10 py-14">
       <div className="flex flex-wrap items-center gap-4">
-        <h1 className="text-4xl font-bold tracking-tight bg-gradient-to-br from-white via-white/80 to-white/40 bg-clip-text text-transparent">
+  <h1 className="text-2xl font-bold tracking-tight bg-gradient-to-br from-white via-white/80 to-white/40 bg-clip-text text-transparent">
           Installed Models
         </h1>
         <Button onClick={() => refetch()} variant="outline" size="sm" loading={isFetching} title="Refresh installed models">
