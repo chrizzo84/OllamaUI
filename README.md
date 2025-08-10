@@ -1,50 +1,5 @@
 
 
-
-<details>
-<summary><strong>⚡️ Disclaimer: Vibe Coding & Copilot ⚡️</strong></summary>
-
-<p align="center">
-<em>
-🚀 This app was created exclusively through <strong>Vibe Coding</strong> – basically just as a test of GPT-5 via GitHub Copilot.<br>
-🤖 The code is more or less unreviewed, spontaneous, and full of AI magic.<br>
-🐛 If you find bugs, feel free to keep them or just continue developing with the vibe.<br>
-<br>
-<strong>⚠️ Use at your own risk – but with maximum fun! 🎉</strong>
-</em>
-</p>
-</details>
-
----
-
-<details>
-<summary><strong>🔧 Docker Native Module Challenge: better-sqlite3 ⚡️</strong></summary>
-
-<p align="center">
-<em>
-<strong>The Challenge:</strong> Native module <code>better-sqlite3</code> failed in Docker with "invalid ELF header" error<br>
-<strong>The Problem:</strong> Architecture mismatch between build environment (macOS ARM64) and runtime (Linux ARM64)<br>
-<strong>Failed Solutions:</strong> Standard <code>pnpm rebuild</code>, copying pre-built modules, multi-stage builds<br>
-<br>
-<strong>✅ The Solution:</strong> Manual runtime compilation using <code>node-gyp</code> with full build dependencies<br>
-<strong>🤖 AI Collaboration:</strong> Problem solved through iterative debugging with <strong>Claude 3.5 Sonnet</strong><br>
-<strong>⚠️ Note:</strong> Unfortunately, GPT-4 and GPT-5 couldn't solve this complex native module compilation issue<br>
-<br>
-<strong>Key Learning:</strong> Native modules require careful architecture-specific compilation in containerized environments 🐋
-</em>
-</p>
-
-```dockerfile
-# The winning approach: Manual node-gyp compilation at runtime
-RUN cd /app/node_modules/.pnpm/better-sqlite3@*/node_modules/better-sqlite3 && \
-    npm install node-gyp -g && \
-    node-gyp configure --module_name=better_sqlite3 --module_path=./build && \
-    node-gyp build
-```
-
-</details>
-
-
 <p align="center">
   <img src="./ollama-ui/public/ollama-ui.ico" alt="Ollama UI Icon" width="80" />
 </p>
@@ -401,7 +356,55 @@ Distributed under the MIT License. See the `LICENSE` file for full text.
 
 ---
 
-
 <p align="center">
   🚀 Happy hacking! Pull, explore, iterate. 🦙
 </p>
+
+
+## 16. Disclaimer / Infos
+
+<details>
+<summary><strong>⚡️ Disclaimer: Vibe Coding & Copilot ⚡️</strong></summary>
+
+<p>
+<em>
+🚀 This app was created exclusively through <strong>Vibe Coding</strong> – basically just as a test of GPT-5 via GitHub Copilot.<br>
+🤖 The code is more or less unreviewed, spontaneous, and full of AI magic.<br>
+🐛 If you find bugs, feel free to keep them or just continue developing with the vibe.<br>
+<br>
+<strong>⚠️ Use at your own risk – but with maximum fun! 🎉</strong>
+</em>
+</p>
+</details>
+
+---
+
+<details>
+<summary><strong>🔧 Docker Native Module Challenge: better-sqlite3 ⚡️</strong></summary>
+
+<p>
+<em>
+<strong>The Challenge:</strong> Native module <code>better-sqlite3</code> failed in Docker with "invalid ELF header" error<br>
+<strong>The Problem:</strong> Architecture mismatch between build environment (macOS ARM64) and runtime (Linux ARM64)<br>
+<strong>Failed Solutions:</strong> Standard <code>pnpm rebuild</code>, copying pre-built modules, multi-stage builds<br>
+<br>
+<strong>✅ The Solution:</strong> Manual runtime compilation using <code>node-gyp</code> with full build dependencies<br>
+<strong>🤖 AI Collaboration:</strong> Problem solved through iterative debugging with <strong>Claude 3.5 Sonnet</strong><br>
+<strong>⚠️ Note:</strong> Unfortunately, GPT-4 and GPT-5 couldn't solve this complex native module compilation issue<br>
+<br>
+<strong>Key Learning:</strong> Native modules require careful architecture-specific compilation in containerized environments 🐋
+</em>
+</p>
+
+```dockerfile
+# The winning approach: Manual node-gyp compilation at runtime
+RUN cd /app/node_modules/.pnpm/better-sqlite3@*/node_modules/better-sqlite3 && \
+    npm install node-gyp -g && \
+    node-gyp configure --module_name=better_sqlite3 --module_path=./build && \
+    node-gyp build
+```
+
+</details>
+
+
+
