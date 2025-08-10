@@ -68,7 +68,8 @@ RUN cd /app/node_modules/.pnpm/better-sqlite3@11.10.0/node_modules/better-sqlite
 # Optional: default env (can be overridden). Use internal service host.
 ENV OLLAMA_HOST="http://localhost:11434" \
     NODE_ENV=production \
-    PORT=3000
+    PORT=3000 \
+    OLLAMA_LISTEN="0.0.0.0:11434"
 
 # Start script to run both Ollama server and Next.js UI.
 COPY <<'EOF' /app/start.sh
@@ -76,8 +77,8 @@ COPY <<'EOF' /app/start.sh
 set -euo pipefail
 
 # Start Ollama server in background (listens on 11434 by default)
-echo "[start] launching ollama server" >&2
-ollama serve &
+echo "[start] launching ollama server on ${OLLAMA_LISTEN:-0.0.0.0:11434}" >&2
+OLLAMA_HOST="${OLLAMA_LISTEN:-0.0.0.0:11434}" ollama serve &
 OLLAMA_PID=$!
 
 # Wait a little so initial state is ready
