@@ -306,8 +306,6 @@ Or on host: `nvidia-smi` (NVIDIA) while a model runs.
 |---------|-------|-----|
 | Installed list empty | Wrong host / unreachable Ollama | Set correct host; test `curl <host>/api/tags` |
 | Pull stuck at 0% | Upstream not streaming `completed/total` yet | Wait; incomplete events still appear in log |
-| Catalog empty | `models.json` missing or empty | Place a valid file at `ollama-ui/models.json` |
-| 500 on catalog route | JSON parse error | Validate JSON (run `jq . models.json`) |
 | Host not persisting | Cookies blocked | Allow site cookies or set via env variable |
 
 ---
