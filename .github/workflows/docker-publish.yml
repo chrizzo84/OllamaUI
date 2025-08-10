@@ -22,7 +22,8 @@ concurrency:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
+  # Original mixed-case repo (cannot rely on automatic lowercasing by all tooling)
+  IMAGE_NAME_ORIG: ${{ github.repository }}
 
 jobs:
   build-and-push:
@@ -47,16 +48,29 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Compute lowercase image name
+        id: names
+        run: |
+          echo "orig=$IMAGE_NAME_ORIG" >> $GITHUB_OUTPUT
+          echo "lower=${IMAGE_NAME_ORIG,,}" >> $GITHUB_OUTPUT
+        env:
+          IMAGE_NAME_ORIG: ${{ env.IMAGE_NAME_ORIG }}
+
       - name: Extract Docker metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          images: |
+            ${{ env.REGISTRY }}/${{ steps.names.outputs.lower }}
           tags: |
             type=ref,event=branch
             type=ref,event=tag
             type=sha
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            # If tag matches v* use semver patterns (produces v1.2.3, v1.2, v1)
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}},enable=${{ startsWith(github.ref, 'refs/tags/v') }}
           labels: |
             org.opencontainers.image.source=${{ github.repositoryUrl }}
             org.opencontainers.image.description=Ollama UI + Ollama server combined image
@@ -76,5 +90,7 @@ jobs:
 
       - name: Summarize
         run: |
-          echo "Published image tags:" >> $GITHUB_STEP_SUMMARY
-          echo "${{ steps.meta.outputs.tags }}" | sed 's/,/\n/g' >> $GITHUB_STEP_SUMMARY
+          echo "Published (lowercase) image: ghcr.io/${{ steps.names.outputs.lower }}" >> $GITHUB_STEP_SUMMARY
+          echo "Tags:" >> $GITHUB_STEP_SUMMARY
+          echo "${{ steps.meta.outputs.tags }}" | tr ',' '\n' >> $GITHUB_STEP_SUMMARY
+          echo "\nHint: Ensure the container package visibility is Public under Settings > Packages if pulls return 403." >> $GITHUB_STEP_SUMMARY
