@@ -15,6 +15,35 @@
 </p>
 </details>
 
+---
+
+<details>
+<summary><strong>🔧 Docker Native Module Challenge: better-sqlite3 ⚡️</strong></summary>
+
+<p align="center">
+<em>
+<strong>The Challenge:</strong> Native module <code>better-sqlite3</code> failed in Docker with "invalid ELF header" error<br>
+<strong>The Problem:</strong> Architecture mismatch between build environment (macOS ARM64) and runtime (Linux ARM64)<br>
+<strong>Failed Solutions:</strong> Standard <code>pnpm rebuild</code>, copying pre-built modules, multi-stage builds<br>
+<br>
+<strong>✅ The Solution:</strong> Manual runtime compilation using <code>node-gyp</code> with full build dependencies<br>
+<strong>🤖 AI Collaboration:</strong> Problem solved through iterative debugging with <strong>Claude 3.5 Sonnet</strong><br>
+<strong>⚠️ Note:</strong> Unfortunately, GPT-4 and GPT-5 couldn't solve this complex native module compilation issue<br>
+<br>
+<strong>Key Learning:</strong> Native modules require careful architecture-specific compilation in containerized environments 🐋
+</em>
+</p>
+
+```dockerfile
+# The winning approach: Manual node-gyp compilation at runtime
+RUN cd /app/node_modules/.pnpm/better-sqlite3@*/node_modules/better-sqlite3 && \
+    npm install node-gyp -g && \
+    node-gyp configure --module_name=better_sqlite3 --module_path=./build && \
+    node-gyp build
+```
+
+</details>
+
 
 <p align="center">
   <img src="./ollama-ui/public/ollama-ui.ico" alt="Ollama UI Icon" width="80" />
@@ -27,8 +56,24 @@
   <b>Modern, reactive web interface for exploring Ollama models, browsing a scraped public catalog, pulling variants with streaming progress, and managing locally installed models.</b>
 </p>
 
----
 
+## Table of Contents
+
+1. [Features](#1-features-)
+2. [Repository Layout](#2-repository-layout-)
+3. [Prerequisites](#3-prerequisites-)
+4. [Quick Start (UI Only)](#4-quick-start-ui-only-)
+5. [Host Resolution Logic](#5-host-resolution-logic-)
+6. [API Routes Overview](#6-api-routes-overview-)
+7. [Frontend Architecture](#7-frontend-architecture-)
+8. [Python Scraper](#8-python-scraper-)
+9. [Development Workflow](#9-development-workflow-)
+10. [Deployment](#10-deployment-)
+11. [Troubleshooting](#11-troubleshooting-)
+12. [Roadmap / Ideas](#12-roadmap--ideas-)
+13. [Contributing](#13-contributing-)
+14. [License](#14-license-)
+15. [At A Glance](#15-at-a-glance-)
 
 ## 1. Features ✨
 
