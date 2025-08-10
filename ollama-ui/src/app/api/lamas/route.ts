@@ -1,4 +1,5 @@
 import { NextRequest } from 'next/server';
+import { safeUuid } from '@/lib/utils';
 import { z } from 'zod';
 import { listLamas, createLama, updateLama, deleteLama, getLama, importLamas } from '@/lib/db';
 
@@ -23,7 +24,7 @@ export async function POST(req: NextRequest) {
   const body = await req.json();
   const parsed = createSchema.safeParse(body);
   if (!parsed.success) return new Response('Bad Request', { status: 400 });
-  const id = crypto.randomUUID();
+  const id = safeUuid();
   const row = createLama({ id, ...parsed.data });
   return Response.json({
     id: row.id,

@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { safeUuid } from '@/lib/utils';
 
 export interface ToastItem {
   id: string;
@@ -19,7 +20,7 @@ export const useToastStore = create<ToastState>((set) => ({
   toasts: [],
   push: (t) =>
     set((s) => ({
-      toasts: [...s.toasts, { id: crypto.randomUUID(), createdAt: Date.now(), ...t }].slice(-50),
+      toasts: [...s.toasts, { id: safeUuid(), createdAt: Date.now(), ...t }].slice(-50),
     })),
   dismiss: (id) => set((s) => ({ toasts: s.toasts.filter((x) => x.id !== id) })),
   clear: () => set({ toasts: [] }),

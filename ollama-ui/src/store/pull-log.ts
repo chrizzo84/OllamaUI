@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { safeUuid } from '@/lib/utils';
 
 export type PullRawEvent = { raw: string };
 export interface PullStructuredEvent {
@@ -34,7 +35,7 @@ export const usePullLogStore = create<PullLogState>((set) => ({
       events: [
         ...s.events,
         {
-          id: crypto.randomUUID(),
+          id: safeUuid(),
           timestamp: Date.now(),
           model,
           data,

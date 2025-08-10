@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { safeUuid } from '@/lib/utils';
 
 export interface LamaProfile {
   id: string;
@@ -35,7 +36,12 @@ export const useSystemPromptStore = create<LamaState>()((set, get) => ({
   systemEnabled: true,
   setSystemEnabled: (v) => {
     set({ systemEnabled: v });
-    if (typeof window !== 'undefined') try { localStorage.setItem('systemEnabled', JSON.stringify(v)); } catch {/*ignore*/}
+    if (typeof window !== 'undefined')
+      try {
+        localStorage.setItem('systemEnabled', JSON.stringify(v));
+      } catch {
+        /*ignore*/
+      }
   },
   toggleSystemEnabled: () => get().setSystemEnabled(!get().systemEnabled),
   setCurrent: (id) => set({ currentId: id }),
@@ -67,7 +73,7 @@ export const useSystemPromptStore = create<LamaState>()((set, get) => ({
             .filter((t: unknown): t is string => typeof t === 'string')
             .slice(0, 20);
           return {
-            id: typeof o.id === 'string' ? o.id : crypto.randomUUID(),
+            id: typeof o.id === 'string' ? o.id : safeUuid(),
             name: typeof o.name === 'string' && o.name.trim() ? o.name : 'Untitled',
             prompt: typeof o.prompt === 'string' ? o.prompt : '',
             tags,
@@ -79,13 +85,21 @@ export const useSystemPromptStore = create<LamaState>()((set, get) => ({
       /* ignore */
     }
     if (typeof window !== 'undefined') {
-      try { const raw = localStorage.getItem('systemEnabled'); if (raw !== null) { const val = JSON.parse(raw); if (typeof val === 'boolean') set({ systemEnabled: val }); } } catch { /* ignore */ }
+      try {
+        const raw = localStorage.getItem('systemEnabled');
+        if (raw !== null) {
+          const val = JSON.parse(raw);
+          if (typeof val === 'boolean') set({ systemEnabled: val });
+        }
+      } catch {
+        /* ignore */
+      }
     }
     set({ hydrated: true });
   },
   create: ({ name, prompt }) => {
     // optimistic create via API
-    const tempId = crypto.randomUUID();
+    const tempId = safeUuid();
     const profile: LamaProfile = {
       id: tempId,
       name: name || 'Untitled',
