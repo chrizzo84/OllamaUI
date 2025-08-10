@@ -133,7 +133,9 @@ export function ChatPanel() {
     try {
       const current = useChatStore.getState().messages.filter((m) => m.profileId === currentId); // fresh state for this profile
       const upstreamMessages = [
-        ...((systemEnabled && activePrompt.trim()) ? [{ role: 'system' as const, content: activePrompt.trim() }] : []),
+        ...(systemEnabled && activePrompt.trim()
+          ? [{ role: 'system' as const, content: activePrompt.trim() }]
+          : []),
         ...current
           .filter((m) => m.role !== 'assistant' || m.content)
           .map((m) => ({ role: m.role, content: m.content })),
@@ -246,16 +248,20 @@ export function ChatPanel() {
         )}
       </div>
       <div className="-mt-1 flex gap-2 flex-wrap">
-        <label className={`flex items-center gap-2 text-[11px] px-2.5 py-1.5 rounded-md border transition select-none min-w-[140px] justify-start
+        <label
+          className={`flex items-center gap-2 text-[11px] px-2.5 py-1.5 rounded-md border transition select-none min-w-[140px] justify-start
           ${systemEnabled ? 'bg-white/10 border-white/15 hover:border-white/25 hover:bg-white/15' : 'bg-white/5 border-white/10 opacity-70'}
-        `}>
+        `}
+        >
           <input
             type="checkbox"
             className="h-3.5 w-3.5 accent-indigo-500 rounded-sm border border-white/30 bg-neutral-900"
             checked={systemEnabled}
             onChange={(e) => setSystemEnabled(e.target.checked)}
           />
-          <span className="whitespace-nowrap leading-none">System prompt {systemEnabled ? 'enabled' : 'disabled'}</span>
+          <span className="whitespace-nowrap leading-none">
+            System prompt {systemEnabled ? 'enabled' : 'disabled'}
+          </span>
         </label>
         {systemEnabled && (
           <Button
@@ -282,7 +288,8 @@ export function ChatPanel() {
       </div>
       {model && /(^|[^0-9])([0-6](?:\.[0-9]+)?)b([^0-9]|$)/i.test(model) && (
         <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-200/80">
-          Note: This selected sub‑7B model may only partially respect system prompts or ignore them. For more reliable adherence choose a model ≥ 7B.
+          Note: This selected sub‑7B model may only partially respect system prompts or ignore them.
+          For more reliable adherence choose a model ≥ 7B.
         </div>
       )}
       {showSys && systemEnabled && (
@@ -344,8 +351,9 @@ export function ChatPanel() {
             >
               Export
             </Button>
-            <label className="text-[10px] px-2 py-1 rounded border border-white/15 bg-white/10 cursor-pointer hover:bg-white/20 transition">
+            <>
               <input
+                id="lama-import-input"
                 type="file"
                 accept="application/json"
                 className="hidden"
@@ -387,8 +395,15 @@ export function ChatPanel() {
                   e.target.value = '';
                 }}
               />
-              Import
-            </label>
+              <Button
+                size="sm"
+                variant="outline"
+                type="button"
+                onClick={() => document.getElementById('lama-import-input')?.click()}
+              >
+                Import
+              </Button>
+            </>
             {currentId && (
               <Button size="sm" variant="outline" onClick={() => duplicate(currentId)}>
                 Duplicate
