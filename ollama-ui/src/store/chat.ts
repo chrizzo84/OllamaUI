@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { safeUuid } from '@/lib/utils';
 
 export interface ChatMessage {
   id: string;
@@ -24,7 +25,7 @@ interface ChatState {
 export const useChatStore = create<ChatState>((set) => ({
   messages: [],
   append: (msg) => {
-    const id = crypto.randomUUID();
+    const id = safeUuid();
     set((s) => ({
       messages: [...s.messages, { id, createdAt: Date.now(), ...msg }].slice(-500),
     }));

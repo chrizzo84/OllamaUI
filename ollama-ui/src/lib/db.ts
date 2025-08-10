@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3';
+import { safeUuid } from '@/lib/utils';
 import path from 'path';
 import fs from 'fs';
 
@@ -84,7 +85,7 @@ export function importLamas(list: Array<{ name?: string; prompt?: string; tags?:
   const now = Date.now();
   const tx = getDb().transaction((items: typeof list) => {
     for (const raw of items) {
-      const id = crypto.randomUUID();
+      const id = safeUuid();
       insert.run({
         id,
         name: raw.name?.trim() || 'Import',
