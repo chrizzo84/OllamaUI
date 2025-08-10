@@ -228,16 +228,50 @@ docker run --rm -p 11434:11434 -p 3000:3000 ollama-ui:latest
 
 Then open http://localhost:3000 (UI) and Ollama API at http://localhost:11434.
 
-Persist Ollama models by mounting its data directory (inside the base image it is usually `/root/.ollama`):
+#### Docker Volumes: Persist Models & Database
+
+To persist Ollama models and the UI database outside the container, mount host directories as volumes:
+
 ```bash
 docker run --rm -p 11434:11434 -p 3000:3000 \
-	-v ollama_models:/root/.ollama \
+	-v /path/to/ollama-models:/root/.ollama \
+	-v /path/to/ollama-ui-data:/app/data \
 	ollama-ui:latest
+```
+
+- `/root/.ollama`: stores all pulled Ollama models (can be reused across containers/updates)
+- `/app/data`: stores the SQLite database (`app.db`) for UI state (profiles, logs, etc.)
+
+**Docker Compose Example:**
+```yaml
+services:
+	ollama-ui:
+		image: ollama-ui:latest
+		build: .
+		ports:
+			- "11434:11434"
+			- "3000:3000"
+		volumes:
+			- /path/to/ollama-models:/root/.ollama
+			- /path/to/ollama-ui-data:/app/data
+volumes: {}
 ```
 
 Override default host the UI uses:
 ```bash
 docker run --rm -e OLLAMA_HOST=http://localhost:11434 -p 11434:11434 -p 3000:3000 ollama-ui:latest
+```
+
+#### Prebuilt Images
+
+You can use prebuilt images from GitHub Container Registry (GHCR):
+
+- [ghcr.io/chrizzo84/ollamaui](https://github.com/chrizzo84/OllamaUI/pkgs/container/ollamaui)
+
+Pull and run:
+```bash
+docker pull ghcr.io/chrizzo84/ollamaui:latest
+docker run --rm -p 11434:11434 -p 3000:3000 ghcr.io/chrizzo84/ollamaui:latest
 ```
 
 If you want to disable the bundled Ollama server and point only to an external one, you can adapt `start.sh` to skip `ollama serve` and only run `node server.js`.
