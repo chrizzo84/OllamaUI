@@ -33,9 +33,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up QEMU (multi-arch)
-        uses: docker/setup-qemu-action@v3
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
         with:
@@ -75,16 +72,16 @@ jobs:
             org.opencontainers.image.source=${{ github.repositoryUrl }}
             org.opencontainers.image.description=Ollama UI + Ollama server combined image
 
-      - name: Build and push (multi-platform)
+      - name: Build and push (single-arch amd64)
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: Dockerfile.multi-platform
+          file: Dockerfile
           push: true
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          provenance: true
+          provenance: false
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

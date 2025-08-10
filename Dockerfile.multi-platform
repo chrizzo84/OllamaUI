@@ -1,5 +1,10 @@
 # Alternative Dockerfile mit Multi-Platform Support
-FROM --platform=$BUILDPLATFORM node:20-bullseye-slim AS deps
+# WICHTIG: vorher wurde --platform=$BUILDPLATFORM genutzt -> native Module (better-sqlite3)
+# wurden für die Build-Arch kompiliert und dann in ein Image für eine andere Target-Arch kopiert.
+# Dadurch kam es zu 'illegal instruction' / 'wrong ELF class' Fehlern.
+# Lösung: Wir lassen jede Stage auf der Target Plattform laufen (buildx erledigt das pro Arch automatisch)
+# und führen zusätzlich im finalen Stage einen Rebuild durch, falls nötig.
+FROM node:20-bullseye-slim AS deps
 WORKDIR /build
 
 # Install build dependencies for native modules
@@ -24,8 +29,8 @@ FROM deps AS builder
 # Copy source
 COPY ollama-ui .
 
-# Force rebuild native modules for target platform
-RUN pnpm rebuild better-sqlite3
+# Rebuild native Module explizit für die (jetzt korrekte) Target-Plattform
+RUN pnpm rebuild better-sqlite3 || (echo 'Rebuild failed, attempting clean build' >&2; rm -rf node_modules/.pnpm/better-sqlite3* && pnpm rebuild better-sqlite3)
 
 # Build app
 ENV NEXT_TELEMETRY_DISABLED=1
@@ -35,16 +40,28 @@ RUN pnpm build
 FROM ollama/ollama:latest AS final
 WORKDIR /app
 
-# Copy Node runtime from an official Node image (compatible glibc build)
+# Copy Node runtime from an official Node image (gleiche Arch wie Target durch buildx)
 COPY --from=node:20-bullseye-slim /usr/local/bin/node /usr/local/bin/node
 COPY --from=node:20-bullseye-slim /usr/local/lib/node_modules /usr/local/lib/node_modules
 RUN ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
  && ln -s /usr/local/lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx || true
 
-# Copy standalone build output
+# Copy standalone build output (inkl. bereits gebauter native Module)
 COPY --from=builder /build/ollama-ui/.next/standalone ./
 COPY --from=builder /build/ollama-ui/.next/static ./.next/static
 COPY --from=builder /build/ollama-ui/public ./public
+
+# Sicherheits-Rebuild von better-sqlite3 im finalen Image, falls QEMU/emulation Abweichungen erzeugt hat
+RUN if [ -d node_modules ]; then \
+  FOUND=$(find . -type d -path '*/better-sqlite3' | head -n1 || true); \
+  if [ -n "$FOUND" ]; then \
+    echo '[info] Rebuilding better-sqlite3 in final image'; \
+    cd "$FOUND" && npm install node-gyp -g >/dev/null 2>&1 || true; \
+    node-gyp rebuild || echo '[warn] better-sqlite3 rebuild failed (continuing)'; \
+  else \
+    echo '[info] better-sqlite3 directory not found for rebuild'; \
+  fi; \
+fi
 
 # Environment variables
 ENV OLLAMA_HOST="http://localhost:11434" \
