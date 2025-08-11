@@ -38,6 +38,15 @@ export function HostIndicator() {
   });
   const [refreshIdx, setRefreshIdx] = useState(0);
 
+  // Listen for global active host change events dispatched from models page to trigger immediate refresh
+  useEffect(() => {
+    function handler(e: Event) {
+      setRefreshIdx((i) => i + 1);
+    }
+    window.addEventListener('active-host-changed', handler as EventListener);
+    return () => window.removeEventListener('active-host-changed', handler as EventListener);
+  }, []);
+
   useEffect(() => {
     let aborted = false;
     async function load() {

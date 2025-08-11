@@ -273,7 +273,13 @@ export default function ModelsPage() {
       if (j && Array.isArray(j.hosts)) {
         setHosts(j.hosts.map((h) => ({ id: h.id, url: h.url, label: h.label, active: h.active })));
         const active = j.hosts.find((hh) => !!hh.active);
-        setActiveHost(active ? active.url : null);
+        const nextActiveUrl = active ? active.url : null;
+        setActiveHost(nextActiveUrl);
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(
+            new CustomEvent('active-host-changed', { detail: { url: nextActiveUrl } }),
+          );
+        }
       }
     } finally {
       setLoadingHosts(false);
