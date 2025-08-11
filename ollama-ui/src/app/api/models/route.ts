@@ -1,14 +1,20 @@
 import { NextRequest } from 'next/server';
-import { resolveOllamaHost } from '@/lib/env';
+import { resolveOllamaHostServer } from '@/lib/host-resolve-server';
 
-export const runtime = 'edge';
+export const runtime = 'nodejs';
 
 // Ollama default list models endpoint: GET /api/tags
 // We proxy to avoid CORS / client network exposure and to allow future auth.
 
 export async function GET(req: NextRequest) {
   try {
-    const base = resolveOllamaHost(req);
+    const base = resolveOllamaHostServer(req);
+    if (!base) {
+      return new Response(JSON.stringify({ error: 'No host configured', code: 'NO_HOST' }), {
+        status: 428,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
     const res = await fetch(`${base}/api/tags`, {
       method: 'GET',
       headers: { Accept: 'application/json' },

@@ -181,50 +181,197 @@ export default function ModelsPage() {
   const [progress, setProgress] = useState<number | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const [currentPullModel, setCurrentPullModel] = useState<string | null>(null);
-  const [host, setHost] = useState<string>('');
-  const [hostInput, setHostInput] = useState('');
-  const [updatingHost, setUpdatingHost] = useState(false);
-
-  // load current host on mount
-  useEffect(() => {
-    (async () => {
-      try {
-        const r = await fetch('/api/config/ollama-host');
-        const j = await r.json();
-        if (j.host) {
-          setHost(j.host);
-          setHostInput(j.host);
-        }
-      } catch {
-        /* ignore */
-      }
-    })();
-  }, []);
-
-  async function submitHost(e: React.FormEvent) {
-    e.preventDefault();
-    const value = hostInput.trim();
-    if (!value || value === host) return;
-    setUpdatingHost(true);
+  const [activeHost, setActiveHost] = useState<string | null>(null);
+  // Multi-host management
+  interface HostRowUI {
+    id: string;
+    url: string;
+    label?: string | null;
+    active: number;
+  }
+  const [hosts, setHosts] = useState<HostRowUI[]>([]);
+  const [hostLabel, setHostLabel] = useState('');
+  const [loadingHosts, setLoadingHosts] = useState(false);
+  const [hostError, setHostError] = useState<string | null>(null);
+  const [editingHostId, setEditingHostId] = useState<string | null>(null);
+  const [editUrl, setEditUrl] = useState('');
+  const [editLabel, setEditLabel] = useState('');
+  const [editError, setEditError] = useState<string | null>(null);
+  const [editUrlForAdd, setEditUrlForAdd] = useState('');
+  const [showAddHost, setShowAddHost] = useState(false);
+  function closeAddHost() {
+    setShowAddHost(false);
+    setEditUrlForAdd('');
+    setHostLabel('');
+    setHostError(null);
+  }
+  const [testingHost, setTestingHost] = useState(false);
+  const [testResult, setTestResult] = useState<null | {
+    ok: boolean;
+    message?: string;
+    error?: string;
+    latency?: number;
+  }>(null);
+  async function testHostConnectivity() {
+    setTestResult(null);
+    const url = editUrlForAdd.trim();
+    const err = validateHostLocal(url);
+    setHostError(err);
+    if (!url || err) return;
+    setTestingHost(true);
     try {
-      const res = await fetch('/api/config/ollama-host', {
+      const res = await fetch('/api/hosts/test', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ host: value }),
+        body: JSON.stringify({ url }),
       });
-      const j = await res.json();
-      if (!res.ok) throw new Error(j.error || 'Update failed');
-      setHost(j.host);
-      pushToast({ type: 'success', message: 'Host updated.' });
-      // refresh models after host change
-      refetch();
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Unknown error';
-      pushToast({ type: 'error', message: msg });
+      const j = await res.json().catch(() => ({}));
+      if (res.ok && j.ok) {
+        setTestResult({ ok: true, message: j.message, latency: j.latency });
+      } else {
+        setTestResult({ ok: false, error: j.error || 'Test failed' });
+      }
+    } catch (e: unknown) {
+      setTestResult({ ok: false, error: e instanceof Error ? e.message : 'Network error' });
     } finally {
-      setUpdatingHost(false);
+      setTestingHost(false);
     }
   }
+  function validateHostLocal(raw: string): string | null {
+    const v = raw.trim();
+    if (!v) return null; // empty = neutral
+    try {
+      const u = new URL(v);
+      if (u.protocol !== 'http:' && u.protocol !== 'https:') return 'Must start with http/https';
+      return null;
+    } catch {
+      return 'Invalid URL';
+    }
+  }
+  async function loadHosts() {
+    try {
+      setLoadingHosts(true);
+      const r = await fetch('/api/hosts');
+      if (!r.ok) throw new Error('Failed to load hosts');
+      const text = await r.text();
+      interface HostsApiRow {
+        id: string;
+        url: string;
+        label?: string | null;
+        active: number;
+      }
+      interface HostsApiResponse {
+        hosts?: HostsApiRow[];
+        active?: string | null;
+      }
+      let j: HostsApiResponse;
+      try {
+        j = JSON.parse(text) as HostsApiResponse;
+      } catch {
+        throw new Error('Invalid JSON from /api/hosts');
+      }
+      if (j && Array.isArray(j.hosts)) {
+        setHosts(j.hosts.map((h) => ({ id: h.id, url: h.url, label: h.label, active: h.active })));
+        const active = j.hosts.find((hh) => !!hh.active);
+        setActiveHost(active ? active.url : null);
+      }
+    } finally {
+      setLoadingHosts(false);
+    }
+  }
+  useEffect(() => {
+    loadHosts();
+  }, []);
+  async function addNewHost(e: React.FormEvent) {
+    e.preventDefault();
+    const url = editUrlForAdd.trim();
+    const err = validateHostLocal(url);
+    setHostError(err);
+    if (!url || err) return;
+    const body: { url: string; label?: string } = { url };
+    if (hostLabel.trim()) body.label = hostLabel.trim();
+    const res = await fetch('/api/hosts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (res.ok) {
+      setHostLabel('');
+      setEditUrlForAdd('');
+      setHostError(null);
+      await loadHosts();
+    }
+  }
+  async function activate(id: string) {
+    const res = await fetch('/api/hosts', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id }),
+    });
+    if (res.ok) {
+      await loadHosts();
+      // auto refresh installed models when host changes
+      queryClient.invalidateQueries({ queryKey: ['ollama-model-tags'] });
+    }
+  }
+  async function removeHost(id: string) {
+    const u = new URL('/api/hosts', window.location.origin);
+    u.searchParams.set('id', id);
+    const res = await fetch(u.toString(), { method: 'DELETE' });
+    if (res.ok) await loadHosts();
+  }
+  async function saveEditHost(e: React.FormEvent) {
+    e.preventDefault();
+    if (!editingHostId) return;
+    const urlTrim = editUrl.trim();
+    if (!urlTrim) {
+      setEditError('URL required');
+      return;
+    }
+    const ve = validateHostLocal(urlTrim);
+    setEditError(ve);
+    if (ve) return;
+    const payload: { id: string; action: 'update'; url: string; label?: string } = {
+      id: editingHostId,
+      action: 'update',
+      url: urlTrim,
+    };
+    if (editLabel.trim()) payload.label = editLabel.trim();
+    else payload.label = '';
+    const res = await fetch('/api/hosts', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (res.ok) {
+      setEditingHostId(null);
+      setEditUrl('');
+      setEditLabel('');
+      setEditError(null);
+      await loadHosts();
+    } else {
+      try {
+        const j = await res.json();
+        setEditError(j.error || 'Update failed');
+      } catch {
+        setEditError('Update failed');
+      }
+    }
+  }
+  function startEditHost(h: HostRowUI) {
+    setEditingHostId(h.id);
+    setEditUrl(h.url);
+    setEditLabel(h.label || '');
+    setEditError(null);
+  }
+  function cancelEditHost() {
+    setEditingHostId(null);
+    setEditUrl('');
+    setEditLabel('');
+    setEditError(null);
+  }
+
+  // Legacy host input removed; rely solely on saved hosts list
 
   // derive progress from last event with percentage for the currently pulled model input
   useEffect(() => {
@@ -353,53 +500,150 @@ export default function ModelsPage() {
           {/* Removed catalog snapshot from installed models header */}
         </div>
       </div>
-      <form
-        onSubmit={submitHost}
-        className="flex flex-col gap-3 rounded-xl border border-white/10 bg-white/5 p-4 sm:flex-row sm:items-end"
-      >
-        <div className="flex flex-1 flex-col gap-1">
-          <div className="flex items-start justify-between gap-2 flex-wrap">
-            <label
-              htmlFor="ollama-host-input"
-              className="text-[10px] uppercase tracking-wide text-white/40 flex-1"
-            >
-              Ollama Host
-            </label>
-            <span
-              className="text-[10px] font-mono text-white/50 px-2 py-0.5 rounded bg-white/5 border border-white/10 break-all whitespace-pre-wrap max-w-full"
-              title={host || 'Not set'}
-            >
-              {host || '—'}
-            </span>
+      <div className="flex flex-col gap-6">
+        {/* Add Host modal removed from inline flow; now integrated into Saved Hosts section */}
+        <div className="rounded-xl border border-white/10 bg-white/5 p-4 relative">
+          <div className="flex items-center justify-between mb-3 gap-2">
+            <h2 className="text-sm font-semibold text-white/70">Saved Hosts</h2>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setShowAddHost(true);
+                  setTimeout(() => {
+                    const el = document.getElementById('add-host-url');
+                    el?.focus();
+                  }, 30);
+                }}
+              >
+                Add Host
+              </Button>
+              <Button variant="ghost" size="sm" onClick={loadHosts} loading={loadingHosts}>
+                Reload
+              </Button>
+            </div>
           </div>
-          <input
-            id="ollama-host-input"
-            value={hostInput}
-            onChange={(e) => setHostInput(e.target.value)}
-            className="rounded-md border border-white/15 bg-white/10 px-3 py-2 text-sm text-white placeholder:text-white/30 focus:outline-none focus:ring-2 focus:ring-indigo-500/60"
-            placeholder="http://localhost:11434"
-          />
+          {hosts.length === 0 && (
+            <div className="text-xs text-white/40">No hosts saved yet. Add one above.</div>
+          )}
+          <ul className="flex flex-col gap-2 max-h-52 overflow-auto pr-1">
+            {hosts.map((h) => (
+              <li
+                key={h.id}
+                className={`group flex items-center gap-3 rounded-md border px-3 py-2 text-xs transition ${
+                  h.active
+                    ? 'border-indigo-400/50 bg-indigo-500/10'
+                    : 'border-white/10 bg-white/5 hover:border-white/25'
+                }`}
+              >
+                {editingHostId === h.id ? (
+                  <form onSubmit={saveEditHost} className="flex flex-1 items-start gap-2">
+                    <div className="flex-1 min-w-0 flex flex-col gap-1">
+                      <input
+                        value={editUrl}
+                        onChange={(e) => {
+                          setEditUrl(e.target.value);
+                          setEditError(validateHostLocal(e.target.value));
+                        }}
+                        className={`w-full rounded border px-2 py-1 text-[11px] font-mono bg-white/10 ${editError ? 'border-red-500/60' : 'border-white/15'}`}
+                        placeholder="http://host:11434"
+                      />
+                      <input
+                        value={editLabel}
+                        onChange={(e) => setEditLabel(e.target.value)}
+                        className="w-full rounded border px-2 py-1 text-[10px] bg-white/5 border-white/15"
+                        placeholder="Label"
+                      />
+                      {editError && <div className="text-[10px] text-red-300">{editError}</div>}
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <Button
+                        type="submit"
+                        size="sm"
+                        variant="outline"
+                        className="h-6 text-[10px] px-2"
+                      >
+                        Save
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        className="h-6 text-[10px] px-2"
+                        onClick={cancelEditHost}
+                      >
+                        Cancel
+                      </Button>
+                    </div>
+                  </form>
+                ) : (
+                  <>
+                    <div className="flex-1 min-w-0">
+                      <div className="truncate font-mono text-white/70" title={h.url}>
+                        {h.url}
+                      </div>
+                      {h.label && (
+                        <div className="text-[10px] text-white/40 truncate" title={h.label}>
+                          {h.label}
+                        </div>
+                      )}
+                    </div>
+                    {h.active ? (
+                      <span className="px-2 py-0.5 rounded bg-indigo-500/30 text-[10px] text-indigo-100">
+                        Active
+                      </span>
+                    ) : (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-6 text-[10px]"
+                        onClick={() => activate(h.id)}
+                        title="Activate host"
+                      >
+                        Use
+                      </Button>
+                    )}
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-6 text-[10px] text-indigo-200 hover:text-indigo-100"
+                      onClick={() => startEditHost(h)}
+                      title="Edit host"
+                    >
+                      ✎
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-6 text-[10px] text-red-300 hover:text-red-200"
+                      onClick={() => removeHost(h.id)}
+                      title="Delete host"
+                    >
+                      ✕
+                    </Button>
+                  </>
+                )}
+              </li>
+            ))}
+          </ul>
         </div>
-        <Button
-          type="submit"
-          size="sm"
-          variant="outline"
-          loading={updatingHost}
-          disabled={updatingHost || !hostInput.trim() || hostInput.trim() === host}
-          className="sm:self-end"
-          title="Update Ollama host"
-        >
-          {updatingHost ? 'Saving…' : 'Set host'}
-        </Button>
-      </form>
+      </div>
       {/* Installed models list section (restored) */}
-      {isLoading && <div className="text-white/50 animate-pulse">Loading models…</div>}
+      {!activeHost && (
+        <div className="rounded-md border border-yellow-500/30 bg-yellow-500/10 p-4 text-sm text-yellow-200">
+          No active host configured. Please add a host above and activate it.
+        </div>
+      )}
+      {isLoading && activeHost && (
+        <div className="text-white/50 animate-pulse">Loading models…</div>
+      )}
       {isError && (
         <div className="rounded-md border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-200">
           Error loading: {(error as Error).message}
         </div>
       )}
-      {!isLoading && !isError && data && (
+      {!isLoading && !isError && data && activeHost && (
         <motion.ul
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -737,6 +981,117 @@ export default function ModelsPage() {
           </div>
         )}
       </div>
+      {/* Add Host Modal */}
+      {showAddHost && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center p-4">
+          <div
+            className="absolute inset-0 bg-black/70 backdrop-blur-sm"
+            onClick={() => closeAddHost()}
+          />
+          <div className="relative z-10 w-full max-w-md rounded-xl border border-white/15 bg-zinc-900/95 p-6 shadow-2xl flex flex-col gap-5">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-white/80">Add Ollama Host</h3>
+              <button
+                onClick={() => closeAddHost()}
+                className="text-white/40 hover:text-white/70 text-sm"
+                aria-label="Close"
+              >
+                ✕
+              </button>
+            </div>
+            <form
+              onSubmit={(e) => {
+                addNewHost(e);
+                if (!hostError) closeAddHost();
+              }}
+              className="flex flex-col gap-4"
+            >
+              <div className="flex flex-col gap-2">
+                <label
+                  htmlFor="add-host-url"
+                  className="text-[10px] uppercase tracking-wide text-white/40"
+                >
+                  Host URL
+                </label>
+                <input
+                  id="add-host-url"
+                  value={editUrlForAdd}
+                  onChange={(e) => {
+                    setEditUrlForAdd(e.target.value);
+                    setHostError(validateHostLocal(e.target.value));
+                  }}
+                  placeholder="http://localhost:11434"
+                  className={`rounded-md border px-3 py-2 text-sm text-white placeholder:text-white/30 focus:outline-none focus:ring-2 focus:ring-indigo-500/60 ${hostError ? 'border-red-500/60 bg-red-500/10' : 'border-white/15 bg-white/10'}`}
+                />
+                {hostError && <div className="text-[11px] text-red-300">{hostError}</div>}
+                <div className="flex items-center gap-3 pt-1">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={!editUrlForAdd.trim() || !!hostError || testingHost}
+                    onClick={testHostConnectivity}
+                    loading={testingHost}
+                    title="Test connectivity"
+                  >
+                    Test
+                  </Button>
+                  {testResult && (
+                    <div
+                      className={`text-[11px] ${testResult.ok ? 'text-green-300' : 'text-red-300'} flex items-center gap-2`}
+                    >
+                      {testResult.ok ? (
+                        <>
+                          <span>{testResult.message || 'Reachable'}</span>
+                          {typeof testResult.latency === 'number' && (
+                            <span className="text-white/30">({testResult.latency}ms)</span>
+                          )}
+                        </>
+                      ) : (
+                        <span>{testResult.error}</span>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+              <div className="flex flex-col gap-2">
+                <label
+                  htmlFor="add-host-label"
+                  className="text-[10px] uppercase tracking-wide text-white/40"
+                >
+                  Label (optional)
+                </label>
+                <input
+                  id="add-host-label"
+                  value={hostLabel}
+                  onChange={(e) => setHostLabel(e.target.value)}
+                  placeholder="Local GPU, Remote A100..."
+                  className="rounded-md border border-white/15 bg-white/5 px-3 py-2 text-xs text-white placeholder:text-white/30 focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
+                />
+              </div>
+              <div className="flex items-center justify-end gap-3 pt-2">
+                <Button type="button" variant="ghost" size="sm" onClick={() => closeAddHost()}>
+                  Cancel
+                </Button>
+                <Button
+                  type="submit"
+                  size="sm"
+                  disabled={!editUrlForAdd.trim() || !!hostError}
+                  title={
+                    testResult && testResult.ok === false ? 'Fix host before adding' : 'Add host'
+                  }
+                >
+                  Add Host
+                </Button>
+              </div>
+            </form>
+            <p className="text-[10px] text-white/30 leading-relaxed">
+              Host will be stored locally in the app database. Make sure the Ollama service is
+              reachable from the server.
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

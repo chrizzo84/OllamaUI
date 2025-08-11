@@ -4,6 +4,7 @@ import './globals.css';
 import { AppQueryProvider } from '@/components/query-provider';
 import Link from 'next/link';
 import { SiteNav } from '@/components/site-nav';
+import { HostIndicator } from '@/components/header-brand';
 import { Toaster } from '@/components/toaster';
 import { SiteFooter } from '@/components/site-footer';
 
@@ -64,6 +65,9 @@ export default function RootLayout({
                   <span>Ollama UI</span>
                 </Link>
                 <SiteNav />
+                <div className="ml-auto">
+                  <HostIndicator />
+                </div>
               </div>
             </header>
             <main className="flex-1">{children}</main>

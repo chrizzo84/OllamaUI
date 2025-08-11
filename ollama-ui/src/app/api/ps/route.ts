@@ -1,11 +1,16 @@
 import { NextRequest } from 'next/server';
-import { resolveOllamaHost } from '@/lib/env';
+import { resolveOllamaHostServer } from '@/lib/host-resolve-server';
 
-export const runtime = 'edge';
+export const runtime = 'nodejs';
 
 export async function GET(req: NextRequest) {
   try {
-    const base = resolveOllamaHost(req);
+    const base = resolveOllamaHostServer(req);
+    if (!base) {
+      return new Response(JSON.stringify({ error: 'No host configured', code: 'NO_HOST' }), {
+        status: 428,
+      });
+    }
     const upstream = await fetch(`${base}/api/ps`, { cache: 'no-store' });
     const text = await upstream.text();
     return new Response(text, {
