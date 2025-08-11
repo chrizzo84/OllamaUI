@@ -29,6 +29,7 @@
 13. [Contributing](#13-contributing-)
 14. [License](#14-license-)
 15. [At A Glance](#15-at-a-glance-)
+16. [Disclaimer / Infos](#16-disclaimer--infos-)
 
 ## 1. Features ✨
 
@@ -262,7 +263,7 @@ Override default host the UI uses:
 docker run --rm -e OLLAMA_HOST=http://localhost:11434 -p 11434:11434 -p 3000:3000 ollama-ui:latest
 ```
 
-#### Prebuilt Images
+#### Prebuilt Images (Combined Ollama + UI)
 
 You can use prebuilt images from GitHub Container Registry (GHCR):
 

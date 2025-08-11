@@ -45,18 +45,24 @@ interface CatalogModel {
 }
 interface CatalogResponse {
   scraped_at: string;
-  total: number;
-  count: number;
+  total?: number; // total from remote if provided
+  original_total?: number; // normalized original total we derive (always filled)
+  count: number; // count after filtering/limit
   models: CatalogModel[];
 }
-async function fetchCatalog(query: string, limit: number): Promise<CatalogResponse> {
+async function fetchCatalog(
+  query: string,
+  limit: number,
+  caps: string[],
+): Promise<CatalogResponse> {
   const url =
     'https://raw.githubusercontent.com/chrizzo84/OllamaScraper/refs/heads/main/out/ollama_models.json';
   const res = await fetch(url, { cache: 'no-store' });
   if (!res.ok) throw new Error('Failed to load catalog from remote');
-  const catalog: CatalogResponse = await res.json();
-  // Optional: Filter/Search/Limit clientseitig, falls query/limit genutzt werden soll
-  let models = catalog.models;
+  const raw = await res.json();
+  const baseModels: CatalogModel[] = raw.models || raw.data || [];
+  const originalTotal = raw.total || baseModels.length;
+  let models = baseModels;
   if (query) {
     const q = query.toLowerCase();
     models = models.filter(
@@ -66,10 +72,23 @@ async function fetchCatalog(query: string, limit: number): Promise<CatalogRespon
         (m.capabilities && m.capabilities.some((c) => c.toLowerCase().includes(q))),
     );
   }
+  if (caps.length) {
+    const wanted = caps.map((c) => c.toLowerCase());
+    models = models.filter(
+      (m) =>
+        m.capabilities && wanted.every((w) => m.capabilities!.some((c) => c.toLowerCase() === w)),
+    );
+  }
   if (limit && limit > 0) {
     models = models.slice(0, limit);
   }
-  return { ...catalog, count: models.length, models };
+  return {
+    scraped_at: raw.scraped_at || raw.generated_at || new Date().toISOString(),
+    total: originalTotal,
+    original_total: originalTotal,
+    count: models.length,
+    models,
+  };
 }
 
 function formatSize(bytes?: number) {
@@ -101,7 +120,7 @@ export default function ModelsPage() {
     mutationFn: async (model: string) => {
       const res = await fetch('/api/models/delete', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        // (Removed stray misplaced code from previous patch)
         body: JSON.stringify({ model }),
       });
       if (!res.ok) throw new Error('Delete failed');
@@ -287,6 +306,13 @@ export default function ModelsPage() {
   }
 
   const [catalogSearch, setCatalogSearch] = useState('');
+  const CAPABILITY_FILTERS = ['Embedding', 'Vision', 'Tools', 'Thinking'] as const;
+  const [selectedCaps, setSelectedCaps] = useState<string[]>([]);
+  function toggleCap(cap: string) {
+    setSelectedCaps((prev) =>
+      prev.includes(cap) ? prev.filter((c) => c !== cap) : [...prev, cap],
+    );
+  }
   const [catalogLimit, setCatalogLimit] = useState(60);
   const {
     data: catalog,
@@ -296,8 +322,8 @@ export default function ModelsPage() {
     refetch: refetchCatalog,
     isFetching: catalogFetching,
   } = useQuery({
-    queryKey: ['ollama-catalog', catalogSearch, catalogLimit],
-    queryFn: () => fetchCatalog(catalogSearch, catalogLimit),
+    queryKey: ['ollama-catalog', catalogSearch, catalogLimit, selectedCaps.sort().join(',')],
+    queryFn: () => fetchCatalog(catalogSearch, catalogLimit, selectedCaps),
     refetchOnWindowFocus: false,
   });
 
@@ -445,6 +471,7 @@ export default function ModelsPage() {
       )}
       {/* Catalog Section */}
       <div className="mt-10 flex flex-col gap-4">
+        {/* Catalog Header */}
         <div className="flex flex-wrap items-center gap-4 w-full">
           <h2 className="text-2xl font-bold tracking-tight bg-gradient-to-br from-white via-white/80 to-white/40 bg-clip-text text-transparent">
             Model Catalog (available variants)
@@ -469,17 +496,7 @@ export default function ModelsPage() {
             )}
           </div>
         </div>
-        {/* Search & limit controls row */}
-        <div className="flex flex-col sm:flex-row gap-3 items-stretch w-full">
-          <input
-            value={catalogSearch}
-            onChange={(e) => setCatalogSearch(e.target.value)}
-            placeholder="Search models (slug, name, capability)"
-            className="flex-1 rounded-md border border-white/15 bg-white/10 px-3 py-2 text-sm text-white placeholder:text-white/30 focus:outline-none focus:ring-2 focus:ring-indigo-500/60"
-          />
-          {/* Limit control moved next to summary */}
-        </div>
-        {/* Pull Control relocated into catalog section */}
+        {/* Pullbox directly below header */}
         <div className="rounded-xl border border-white/10 bg-white/5 p-4 flex flex-col gap-4">
           <form
             onSubmit={handlePullSubmit}
@@ -536,31 +553,93 @@ export default function ModelsPage() {
             </pre>
           )}
         </div>
+        {/* Search, Limit & Capability Filters grouped */}
+        <div className="rounded-xl border border-white/10 bg-white/5 p-4 flex flex-col gap-4">
+          <div className="flex flex-col sm:flex-row gap-3 items-stretch w-full">
+            <div className="flex flex-1 gap-3">
+              <input
+                value={catalogSearch}
+                onChange={(e) => setCatalogSearch(e.target.value)}
+                placeholder="Search models (slug, name, capability)"
+                className="flex-1 rounded-md border border-white/15 bg-white/10 px-3 py-2 text-sm text-white placeholder:text-white/30 focus:outline-none focus:ring-2 focus:ring-indigo-500/60"
+              />
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-3 w-full text-[11px] text-white/60">
+            {CAPABILITY_FILTERS.map((cap) => {
+              const active = selectedCaps.includes(cap);
+              return (
+                <button
+                  key={cap}
+                  type="button"
+                  onClick={() => toggleCap(cap)}
+                  className={`px-3 py-1 rounded-md border text-xs transition focus:outline-none focus:ring-2 focus:ring-indigo-500/60 ${
+                    active
+                      ? 'bg-indigo-500/30 border-indigo-400/60 text-indigo-200'
+                      : 'bg-white/5 border-white/15 hover:border-white/30'
+                  }`}
+                  aria-pressed={active}
+                  title={active ? `Remove ${cap}` : `Filter by ${cap}`}
+                >
+                  <span className="font-medium">{cap}</span>
+                </button>
+              );
+            })}
+            <button
+              type="button"
+              onClick={() => selectedCaps.length && setSelectedCaps([])}
+              disabled={!selectedCaps.length}
+              className={`px-2 py-1 rounded-md border text-[10px] uppercase tracking-wide transition focus:outline-none focus:ring-2 focus:ring-indigo-500/60 ${
+                selectedCaps.length
+                  ? 'border-white/25 bg-white/10 text-white/60 hover:border-white/40 hover:text-white/80'
+                  : 'border-white/10 bg-white/5 text-white/25 cursor-not-allowed'
+              }`}
+              title={selectedCaps.length ? 'Clear capability filters' : 'No filters active'}
+            >
+              Clear
+            </button>
+            <div className="ml-auto flex items-center gap-4">
+              {catalog && (
+                <div className="flex items-center gap-3 text-xs">
+                  <div className="flex items-center gap-2">
+                    <label className="text-[10px] uppercase tracking-wide text-white/40">
+                      Limit
+                    </label>
+                    <select
+                      value={catalogLimit}
+                      onChange={(e) => setCatalogLimit(Number(e.target.value))}
+                      className="rounded-md border border-white/15 bg-white/10 px-2 py-1 text-[11px] text-white focus:outline-none"
+                    >
+                      {[30, 60, 120, 240, 0].map((n) => (
+                        <option key={n} value={n}>
+                          {n === 0 ? 'All' : n}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="text-white/40 whitespace-nowrap">
+                    {(() => {
+                      if (!catalog) return null;
+                      const total =
+                        catalog.original_total ?? catalog.total ?? catalog.models.length;
+                      const limitDisplay = catalogLimit === 0 ? 'All' : catalogLimit;
+                      return (
+                        <span>
+                          Showing <span className="text-white/70 tabular-nums">{limitDisplay}</span>{' '}
+                          of <span className="text-white/70 tabular-nums">{total}</span> models
+                        </span>
+                      );
+                    })()}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
         {catalogLoading && <div className="text-white/50 animate-pulse">Catalog loading…</div>}
         {catalogIsError && (
           <div className="rounded-md border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-200">
             Error loading catalog: {(catalogError as Error).message}
-          </div>
-        )}
-        {catalog && (
-          <div className="flex items-center flex-wrap gap-4 text-xs text-white/40">
-            <div className="flex items-center gap-2">
-              <label className="text-[10px] uppercase tracking-wide text-white/40">Limit</label>
-              <select
-                value={catalogLimit}
-                onChange={(e) => setCatalogLimit(Number(e.target.value))}
-                className="rounded-md border border-white/15 bg-white/10 px-2 py-1 text-xs text-white focus:outline-none"
-              >
-                {[30, 60, 120, 240, 0].map((n) => (
-                  <option key={n} value={n}>
-                    {n === 0 ? 'All' : n}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              Showing {catalog.count} of {catalog.total} models
-            </div>
           </div>
         )}
         {catalog && catalog.models.length === 0 && !catalogLoading && (

@@ -11,6 +11,9 @@ on:
   workflow_dispatch:
   release:
     types: [published]
+  schedule:
+    # Run every night at 02:30 UTC
+    - cron: '30 2 * * *'
 
 permissions:
   contents: read
