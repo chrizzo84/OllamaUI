@@ -22,6 +22,14 @@ export function getDb() {
       tags TEXT NOT NULL DEFAULT '[]',
       updated_at INTEGER NOT NULL
     );`);
+    db.exec(`CREATE TABLE IF NOT EXISTS hosts (
+      id TEXT PRIMARY KEY,
+      url TEXT NOT NULL UNIQUE,
+      label TEXT,
+      created_at INTEGER NOT NULL,
+      last_used_at INTEGER NOT NULL,
+      active INTEGER NOT NULL DEFAULT 0
+    );`);
   }
   return db;
 }
@@ -98,4 +106,97 @@ export function importLamas(list: Array<{ name?: string; prompt?: string; tags?:
   });
   tx(list);
   return results;
+}
+
+// ---- Ollama Hosts Management ----
+export interface HostRow {
+  id: string;
+  url: string;
+  label?: string | null;
+  created_at: number;
+  last_used_at: number;
+  active: number; // 0/1
+}
+
+export function listHosts(): HostRow[] {
+  return getDb()
+    .prepare('SELECT * FROM hosts ORDER BY active DESC, last_used_at DESC, created_at DESC')
+    .all() as HostRow[];
+}
+
+export function getActiveHost(): HostRow | undefined {
+  return getDb().prepare('SELECT * FROM hosts WHERE active = 1 LIMIT 1').get() as
+    | HostRow
+    | undefined;
+}
+
+export function addHost(url: string, label?: string): HostRow {
+  const existing = getDb().prepare('SELECT * FROM hosts WHERE url = ?').get(url) as
+    | HostRow
+    | undefined;
+  const now = Date.now();
+  if (existing) {
+    // Optionally update label
+    if (label && label !== existing.label) {
+      getDb().prepare('UPDATE hosts SET label=@label WHERE id=@id').run({ id: existing.id, label });
+    }
+    return existing;
+  }
+  const id = safeUuid();
+  getDb()
+    .prepare(
+      'INSERT INTO hosts (id, url, label, created_at, last_used_at, active) VALUES (@id, @url, @label, @created_at, @last_used_at, 0)',
+    )
+    .run({ id, url, label: label || null, created_at: now, last_used_at: now });
+  return getDb().prepare('SELECT * FROM hosts WHERE id=?').get(id) as HostRow;
+}
+
+export function activateHost(id: string): HostRow | undefined {
+  const dbi = getDb();
+  const existing = dbi.prepare('SELECT * FROM hosts WHERE id = ?').get(id) as HostRow | undefined;
+  if (!existing) return undefined;
+  const now = Date.now();
+  const tx = dbi.transaction(() => {
+    dbi.prepare('UPDATE hosts SET active = 0').run();
+    dbi.prepare('UPDATE hosts SET active = 1, last_used_at = @now WHERE id = @id').run({ id, now });
+  });
+  tx();
+  return dbi.prepare('SELECT * FROM hosts WHERE id = ?').get(id) as HostRow;
+}
+
+export function deleteHost(id: string) {
+  const dbi = getDb();
+  const row = dbi.prepare('SELECT * FROM hosts WHERE id = ?').get(id) as HostRow | undefined;
+  if (!row) return;
+  dbi.prepare('DELETE FROM hosts WHERE id = ?').run(id);
+  // If it was active, try to promote most recent remaining
+  if (row.active) {
+    const next = dbi
+      .prepare('SELECT id FROM hosts ORDER BY last_used_at DESC, created_at DESC LIMIT 1')
+      .get() as { id: string } | undefined;
+    if (next) activateHost(next.id);
+  }
+}
+
+export function updateHost(
+  id: string,
+  patch: { url?: string; label?: string },
+): HostRow | undefined {
+  const dbi = getDb();
+  const existing = dbi.prepare('SELECT * FROM hosts WHERE id = ?').get(id) as HostRow | undefined;
+  if (!existing) return undefined;
+  const nextUrl = patch.url?.trim() || existing.url;
+  const nextLabel = (patch.label === undefined ? existing.label : patch.label) || null;
+  if (nextUrl !== existing.url) {
+    const conflict = dbi
+      .prepare('SELECT id FROM hosts WHERE url = ? AND id != ?')
+      .get(nextUrl, id) as { id: string } | undefined;
+    if (conflict) {
+      throw new Error('URL already exists');
+    }
+  }
+  dbi
+    .prepare('UPDATE hosts SET url=@url, label=@label WHERE id=@id')
+    .run({ id, url: nextUrl, label: nextLabel });
+  return dbi.prepare('SELECT * FROM hosts WHERE id = ?').get(id) as HostRow;
 }

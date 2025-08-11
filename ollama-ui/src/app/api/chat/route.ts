@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { resolveOllamaHost } from '@/lib/env';
+import { resolveOllamaHostServer } from '@/lib/host-resolve-server';
 
 interface UpstreamMessageChunk {
   message?: { content?: string };
@@ -8,7 +8,7 @@ interface UpstreamMessageChunk {
   [key: string]: unknown;
 }
 
-export const runtime = 'edge';
+export const runtime = 'nodejs';
 
 /*
 POST body: { model: string, messages: { role: 'user'|'assistant'|'system', content: string }[], stream?: boolean }
@@ -22,7 +22,13 @@ export async function POST(req: NextRequest) {
     if (!model) {
       return new Response(JSON.stringify({ error: 'Missing model' }), { status: 400 });
     }
-    const base = resolveOllamaHost(req);
+    const base = resolveOllamaHostServer(req);
+    if (!base) {
+      return new Response(JSON.stringify({ error: 'No host configured', code: 'NO_HOST' }), {
+        status: 428,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
     const upstream = await fetch(`${base}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
