@@ -460,6 +460,8 @@ RUN cd /app/node_modules/.pnpm/better-sqlite3@*/node_modules/better-sqlite3 && \
 - Added nightly Docker build schedule (02:30 UTC) to CI workflow.
 - Implemented Add Host modal connectivity test ("Ollama is running" or fallback to /api/tags) with timeout.
 - Introduced Release Notes, Disclaimer sections in README.
+- Active host header badge now updates instantly after activating a host (custom `active-host-changed` event dispatch from Models view).
+- Replaced remaining `any` usages with typed interfaces (Hosts API) to satisfy ESLint `@typescript-eslint/no-explicit-any` rule.
 
 ### Earlier Changes
 - Initial feature set: installed models list, pull & delete, remote catalog browsing with variants, toasts, streaming chat endpoint, Python scraper integration, Docker build (combined Ollama + UI), gradient UI theme.
