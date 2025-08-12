@@ -1,21 +1,29 @@
-# News / Release Notes 📝
-
 Chronological list of notable changes to Ollama UI.
 
 ## 2025-08-12
 
-- Added News page
+- **Dashboard Integration:**
+  - Added a new Dashboard view combining model statistics, interactive charts, and release notes in one place.
+  - Visualizations include bar and pie charts for model sizes and distribution.
+  - Model stats update automatically when switching hosts.
+  - Release notes/news are now shown directly in the dashboard; the separate News page and menu entry have been removed.
+  - UI and navigation streamlined for easier access to all features.
 
----
+- **Navigation Restoration:**
+  - Chat view is now available again at `/chat` with a dedicated navigation link.
+  - Dashboard remains the start page and first in the menu.
 
-- Added Host Manager modal accessible from header (gear icon) with add/edit/delete/test & activation.
-  ![Host indicator](host_man1.png)
-  When now clicking on "Gear-Button" you will get modal for host settings:
-  ![Host Manager Modal](host_man2.png)
-  Here you can switch between host, add new hosts and so on.
-- Enhanced host indicator (full URL + label tooltip, status & latency display).
-- Because of new "Add Host Manager model" I removed inline host management from Models view; centralized management in header.
-- Improved Docker build workflow logic (conditional builds based on relevant changes & base image digest) earlier in development cycle.
+- **Host Manager & Indicator:**
+  - Host Manager modal accessible from header (gear icon) with add/edit/delete/test & activation.
+    ![Host indicator](host_man1.png)
+    When now clicking on "Gear-Button" you will get modal for host settings:
+    ![Host Manager Modal](host_man2.png)
+    Here you can switch between host, add new hosts and so on.
+  - Enhanced host indicator (full URL + label tooltip, status & latency display).
+  - Inline host management removed from Models view; centralized management in header.
+
+- **Build & Workflow:**
+  - Improved Docker build workflow logic (conditional builds based on relevant changes & base image digest) earlier in development cycle.
 
 ## 2025-08-11
 

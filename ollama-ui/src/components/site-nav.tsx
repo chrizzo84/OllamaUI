@@ -10,9 +10,9 @@ interface NavItem {
 }
 
 const items: NavItem[] = [
-  { href: '/', label: 'Chat', match: (p) => p === '/' },
+  { href: '/dashboard', label: 'Dashboard', match: (p) => p.startsWith('/dashboard') || p === '/' },
+  { href: '/chat', label: 'Chat', match: (p) => p.startsWith('/chat') },
   { href: '/models', label: 'Models', match: (p) => p.startsWith('/models') },
-  { href: '/news', label: 'News', match: (p) => p.startsWith('/news') },
 ];
 
 export function SiteNav() {
