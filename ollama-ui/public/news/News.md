@@ -2,13 +2,18 @@ Chronological list of notable changes to Ollama UI.
 
 ## 2025-08-12
 
+- **Chat View**
+  - Added indicator which models are loaded in Ollama (api/ps)
+    ![Loaded Models](ollama_loaded.png)
+
 - **Dashboard Integration:**
   - Added a new Dashboard view combining model statistics, interactive charts, and release notes in one place.
   - Visualizations include bar and pie charts for model sizes and distribution.
   - Model stats update automatically when switching hosts.
+    ![Dashboard](dashboard.png)
   - Release notes/news are now shown directly in the dashboard; the separate News page and menu entry have been removed.
   - UI and navigation streamlined for easier access to all features.
-
+    ![News](news.png)
 - **Navigation Restoration:**
   - Chat view is now available again at `/chat` with a dedicated navigation link.
   - Dashboard remains the start page and first in the menu.
