@@ -11,6 +11,10 @@
   <b>Modern, reactive web interface for exploring Ollama models, browsing a scraped public catalog, pulling variants with streaming progress, and managing locally installed models.</b>
 </p>
 
+<p align="center">
+	<em>What exactly is this? You’ll find a short, visual explanation in <a href="./what_is/WHAT_IS.md"><code>what_is/WHAT_IS.md</code></a> (incl. Screenshots). 👈</em>
+</p>
+
 
 ## Table of Contents
 
