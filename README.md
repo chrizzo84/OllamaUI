@@ -30,6 +30,7 @@
 14. [License](#14-license-)
 15. [At A Glance](#15-at-a-glance-)
 16. [Disclaimer / Infos](#16-disclaimer--infos-)
+17. [Release Notes](#17-release-notes)
 
 ## 1. Features ✨
 
@@ -399,6 +400,7 @@ Distributed under the MIT License. See the `LICENSE` file for full text.
 <details>
 <summary><strong>⚡️ Disclaimer: Vibe Coding & Copilot ⚡️</strong></summary>
 
+---
 <p>
 <em>
 🚀 This app was created exclusively through <strong>Vibe Coding</strong> – basically just as a test of GPT-5 via GitHub Copilot.<br>
@@ -444,6 +446,10 @@ RUN cd /app/node_modules/.pnpm/better-sqlite3@*/node_modules/better-sqlite3 && \
 
 ---
 
+
+### 17. Release Notes
+
+See the latest changes and release notes [here](./ollama-ui/public/news/News.md)
 
 
 
