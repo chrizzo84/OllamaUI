@@ -1,4 +1,4 @@
 #!/usr/bin/env sh
-. "$(dirname -- "$0")/_/husky.sh"
 
+# Simplified per Husky v9 deprecation notice (removed shim sourcing).
 cd ollama-ui && pnpm lint-staged

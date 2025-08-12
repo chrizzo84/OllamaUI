@@ -28,6 +28,97 @@ body {
     BlinkMacSystemFont;
 }
 
+/* Basic typography fallback for markdown (.prose) if tailwind typography plugin not active */
+.prose {
+  --tw-prose-body: theme(colors.white/70);
+  max-width: 65ch;
+}
+.prose h1,
+.prose h2,
+.prose h3,
+.prose h4 {
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+}
+.prose h1 {
+  font-size: 2rem;
+  margin-top: 2.5rem;
+  margin-bottom: 1rem;
+}
+.prose h2 {
+  font-size: 1.5rem;
+  margin-top: 2rem;
+  margin-bottom: 0.75rem;
+}
+.prose h3 {
+  font-size: 1.25rem;
+  margin-top: 1.5rem;
+  margin-bottom: 0.5rem;
+}
+.prose p {
+  margin-top: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+.prose ul,
+.prose ol {
+  margin: 0.75rem 0 0.75rem 1.25rem;
+  padding: 0;
+  list-style: disc;
+}
+.prose li {
+  margin: 0.25rem 0;
+}
+.prose code {
+  background: rgba(255, 255, 255, 0.08);
+  padding: 0.15rem 0.4rem;
+  border-radius: 4px;
+  font-size: 0.85em;
+}
+.prose pre {
+  background: #111827;
+  color: #e5e7eb;
+  padding: 1rem;
+  border-radius: 0.75rem;
+  overflow: auto;
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+.prose table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1rem 0;
+  font-size: 0.8rem;
+}
+.prose th,
+.prose td {
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  padding: 0.4rem 0.6rem;
+  text-align: left;
+}
+.prose a {
+  color: #818cf8;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+}
+.prose hr {
+  border-color: rgba(255, 255, 255, 0.1);
+  margin: 2rem 0;
+}
+.prose blockquote {
+  border-left: 4px solid rgba(255, 255, 255, 0.2);
+  padding-left: 1rem;
+  font-style: italic;
+  color: rgba(255, 255, 255, 0.7);
+  margin: 1rem 0;
+}
+.prose strong {
+  color: #fff;
+}
+.prose em {
+  color: #d1d5db;
+}
+
 /* Fancy focus outline fallback */
 :focus-visible {
   outline: 2px solid rgba(var(--accent-glow) / 0.8);
@@ -41,7 +132,10 @@ body {
   scrollbar-color: #3b4258 #0d0f17;
 }
 /* WebKit */
-*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
 *::-webkit-scrollbar-track {
   background: linear-gradient(180deg, #0d0f17, #141b2d 55%, #1d1329);
 }
@@ -53,7 +147,9 @@ body {
 *::-webkit-scrollbar-thumb:hover {
   background: linear-gradient(180deg, #354055, #49516a 45%, #5a376d);
 }
-*::-webkit-scrollbar-corner { background: #0d0f17; }
+*::-webkit-scrollbar-corner {
+  background: #0d0f17;
+}
 
 ::selection {
   background: #6366f1aa;
