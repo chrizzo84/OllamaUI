@@ -67,41 +67,8 @@ jobs:
           BASE_DIGEST=${DIGEST_LINE##*@}
           echo "Current base image digest: $BASE_DIGEST"
           echo "digest=$BASE_DIGEST" >> $GITHUB_OUTPUT
-
-      - name: Skip check (all events) - skip if same commit & base image digest
-        id: skip_check
-        run: |
-          set -euo pipefail
-          SHORT_SHA=$(git rev-parse --short=7 HEAD)
-          IMAGE="ghcr.io/${{ steps.names.outputs.lower }}:sha-${SHORT_SHA}"
-          CUR_BASE_DIGEST='${{ steps.base_digest.outputs.digest }}'
-          echo "Evaluating whether to skip build for event: $GITHUB_EVENT_NAME"
-          echo "Target image: $IMAGE"
-          NEED_BUILD=true
-          if docker manifest inspect "$IMAGE" > /dev/null 2>&1; then
-            echo "Image with same commit SHA already exists. Checking base image digest..."
-            docker pull -q "$IMAGE" > /dev/null 2>&1 || true
-            EXISTING_BASE_DIGEST=$(docker inspect -f '{{ index .Config.Labels "base.image.digest"}}' "$IMAGE" 2>/dev/null || echo 'unknown')
-            echo "Current base digest: $CUR_BASE_DIGEST"
-            echo "Existing base digest in published image: $EXISTING_BASE_DIGEST"
-            if [ "$EXISTING_BASE_DIGEST" = "$CUR_BASE_DIGEST" ] && [ -n "$EXISTING_BASE_DIGEST" ] && [ "$EXISTING_BASE_DIGEST" != "unknown" ]; then
-              echo "Commit + base digest unchanged -> skip build & push"
-              NEED_BUILD=false
-            else
-              echo "Base digest differs or missing -> rebuild"
-            fi
-          else
-            echo "No image for this commit SHA yet -> build required"
-          fi
-          if [ "$NEED_BUILD" = true ]; then
-            echo "skip=false" >> $GITHUB_OUTPUT
-          else
-            echo "skip=true" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Extract Docker metadata
+      - name: Extract Docker metadata (always run to know actual tags)
         id: meta
-        if: steps.skip_check.outputs.skip != 'true'
         uses: docker/metadata-action@v5
         with:
           images: |
@@ -121,6 +88,64 @@ jobs:
             base.image=ollama/ollama:latest
             base.image.digest=${{ steps.base_digest.outputs.digest }}
             build.triggered.by=${{ github.event_name }}
+
+      - name: Derive sha tag reference
+        id: sha_ref
+        run: |
+          set -euo pipefail
+          echo "All computed tags (comma separated):"
+          echo '${{ steps.meta.outputs.tags }}'
+          # Find a tag with :sha-<7hex>
+          SHA_TAG=$(echo '${{ steps.meta.outputs.tags }}' | tr ',' '\n' | grep -E ':sha-[0-9a-f]{7}$' | head -n1 || true)
+          if [ -z "$SHA_TAG" ]; then
+            # Fallback construct (metadata action usually uses short sha)
+            SHORT_SHA=$(git rev-parse --short=7 HEAD)
+            SHA_TAG="ghcr.io/${{ steps.names.outputs.lower }}:sha-${SHORT_SHA}"
+            echo "Fallback sha tag reference constructed: $SHA_TAG"
+          else
+            echo "Detected sha tag from metadata: $SHA_TAG"
+          fi
+          echo "image_ref=$SHA_TAG" >> $GITHUB_OUTPUT
+
+      - name: Skip check (all events) - skip if same commit & base image digest
+        id: skip_check
+        run: |
+          set -euo pipefail
+          IMAGE='${{ steps.sha_ref.outputs.image_ref }}'
+          CUR_BASE_DIGEST='${{ steps.base_digest.outputs.digest }}'
+          echo "Evaluating whether to skip build for event: $GITHUB_EVENT_NAME"
+          echo "Candidate commit SHA: $(git rev-parse --short=7 HEAD)"
+            
+          NEED_BUILD=true
+          if [ -z "$IMAGE" ]; then
+            echo "No image reference derived; will build."
+          elif docker manifest inspect "$IMAGE" > /dev/null 2>&1; then
+            echo "Image $IMAGE already exists. Checking base image digest label..."
+            docker pull -q "$IMAGE" > /dev/null 2>&1 || true
+            EXISTING_BASE_DIGEST=$(docker inspect -f '{{ index .Config.Labels "base.image.digest"}}' "$IMAGE" 2>/dev/null || echo 'unknown')
+            echo "Current base digest: $CUR_BASE_DIGEST"
+            echo "Existing base digest: $EXISTING_BASE_DIGEST"
+            if [ "$EXISTING_BASE_DIGEST" = "$CUR_BASE_DIGEST" ] && [ -n "$EXISTING_BASE_DIGEST" ] && [ "$EXISTING_BASE_DIGEST" != "unknown" ]; then
+              echo "Commit + base digest unchanged -> skip build & push"
+              NEED_BUILD=false
+            else
+              echo "Base digest differs/missing -> rebuild"
+            fi
+          else
+            echo "No existing image manifest for $IMAGE -> build required"
+          fi
+          if [ "$NEED_BUILD" = true ]; then echo "skip=false" >> $GITHUB_OUTPUT; else echo "skip=true" >> $GITHUB_OUTPUT; fi
+
+      - name: Show decision context
+        run: |
+          echo "Skip flag: ${{ steps.skip_check.outputs.skip }}"
+          echo "SHA image ref: ${{ steps.sha_ref.outputs.image_ref }}"
+          echo "Base digest: ${{ steps.base_digest.outputs.digest }}"
+
+      - name: Guard (stop early if skipping)
+        if: steps.skip_check.outputs.skip == 'true'
+        run: |
+          echo "Skipping build & push steps."
 
       - name: Build and push (single-arch amd64)
         if: steps.skip_check.outputs.skip != 'true'
