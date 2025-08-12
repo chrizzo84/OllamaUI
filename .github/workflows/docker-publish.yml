@@ -35,6 +35,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # need history for diff against previous built commit
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -112,76 +114,83 @@ jobs:
         id: skip_check
         run: |
           set -euo pipefail
-          IMAGE='${{ steps.sha_ref.outputs.image_ref }}'
+          CURRENT_SHA=$(git rev-parse --short=7 HEAD)
           CUR_BASE_DIGEST='${{ steps.base_digest.outputs.digest }}'
-          echo "Evaluating whether to skip build for event: $GITHUB_EVENT_NAME"
-          echo "Candidate commit SHA: $(git rev-parse --short=7 HEAD)"
-            
-          NEED_BUILD=true
-          if [ -z "$IMAGE" ]; then
-            echo "No image reference derived; will build."
-          elif docker manifest inspect "$IMAGE" > /dev/null 2>&1; then
-            echo "Image $IMAGE already exists. Checking base image digest label..."
-            docker pull -q "$IMAGE" > /dev/null 2>&1 || true
-            EXISTING_BASE_DIGEST=$(docker inspect -f '{{ index .Config.Labels "base.image.digest"}}' "$IMAGE" 2>/dev/null || echo 'unknown')
-            echo "Current base digest: $CUR_BASE_DIGEST"
-            echo "Existing base digest: $EXISTING_BASE_DIGEST"
-            if [ "$EXISTING_BASE_DIGEST" = "$CUR_BASE_DIGEST" ] && [ -n "$EXISTING_BASE_DIGEST" ] && [ "$EXISTING_BASE_DIGEST" != "unknown" ]; then
-              echo "Commit + base digest unchanged -> skip build & push"
-              NEED_BUILD=false
+          SHA_IMAGE="ghcr.io/${{ steps.names.outputs.lower }}:sha-${CURRENT_SHA}"
+          echo "Event: $GITHUB_EVENT_NAME"
+          echo "Current short SHA: $CURRENT_SHA"
+          echo "Candidate sha image tag: $SHA_IMAGE"
+
+          # Quick path: if image for this commit already exists AND base digest label matches -> skip
+          if docker manifest inspect "$SHA_IMAGE" > /dev/null 2>&1; then
+            docker pull -q "$SHA_IMAGE" > /dev/null 2>&1 || true
+            EXIST_BASE=$(docker inspect -f '{{ index .Config.Labels "base.image.digest"}}' "$SHA_IMAGE" 2>/dev/null || echo '')
+            if [ -n "$EXIST_BASE" ] && [ "$EXIST_BASE" = "$CUR_BASE_DIGEST" ]; then
+              echo "Identical image (commit + base digest) already published -> skip"
+              echo "skip=true" >> $GITHUB_OUTPUT
+              exit 0
             else
-              echo "Base digest differs/missing -> rebuild"
-            fi
-          else
-            echo "No existing image manifest for $IMAGE"
-            echo "Attempting relevance-based skip (only run if no relevant files changed and latest image base digest matches)."
-            # Determine changed files vs previous commit (simple heuristic; merge commits may differ)
-            if git rev-parse HEAD^ >/dev/null 2>&1; then
-              git diff --name-only HEAD^ HEAD > /tmp/changed_files.txt
-            else
-              echo "Single commit repository state; cannot diff -> build required.";
-              CHANGED_FORCE_BUILD=1
-            fi
-            echo "Changed files:"
-            cat /tmp/changed_files.txt || true
-            # Relevant path patterns (regex for grep -E)
-            RELEVANT_PATTERNS='^(Dockerfile(\\.multi-platform)?|build.sh|ollama-ui/|Scraper/|Dockerfile|Dockerfile.multi-platform)'
-            # Explicitly exclude README changes from triggering a build
-            EXCLUDE_PATTERNS='^(README(\\..*)?)$'
-            if [ -f /tmp/changed_files.txt ]; then
-              grep -Ev "$EXCLUDE_PATTERNS" /tmp/changed_files.txt > /tmp/changed_files.filtered || true
-            fi
-            echo "Filtered (non-excluded) changed files (README.* removed):"
-            cat /tmp/changed_files.filtered || true
-            if [ -z "${CHANGED_FORCE_BUILD:-}" ]; then
-              TARGET_LIST=/tmp/changed_files.filtered
-              # If filter file empty fall back to original to avoid empty grep edge cases
-              if [ ! -s "$TARGET_LIST" ]; then TARGET_LIST=/tmp/changed_files.txt; fi
-              if grep -E "$RELEVANT_PATTERNS" "$TARGET_LIST" >/dev/null 2>&1; then
-                echo "Relevant changes detected -> build required"
-              else
-                echo "No relevant path changes. Checking latest image for equivalence."
-                LATEST_IMAGE="ghcr.io/${{ steps.names.outputs.lower }}:latest"
-                if docker manifest inspect "$LATEST_IMAGE" > /dev/null 2>&1; then
-                  docker pull -q "$LATEST_IMAGE" > /dev/null 2>&1 || true
-                  LATEST_BASE_DIGEST=$(docker inspect -f '{{ index .Config.Labels "base.image.digest"}}' "$LATEST_IMAGE" 2>/dev/null || echo 'unknown')
-                  LATEST_COMMIT_SHA=$(docker inspect -f '{{ index .Config.Labels "commit.sha"}}' "$LATEST_IMAGE" 2>/dev/null || echo 'unknown')
-                  echo "Latest image base digest: $LATEST_BASE_DIGEST"
-                  echo "Latest image commit sha: $LATEST_COMMIT_SHA"
-                  echo "Current commit sha: ${GITHUB_SHA}"
-                  if [ "$LATEST_BASE_DIGEST" = "$CUR_BASE_DIGEST" ] && [ "$LATEST_BASE_DIGEST" != "unknown" ]; then
-                    echo "Base digest unchanged and no relevant changes -> skip build"
-                    NEED_BUILD=false
-                  else
-                    echo "Base digest differs (or unknown) -> build required"
-                  fi
-                else
-                  echo "Latest tag not present -> build required"
-                fi
-              fi
+              echo "Commit image exists but base digest differs/missing -> rebuild"
             fi
           fi
-          if [ "$NEED_BUILD" = true ]; then echo "skip=false" >> $GITHUB_OUTPUT; else echo "skip=true" >> $GITHUB_OUTPUT; fi
+
+          # Determine previous built commit via latest tag (may be same digest)
+          PREV_SHA=""
+          LATEST_IMAGE="ghcr.io/${{ steps.names.outputs.lower }}:latest"
+          if docker manifest inspect "$LATEST_IMAGE" > /dev/null 2>&1; then
+            docker pull -q "$LATEST_IMAGE" > /dev/null 2>&1 || true
+            PREV_SHA=$(docker inspect -f '{{ index .Config.Labels "commit.sha"}}' "$LATEST_IMAGE" 2>/dev/null || echo '')
+            PREV_BASE_DIGEST=$(docker inspect -f '{{ index .Config.Labels "base.image.digest"}}' "$LATEST_IMAGE" 2>/dev/null || echo '')
+            echo "Previous built commit (from latest tag): $PREV_SHA"
+            echo "Previous base digest: $PREV_BASE_DIGEST"
+          else
+            echo "No latest image present. Will build (first build)."
+          fi
+
+          # Determine changed files between PREV_SHA and HEAD (if PREV_SHA available and in repo)
+          RELEVANT_CHANGED=false
+          BASE_CHANGED=false
+          if [ -n "$PREV_BASE_DIGEST" ] && [ "$PREV_BASE_DIGEST" != "$CUR_BASE_DIGEST" ]; then
+            BASE_CHANGED=true
+          fi
+          echo "Base changed? $BASE_CHANGED"
+
+          if [ -n "$PREV_SHA" ] && git cat-file -e "$PREV_SHA^{commit}" 2>/dev/null; then
+            echo "Computing diff vs previous built commit $PREV_SHA"
+            git diff --name-only "$PREV_SHA" HEAD > /tmp/changed_files_full.txt
+          else
+            echo "No previous commit available for diff (building)."
+            # Force treat as changed (so build will proceed unless base also unchanged and no ref) but we can still examine HEAD^ fallback
+            if git rev-parse HEAD^ >/dev/null 2>&1; then
+              git diff --name-only HEAD^ HEAD > /tmp/changed_files_full.txt || true
+            fi
+          fi
+          echo "All changed files:"
+          cat /tmp/changed_files_full.txt || true
+
+          # Exclusions (README*, this workflow file)
+          EXCLUDE_REGEX='^(README(\..*)?|.github/workflows/docker-publish.yml)$'
+          if [ -f /tmp/changed_files_full.txt ]; then
+            grep -Ev "$EXCLUDE_REGEX" /tmp/changed_files_full.txt > /tmp/changed_files.txt || true
+          fi
+          echo "Filtered changed files (exclusions removed):"
+          cat /tmp/changed_files.txt || true
+
+          # Relevant patterns (code / build impacting)
+          RELEVANT_REGEX='^(Dockerfile(\.multi-platform)?|build.sh|ollama-ui/|Scraper/|Dockerfile|Dockerfile.multi-platform)'
+          if [ -s /tmp/changed_files.txt ] && grep -E "$RELEVANT_REGEX" /tmp/changed_files.txt >/dev/null 2>&1; then
+            RELEVANT_CHANGED=true
+          fi
+          echo "Relevant changed? $RELEVANT_CHANGED"
+
+          # Decision: Build only if (RELEVANT_CHANGED == true) OR (BASE_CHANGED == true). Else skip.
+          if [ "$RELEVANT_CHANGED" = true ] || [ "$BASE_CHANGED" = true ]; then
+            echo "skip=false" >> $GITHUB_OUTPUT
+            echo "Will build (relevant changes or base changed)."
+          else
+            echo "skip=true" >> $GITHUB_OUTPUT
+            echo "Skipping: no relevant code changes AND base image unchanged."
+          fi
 
       - name: Show decision context
         run: |
