@@ -169,7 +169,8 @@ jobs:
           cat /tmp/changed_files_full.txt || true
 
           # Exclusions (README*, this workflow file)
-          EXCLUDE_REGEX='^(README(\..*)?|.github/workflows/docker-publish.yml)$'
+          # Exclude docs / meta only changes (now also the what_is/ docs folder) so they don't force a rebuild
+          EXCLUDE_REGEX='^(README(\..*)?|.github/workflows/docker-publish.yml|what_is/.*)$'
           if [ -f /tmp/changed_files_full.txt ]; then
             grep -Ev "$EXCLUDE_REGEX" /tmp/changed_files_full.txt > /tmp/changed_files.txt || true
           fi
