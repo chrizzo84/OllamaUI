@@ -68,31 +68,30 @@ jobs:
           echo "Current base image digest: $BASE_DIGEST"
           echo "digest=$BASE_DIGEST" >> $GITHUB_OUTPUT
 
-      - name: Skip check (schedule only - skip if image for commit already exists)
+      - name: Skip check (all events) - skip if same commit & base image digest
         id: skip_check
-        if: github.event_name == 'schedule'
         run: |
           set -euo pipefail
           SHORT_SHA=$(git rev-parse --short=7 HEAD)
           IMAGE="ghcr.io/${{ steps.names.outputs.lower }}:sha-${SHORT_SHA}"
           CUR_BASE_DIGEST='${{ steps.base_digest.outputs.digest }}'
-          echo "Checking if image already exists: $IMAGE"
+          echo "Evaluating whether to skip build for event: $GITHUB_EVENT_NAME"
+          echo "Target image: $IMAGE"
           NEED_BUILD=true
           if docker manifest inspect "$IMAGE" > /dev/null 2>&1; then
-            echo "Image with same commit SHA exists. Verifying base image digest..."
-            # Pull (quiet) to read labels
+            echo "Image with same commit SHA already exists. Checking base image digest..."
             docker pull -q "$IMAGE" > /dev/null 2>&1 || true
             EXISTING_BASE_DIGEST=$(docker inspect -f '{{ index .Config.Labels "base.image.digest"}}' "$IMAGE" 2>/dev/null || echo 'unknown')
             echo "Current base digest: $CUR_BASE_DIGEST"
             echo "Existing base digest in published image: $EXISTING_BASE_DIGEST"
-            if [ "$EXISTING_BASE_DIGEST" = "$CUR_BASE_DIGEST" ] && [ "$EXISTING_BASE_DIGEST" != "" ] && [ "$EXISTING_BASE_DIGEST" != "unknown" ]; then
-              echo "Base image digest unchanged. Skipping build & push."
+            if [ "$EXISTING_BASE_DIGEST" = "$CUR_BASE_DIGEST" ] && [ -n "$EXISTING_BASE_DIGEST" ] && [ "$EXISTING_BASE_DIGEST" != "unknown" ]; then
+              echo "Commit + base digest unchanged -> skip build & push"
               NEED_BUILD=false
             else
-              echo "Base image digest changed or missing. Rebuild required."
+              echo "Base digest differs or missing -> rebuild"
             fi
           else
-            echo "No existing image for this commit found. Rebuild required."
+            echo "No image for this commit SHA yet -> build required"
           fi
           if [ "$NEED_BUILD" = true ]; then
             echo "skip=false" >> $GITHUB_OUTPUT
@@ -102,7 +101,7 @@ jobs:
 
       - name: Extract Docker metadata
         id: meta
-        if: ${{ github.event_name != 'schedule' || steps.skip_check.outputs.skip != 'true' }}
+        if: steps.skip_check.outputs.skip != 'true'
         uses: docker/metadata-action@v5
         with:
           images: |
@@ -124,7 +123,7 @@ jobs:
             build.triggered.by=${{ github.event_name }}
 
       - name: Build and push (single-arch amd64)
-        if: ${{ github.event_name != 'schedule' || steps.skip_check.outputs.skip != 'true' }}
+        if: steps.skip_check.outputs.skip != 'true'
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -139,8 +138,8 @@ jobs:
 
       - name: Summarize
         run: |
-          if [ "${{ github.event_name }}" = "schedule" ] && [ "${{ steps.skip_check.outputs.skip }}" = "true" ]; then
-            echo "Scheduled run: No changes since last build. Push skipped." >> $GITHUB_STEP_SUMMARY
+          if [ "${{ steps.skip_check.outputs.skip }}" = "true" ]; then
+            echo "Build skipped: existing image for commit with identical base digest." >> $GITHUB_STEP_SUMMARY
           else
             echo "Published (lowercase) image: ghcr.io/${{ steps.names.outputs.lower }}" >> $GITHUB_STEP_SUMMARY
             echo "Tags:" >> $GITHUB_STEP_SUMMARY
