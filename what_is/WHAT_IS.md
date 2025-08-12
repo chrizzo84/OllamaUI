@@ -1,4 +1,4 @@
-# Ollama UI – User Guide
+# Ollama UI – What is it?
 ## 1. Overview
 Welcome to the Ollama UI! Think of it as the cockpit of your AI plane: you push the buttons, the complexity stays in the engine room. With Ollama UI you manage models, chat with them, and control connections to your hosts—all in a clean web interface that doesn’t look like a 90s admin panel.
 
