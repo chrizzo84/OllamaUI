@@ -10,7 +10,7 @@ interface NavItem {
 }
 
 const items: NavItem[] = [
-  { href: '/dashboard', label: 'Dashboard', match: (p) => p.startsWith('/dashboard') || p === '/' },
+  { href: '/', label: 'Dashboard', match: (p) => p === '/' },
   { href: '/chat', label: 'Chat', match: (p) => p.startsWith('/chat') },
   { href: '/models', label: 'Models', match: (p) => p.startsWith('/models') },
 ];
