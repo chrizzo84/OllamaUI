@@ -30,7 +30,6 @@
 14. [License](#14-license-)
 15. [At A Glance](#15-at-a-glance-)
 16. [Disclaimer / Infos](#16-disclaimer--infos-)
-17. [Release Notes](#17-release-notes-)
 
 ## 1. Features ✨
 
@@ -441,30 +440,7 @@ RUN cd /app/node_modules/.pnpm/better-sqlite3@*/node_modules/better-sqlite3 && \
 
 </details>
 
-## 17. Release Notes 📝
 
-> High‑level changelog of notable user‑facing changes. (Semantic versions can be introduced later; for now entries are grouped by date.)
-
-### Current main
-- Added multi‑host management (save, edit, activate, delete) persisted in SQLite.
-- Removed legacy cookie + fallback host resolution; now a host must be explicitly added & activated (or provided via header / env on server routes).
-- Added global Active Host indicator (header badge) with connectivity & latency test (click to retest).
-- Introduced Add Host modal with inline URL validation & connectivity Test button.
-- Added inline edit for saved hosts (URL & label) with conflict detection.
-- Added host connectivity test API: `POST /api/hosts/test`.
-- Added capability filters (Embedding / Vision / Tools / Thinking) + clear button to catalog view.
-- Improved catalog display: "Showing X of Y models" with proper total fallback logic.
-- Grouped search, filters, limit selector into cohesive panel; improved layout order (Pull box now directly under catalog header).
-- Added progress bar & NDJSON parsing improvements for model pull (percentage derivation if missing upstream).
-- Added defensive JSON parsing & error handling across host/model routes; uniform 428 response when no host configured.
-- Added nightly Docker build schedule (02:30 UTC) to CI workflow.
-- Implemented Add Host modal connectivity test ("Ollama is running" or fallback to /api/tags) with timeout.
-- Introduced Release Notes, Disclaimer sections in README.
-- Active host header badge now updates instantly after activating a host (custom `active-host-changed` event dispatch from Models view).
-- Replaced remaining `any` usages with typed interfaces (Hosts API) to satisfy ESLint `@typescript-eslint/no-explicit-any` rule.
-
-### Earlier Changes
-- Initial feature set: installed models list, pull & delete, remote catalog browsing with variants, toasts, streaming chat endpoint, Python scraper integration, Docker build (combined Ollama + UI), gradient UI theme.
 
 ---
 

@@ -1,8 +1,10 @@
 'use client';
 import { useEffect, useState } from 'react';
+import { HostManagerModal } from '@/components/host-manager-modal';
 
 interface HostState {
   url: string | null;
+  label?: string | null;
   loading: boolean;
   error: string | null;
   reachable: boolean | null;
@@ -32,19 +34,28 @@ async function testHost(
 export function HostIndicator() {
   const [state, setState] = useState<HostState>({
     url: null,
+    label: null,
     loading: true,
     error: null,
     reachable: null,
   });
   const [refreshIdx, setRefreshIdx] = useState(0);
+  const [openManager, setOpenManager] = useState(false);
 
-  // Listen for global active host change events dispatched from models page to trigger immediate refresh
+  // Listen for global active host change events (refresh) and modal open requests
   useEffect(() => {
-    function handler(e: Event) {
+    function handler() {
       setRefreshIdx((i) => i + 1);
     }
+    function openHandler() {
+      setOpenManager(true);
+    }
     window.addEventListener('active-host-changed', handler as EventListener);
-    return () => window.removeEventListener('active-host-changed', handler as EventListener);
+    window.addEventListener('open-host-manager', openHandler as EventListener);
+    return () => {
+      window.removeEventListener('active-host-changed', handler as EventListener);
+      window.removeEventListener('open-host-manager', openHandler as EventListener);
+    };
   }, []);
 
   useEffect(() => {
@@ -66,15 +77,23 @@ export function HostIndicator() {
           ? (j.hosts as HostsApiRow[]).find((h) => !!h.active)
           : null;
         const url = active?.url || null;
+        const label = active?.label || null;
         if (aborted) return;
         if (!url) {
-          setState({ url: null, loading: false, error: null, reachable: null });
+          setState({ url: null, label: null, loading: false, error: null, reachable: null });
           return;
         }
         const controller = new AbortController();
         const test = await testHost(url, controller.signal);
         if (aborted) return;
-        setState({ url, loading: false, error: null, reachable: test.ok, latency: test.latency });
+        setState({
+          url,
+          label,
+          loading: false,
+          error: null,
+          reachable: test.ok,
+          latency: test.latency,
+        });
       } catch (e: unknown) {
         if (aborted) return;
         setState((s) => ({ ...s, loading: false, error: (e as Error).message, reachable: null }));
@@ -96,29 +115,66 @@ export function HostIndicator() {
   else if (state.reachable === false) pillStyle = 'border-red-500/40 bg-red-500/10 text-red-200';
 
   return (
-    <button
-      type="button"
-      onClick={() => setRefreshIdx((i) => i + 1)}
-      className={`${pillBase} ${pillStyle}`}
-      title="Active Ollama host (click to retest)"
-    >
-      {state.loading && <span>Host…</span>}
-      {!state.loading && !state.url && <span>No host</span>}
-      {!state.loading && state.url && (
-        <>
-          <span className="max-w-[140px] truncate font-mono">
-            {state.url.replace(/^https?:\/\//, '')}
-          </span>
-          {state.reachable === true && (
-            <span className="text-[9px] uppercase tracking-wide opacity-70">
-              OK{typeof state.latency === 'number' ? ` ${state.latency}ms` : ''}
-            </span>
+    <>
+      <div className="flex items-center gap-2">
+        <div
+          className={`${pillBase} ${pillStyle} cursor-default select-text !px-3 inline-flex`}
+          role="status"
+          aria-live={state.loading ? 'polite' : 'off'}
+          title={
+            state.url
+              ? `Active host: ${state.url}${state.label ? ` (${state.label})` : ''}`
+              : 'No active host configured'
+          }
+          data-host-full={state.url || ''}
+        >
+          {state.loading && <span>Host…</span>}
+          {!state.loading && !state.url && <span>No host</span>}
+          {!state.loading && state.url && (
+            <>
+              <span className="font-mono whitespace-nowrap">
+                {state.url.replace(/^https?:\/\//, '')}
+              </span>
+              {state.label && (
+                <span className="text-[9px] uppercase tracking-wide opacity-60">{state.label}</span>
+              )}
+              {state.reachable === true && (
+                <span className="text-[9px] uppercase tracking-wide opacity-70">
+                  OK{typeof state.latency === 'number' ? ` ${state.latency}ms` : ''}
+                </span>
+              )}
+              {state.reachable === false && (
+                <span className="text-[9px] uppercase tracking-wide opacity-70">DOWN</span>
+              )}
+            </>
           )}
-          {state.reachable === false && (
-            <span className="text-[9px] uppercase tracking-wide opacity-70">DOWN</span>
-          )}
-        </>
-      )}
-    </button>
+        </div>
+        <button
+          type="button"
+          onClick={() => setOpenManager(true)}
+          className="h-7 w-7 rounded-md border border-indigo-400/40 bg-indigo-500/20 text-indigo-200 hover:text-white hover:border-indigo-300 hover:bg-indigo-500/30 text-[13px] font-semibold flex items-center justify-center shadow-sm"
+          title="Manage / switch hosts"
+          aria-label="Manage hosts"
+        >
+          ⚙
+        </button>
+        <button
+          type="button"
+          onClick={() => setRefreshIdx((i) => i + 1)}
+          className="h-7 w-7 rounded-md border border-white/15 bg-white/10 text-white/70 hover:text-white hover:border-white/40 hover:bg-white/15 text-[13px] flex items-center justify-center"
+          title="Retest active host"
+        >
+          ↻
+        </button>
+      </div>
+      <HostManagerModal
+        open={openManager}
+        onClose={() => setOpenManager(false)}
+        onActivated={() => {
+          setOpenManager(false);
+          setRefreshIdx((i) => i + 1);
+        }}
+      />
+    </>
   );
 }
