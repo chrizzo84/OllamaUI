@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from 'next/font/google';
 import './globals.css';
 import { AppQueryProvider } from '@/components/query-provider';
 import Link from 'next/link';
+import Image from 'next/image';
 import { SiteNav } from '@/components/site-nav';
 import { HostIndicator } from '@/components/header-brand';
 import { Toaster } from '@/components/toaster';
@@ -49,7 +50,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <head>
         {/* Early inline theme setter to prevent FOUC (reads localStorage BEFORE React hydration) */}
         <script
-           
           dangerouslySetInnerHTML={{
             __html: `(() => {try {var t = localStorage.getItem('ollama_ui_theme'); if (t) { document.documentElement.dataset.theme = t; }} catch(e) { /* ignore */ }} )();`,
           }}
@@ -69,7 +69,14 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                   href="/"
                   className="flex items-center gap-2 font-semibold tracking-tight text-white/90 hover:text-white"
                 >
-                  <img src="/ollama-ui.ico" alt="Logo" className="h-6 w-6" />
+                  <Image
+                    src="/ollama-ui.ico"
+                    alt="Logo"
+                    width={24}
+                    height={24}
+                    className="h-6 w-6"
+                    priority
+                  />
                   <span>Ollama UI</span>
                 </Link>
                 <SiteNav />

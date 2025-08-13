@@ -12,7 +12,7 @@ const KEY = 'ollama_ui_prefs_v1';
 
 type PersistShape = Pick<PrefsState, 'requireDeleteConfirm' | 'autoRefreshModelsSeconds'>;
 
-export const usePrefsStore = create<PrefsState>((set, get) => ({
+export const usePrefsStore = create<PrefsState>((set) => ({
   requireDeleteConfirm: true,
   autoRefreshModelsSeconds: 0,
   setRequireDeleteConfirm: (v) => {

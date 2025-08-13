@@ -74,7 +74,7 @@ export function ChatPanel() {
     }
   }, [model, activeHost]);
   const lamaState = useSystemPromptStore((s) => s);
-  const { systemEnabled, toggleSystemEnabled, setSystemEnabled } = lamaState;
+  const { systemEnabled, setSystemEnabled } = lamaState;
   const {
     currentId,
     profiles,

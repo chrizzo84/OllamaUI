@@ -104,41 +104,25 @@ export function NewsViewer({ content }: { content: string }) {
                   raw = '/news/' + raw.replace(/^\.\//, '');
                 }
                 const isRemote = /^https?:\/\//.test(raw);
-                const Fallback = () => (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={raw}
-                    alt={alt || ''}
-                    onError={(e) => {
-                      (e.currentTarget as HTMLImageElement).onerror = null;
-                      e.currentTarget.src = '/file.svg';
-                      e.currentTarget.title = `Image not found: ${raw}`;
-                      e.currentTarget.classList.add('opacity-50');
-                    }}
-                    className="mx-auto rounded-lg border border-white/10 shadow-md max-w-full h-auto"
-                    loading="lazy"
-                    {...props}
-                  />
-                );
                 return (
                   <span className="block my-4 max-w-full text-center">
                     {isRemote ? (
-                      <Fallback />
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={raw}
+                        alt={alt || ''}
+                        className="mx-auto rounded-lg border border-white/10 shadow-md max-w-full h-auto"
+                        loading="lazy"
+                        {...props}
+                      />
                     ) : (
-                      // Use next/image for local assets for optimization
                       <Image
                         src={raw || ''}
                         alt={alt || ''}
                         width={1200}
                         height={800}
                         className="mx-auto rounded-lg border border-white/10 shadow-md h-auto w-auto max-w-full"
-                        onError={(e) => {
-                          const el = e.currentTarget as HTMLImageElement;
-                          el.onerror = null;
-                          el.src = '/file.svg';
-                          el.title = `Image not found: ${raw}`;
-                          el.classList.add('opacity-50');
-                        }}
+                        {...props}
                       />
                     )}
                     {alt && (

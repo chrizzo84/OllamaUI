@@ -3,7 +3,6 @@ import { ThemeSwitcher } from '@/components/theme-switcher';
 import { useThemeStore } from '@/store/theme';
 import { usePrefsStore } from '@/store/prefs';
 import { useEffect, useState } from 'react';
-import { Button } from '@/components/ui/button';
 import { LocalStorageInfo } from '@/components/local-storage-info';
 
 export default function SettingsPage() {
