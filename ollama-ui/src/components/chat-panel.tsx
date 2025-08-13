@@ -229,20 +229,20 @@ export function ChatPanel() {
           ))}
         </select>
         {coldStart && (
-          <div className="flex items-center gap-2 text-[11px] text-white/60">
+          <div className="flex items-center gap-2 text-[11px] text-white/60 dark-green-model-loaded-indicator">
             <span className="relative flex h-2 w-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
-              <span className="relative inline-flex h-2 w-2 rounded-full bg-indigo-300"></span>
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full dark-green-pill-ping"></span>
+              <span className="relative inline-flex h-2 w-2 rounded-full dark-green-pill"></span>
             </span>
             <span>Loading model… {coldElapsed}s</span>
           </div>
         )}
         {activePrompt.trim() && activeProfile && systemEnabled && (
           <span
-            className="flex items-center text-[11px] px-3 py-2 rounded-md bg-indigo-500/15 border border-indigo-500/40 text-indigo-100/90 self-start max-w-[260px] truncate h-10 leading-none"
+            className="flex items-center text-[11px] px-3 py-2 rounded-md self-start max-w-[260px] truncate h-10 leading-none dark-green-model-indicator"
             title={activeProfile.name + ' active'}
           >
-            <span className="font-semibold mr-2 text-indigo-300/80">Profile:</span>
+            <span className="font-semibold mr-2 dark-green-model-indicator-label">Profile:</span>
             <span className="truncate">{activeProfile.name}</span>
           </span>
         )}
@@ -293,7 +293,7 @@ export function ChatPanel() {
         </div>
       )}
       {showSys && systemEnabled && (
-        <div className="rounded-md border border-indigo-500/30 bg-indigo-500/5 p-3 flex flex-col gap-3">
+        <div className="rounded-md p-3 flex flex-col gap-3 dark-green-system-prompt-bg">
           <div className="flex flex-wrap gap-2 items-center">
             <span className="text-[11px] font-medium text-indigo-200/80">Profiles</span>
             <input
@@ -575,12 +575,16 @@ export function ChatPanel() {
             <div
               key={m.id}
               className={`rounded-md px-3 py-2 leading-relaxed text-sm border ${
-                isUser ? 'bg-indigo-500/20 border-indigo-500/30' : 'bg-white/10 border-white/10'
+                isUser
+                  ? 'bg-indigo-500/20 border-indigo-500/30 dark-green-chat-user'
+                  : 'bg-white/10 border-white/10'
               }`}
             >
               <div className="text-[10px] uppercase tracking-wide mb-1 text-white/40">{m.role}</div>
               {isUser ? (
-                <div className="whitespace-pre-wrap text-white/90 font-light">{m.content}</div>
+                <div className="whitespace-pre-wrap text-white/90 font-light dark-green-chat-user-text">
+                  {m.content}
+                </div>
               ) : (
                 <div className="space-y-3">
                   {hasThink && (
