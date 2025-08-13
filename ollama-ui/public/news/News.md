@@ -1,5 +1,10 @@
 Chronological list of notable changes to Ollama UI.
 
+## 2025-08-13
+
+- **Fix Issues**
+  - CSS issues in docker image, white background and I can't see anything. #3 - Fixed, standard is now dark. (maybe will add other themes later).
+
 ## 2025-08-12
 
 - **Chat View**
