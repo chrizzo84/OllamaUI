@@ -1,0 +1,43 @@
+name: Branch Build
+
+on:
+  push:
+    branches-ignore:
+      - main
+  pull_request:
+    branches:
+      - '**'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: |
+          cd ollama-ui
+          corepack enable
+          pnpm install --frozen-lockfile
+
+      - name: Lint & Typecheck
+        run: |
+          cd ollama-ui
+          pnpm lint
+          pnpm typecheck
+
+      - name: Build Next.js app
+        run: |
+          cd ollama-ui
+          pnpm build
+
+      - name: Build Docker image
+        run: |
+          docker build -f Dockerfile -t ollama-ui:branch-build .
+
