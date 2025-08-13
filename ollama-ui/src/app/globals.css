@@ -24,26 +24,6 @@
 [data-theme='dark-green'] input[type='checkbox']:checked {
   accent-color: #39ff14;
 }
-
-/* Host manage/refresh buttons in header/nav */
-[data-theme='dark-green'] .host-manage-btn {
-  background: linear-gradient(
-    90deg,
-    rgba(57, 255, 20, 0.18) 0%,
-    rgba(57, 255, 20, 0.09) 100%
-  ) !important;
-  border-color: rgba(57, 255, 20, 0.35) !important;
-  color: #39ff14 !important;
-  box-shadow: 0 0 8px 0 rgba(57, 255, 20, 0.18);
-}
-[data-theme='dark-green'] .host-manage-btn:hover {
-  background: linear-gradient(
-    90deg,
-    rgba(57, 255, 20, 0.28) 0%,
-    rgba(57, 255, 20, 0.19) 100%
-  ) !important;
-  filter: brightness(1.1);
-}
 [data-theme='dark-green'] .dark-green-chat-user {
   background: linear-gradient(
     90deg,
@@ -462,4 +442,21 @@ body {
   max-width: 1600px;
   margin-inline: auto;
   padding-inline: clamp(1.5rem, 2.5vw, 3rem);
+}
+
+/* Host-manage button (default theme) */
+button[data-variant='host-manage'] {
+  background: linear-gradient(135deg, #6366f1 0%, #818cf8 60%, #a5b4fc 100%);
+  border: 1px solid #6366f1;
+  color: #fff;
+  position: relative;
+  transition:
+    filter 0.2s,
+    box-shadow 0.2s;
+}
+button[data-variant='host-manage']:hover {
+  filter: brightness(1.15);
+  box-shadow:
+    0 0 0.4rem #6366f1,
+    0 0 1.5rem #818cf8;
 }

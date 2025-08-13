@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
+import { Button } from '@/components/ui/button';
 import { HostManagerModal } from '@/components/host-manager-modal';
 
 interface HostState {
@@ -149,23 +150,27 @@ export function HostIndicator() {
             </>
           )}
         </div>
-        <button
+        <Button
           type="button"
           onClick={() => setOpenManager(true)}
-          className="h-7 w-7 rounded-md border text-[13px] font-semibold flex items-center justify-center shadow-sm host-manage-btn"
+          variant="outline"
+          size="sm"
+          className="w-8"
           title="Manage / switch hosts"
           aria-label="Manage hosts"
         >
           ⚙
-        </button>
-        <button
+        </Button>
+        <Button
           type="button"
           onClick={() => setRefreshIdx((i) => i + 1)}
-          className="h-7 w-7 rounded-md border text-[13px] flex items-center justify-center host-manage-btn"
+          variant="outline"
+          size="sm"
+          className="w-8"
           title="Retest active host"
         >
           ↻
-        </button>
+        </Button>
       </div>
       <HostManagerModal
         open={openManager}
