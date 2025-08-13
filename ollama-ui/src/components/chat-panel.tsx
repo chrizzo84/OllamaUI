@@ -23,6 +23,56 @@ async function fetchModels(): Promise<TagsResponse> {
 export function ChatPanel() {
   const { data } = useQuery({ queryKey: ['ollama-model-tags'], queryFn: fetchModels });
   const [model, setModel] = useState<string>('');
+  const [activeHost, setActiveHost] = useState<string | null>(null);
+
+  // Load active host from /api/hosts
+  useEffect(() => {
+    async function loadHost() {
+      try {
+        const r = await fetch('/api/hosts');
+        if (!r.ok) return;
+        const j = await r.json();
+        type Host = { url: string; active: boolean };
+        const active = Array.isArray(j.hosts) ? (j.hosts as Host[]).find((h) => !!h.active) : null;
+        setActiveHost(active?.url || null);
+      } catch {
+        /* ignore */
+      }
+    }
+    loadHost();
+    function onActive() {
+      loadHost();
+    }
+    window.addEventListener('active-host-changed', onActive as EventListener);
+    return () => window.removeEventListener('active-host-changed', onActive as EventListener);
+  }, []);
+
+  // Restore model selection for active host
+  useEffect(() => {
+    if (!activeHost) return;
+    try {
+      const raw = localStorage.getItem('ollama_ui_selected_models');
+      if (raw) {
+        const map = JSON.parse(raw) as Record<string, string>;
+        if (map[activeHost]) setModel(map[activeHost]);
+      }
+    } catch {
+      /* ignore */
+    }
+  }, [activeHost, data]);
+
+  // Persist model selection per host
+  useEffect(() => {
+    if (!activeHost || !model) return;
+    try {
+      const raw = localStorage.getItem('ollama_ui_selected_models');
+      const map = raw ? (JSON.parse(raw) as Record<string, string>) : {};
+      map[activeHost] = model;
+      localStorage.setItem('ollama_ui_selected_models', JSON.stringify(map));
+    } catch {
+      /* ignore */
+    }
+  }, [model, activeHost]);
   const lamaState = useSystemPromptStore((s) => s);
   const { systemEnabled, toggleSystemEnabled, setSystemEnabled } = lamaState;
   const {

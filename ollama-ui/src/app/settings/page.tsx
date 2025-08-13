@@ -4,6 +4,7 @@ import { useThemeStore } from '@/store/theme';
 import { usePrefsStore } from '@/store/prefs';
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
+import { LocalStorageInfo } from '@/components/local-storage-info';
 
 export default function SettingsPage() {
   const theme = useThemeStore((s) => s.theme);
@@ -41,17 +42,12 @@ export default function SettingsPage() {
   return (
     <div className="p-6 flex flex-col gap-8 max-w-3xl mx-auto items-center">
       <div className="w-full flex flex-col gap-8">
-        <header>
-          <h1 className="text-3xl font-bold tracking-tight bg-gradient-to-br from-white via-white/80 to-white/30 bg-clip-text text-transparent text-center">
-            Settings
-          </h1>
-          <p className="mt-2 text-sm text-white/50 text-center">
-            Customize your Ollama UI experience. Preferences persist locally in your browser.
-          </p>
-        </header>
-        <section className="rounded-xl border border-white/10 bg-white/5 p-5 flex flex-col gap-4">
+        <section className="rounded-xl border border-white/10 bg-white/5 p-5 flex flex-col gap-8">
           <div>
-            <h2 className="text-lg font-semibold text-white/90 mb-1">Theme</h2>
+            <h2 className="text-3xl font-bold tracking-tight bg-gradient-to-br from-white via-white/80 to-white/30 bg-clip-text text-transparent text-center mb-4">
+              Settings
+            </h2>
+            <h3 className="text-lg font-semibold text-white/90 mb-1">Theme</h3>
             <p className="text-xs text-white/50 mb-3">
               Select an interface theme. Your current choice (
               <span className="font-medium text-white/80">{theme}</span>) is stored in localStorage
@@ -59,10 +55,8 @@ export default function SettingsPage() {
             </p>
             <ThemeSwitcher />
           </div>
-        </section>
-        <section className="rounded-xl border border-white/10 bg-white/5 p-5 flex flex-col gap-5">
           <div>
-            <h2 className="text-lg font-semibold text-white/90 mb-1">Models</h2>
+            <h3 className="text-lg font-semibold text-white/90 mb-1">Models</h3>
             <div className="flex flex-col gap-3 text-xs text-white/60">
               <label className="flex items-center gap-2 cursor-pointer select-none">
                 <input
@@ -96,29 +90,23 @@ export default function SettingsPage() {
         </section>
         <section className="rounded-xl border border-white/10 bg-white/5 p-5 flex flex-col gap-4">
           <div>
-            <h2 className="text-lg font-semibold text-white/90 mb-1">Host</h2>
+            <h2 className="text-lg font-semibold text-white/90 mb-1">Infos</h2>
+          </div>
+          <div>
+            <h3 className="text-base font-semibold text-white/80 mb-1">Host</h3>
             <p className="text-xs text-white/50 mb-3">
               Currently active Ollama endpoint used for operations.
             </p>
-            <div className="text-xs font-mono text-white/70 flex items-center gap-3">
+            <div className="text-xs font-mono text-white/70">
               <span>{activeHost ? activeHost : '— (none)'}</span>
-              <Button
-                size="sm"
-                variant="outline"
-                type="button"
-                onClick={() => window.dispatchEvent(new Event('open-host-manager'))}
-              >
-                Manage Hosts
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                type="button"
-                onClick={() => window.dispatchEvent(new Event('active-host-changed'))}
-              >
-                Refresh
-              </Button>
             </div>
+          </div>
+          <div>
+            <h3 className="text-base font-semibold text-white/80 mb-1">LocalStorage (readonly)</h3>
+            <p className="text-xs text-white/50 mb-3">
+              All Ollama UI settings currently stored in your browser.
+            </p>
+            <LocalStorageInfo />
           </div>
         </section>
       </div>
