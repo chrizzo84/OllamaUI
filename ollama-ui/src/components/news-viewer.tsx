@@ -96,7 +96,7 @@ export function NewsViewer({ content }: { content: string }) {
                   </td>
                 );
               },
-              img({ src, alt, ...props }) {
+              img({ src, alt, width, height, ...props }) {
                 let raw = typeof src === 'string' ? src : '';
                 // Normalize relative path so markdown "image.png" looks in /public
                 if (raw && !raw.startsWith('/') && !/^https?:\/\//.test(raw)) {
@@ -104,6 +104,8 @@ export function NewsViewer({ content }: { content: string }) {
                   raw = '/news/' + raw.replace(/^\.\//, '');
                 }
                 const isRemote = /^https?:\/\//.test(raw);
+                const imgWidth = typeof width === 'string' ? parseInt(width, 10) : width;
+                const imgHeight = typeof height === 'string' ? parseInt(height, 10) : height;
                 return (
                   <span className="block my-4 max-w-full text-center">
                     {isRemote ? (
@@ -119,8 +121,8 @@ export function NewsViewer({ content }: { content: string }) {
                       <Image
                         src={raw || ''}
                         alt={alt || ''}
-                        width={1200}
-                        height={800}
+                        width={imgWidth || 1200}
+                        height={imgHeight || 800}
                         className="mx-auto rounded-lg border border-white/10 shadow-md h-auto w-auto max-w-full"
                         {...props}
                       />

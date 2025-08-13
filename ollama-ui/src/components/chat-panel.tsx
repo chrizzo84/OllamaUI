@@ -137,12 +137,12 @@ export function ChatPanel() {
   async function isModelLoaded(target: string): Promise<boolean> {
     try {
       const r = await fetch('/api/ps', { cache: 'no-store' });
-      if (!r.ok) return true;
+      if (!r.ok) return false;
       const j = (await r.json()) as { models?: Array<{ name?: string; model?: string }> };
-      if (!j.models) return true;
+      if (!j.models) return false;
       return j.models.some((m) => m.name === target || m.model === target.split(':')[0]);
     } catch {
-      return true;
+      return false;
     }
   }
 

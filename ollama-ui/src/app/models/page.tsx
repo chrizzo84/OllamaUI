@@ -137,46 +137,6 @@ export default function ModelsPage() {
     },
   });
 
-  const pullMutation = useMutation({
-    mutationFn: async (model: string) => {
-      // streaming text response
-      const res = await fetch('/api/models/pull', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model }),
-      });
-      if (!res.body) throw new Error('No stream body');
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let full = '';
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        const chunk = decoder.decode(value, { stream: true });
-        full += chunk;
-        // parse NDJSON lines
-        const lines = chunk.split('\n').filter(Boolean);
-        for (const line of lines) {
-          try {
-            const obj = JSON.parse(line);
-            addPullEvent(model, obj);
-          } catch {
-            addPullEvent(model, { raw: line });
-          }
-        }
-      }
-      return full;
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['ollama-model-tags'] });
-      pushToast({ type: 'success', message: 'Pull finished.' });
-    },
-    onError: (e: unknown) => {
-      const msg = e instanceof Error ? e.message : 'Pull failed';
-      pushToast({ type: 'error', message: msg });
-    },
-  });
-
   const [pullInput, setPullInput] = useState('');
   const [pullLog, setPullLog] = useState('');
   const [progress, setProgress] = useState<number | null>(null);
@@ -331,7 +291,7 @@ export default function ModelsPage() {
   });
 
   const isStreamingPull = !!abortRef.current; // active streaming pull (catalog variant)
-  const anyPullActive = isStreamingPull || pullMutation.status === 'pending';
+  const anyPullActive = isStreamingPull;
   const [expandedVariants, setExpandedVariants] = useState<Record<string, boolean>>({});
   function toggleVariants(slug: string) {
     setExpandedVariants((prev) => ({ ...prev, [slug]: !prev[slug] }));
@@ -423,13 +383,13 @@ export default function ModelsPage() {
                       : `Pull installed model ${m.name}`
                   }
                 >
-                  Pull
+                  {currentPullModel === m.name && isStreamingPull ? 'Pulling…' : 'Pull'}
                 </Button>
                 <Button
                   variant="danger"
                   size="sm"
                   loading={deleteMutation.status === 'pending'}
-                  disabled={pullMutation.status === 'pending'}
+                  disabled={anyPullActive}
                   onClick={() => {
                     if (requireDeleteConfirm) {
                       if (deleteArm === m.name) {
