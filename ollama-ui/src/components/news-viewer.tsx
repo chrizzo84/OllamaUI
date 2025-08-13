@@ -119,8 +119,8 @@ export function NewsViewer({ content }: { content: string }) {
                       <Image
                         src={raw || ''}
                         alt={alt || ''}
-                        width={typeof raw === 'string' ? 1200 : 1200}
-                        height={typeof raw === 'string' ? 800 : 800}
+                        width={1200}
+                        height={800}
                         className="mx-auto rounded-lg border border-white/10 shadow-md h-auto w-auto max-w-full"
                         {...props}
                       />
