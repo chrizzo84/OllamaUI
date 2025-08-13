@@ -1,21 +1,18 @@
 @import 'tailwindcss';
 
+/* Force dauerhaft Dark Mode (heller Modus deaktiviert) */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* Dark palette as baseline (was previously only inside prefers-color-scheme: dark) */
+  --background: #0a0a0a;
+  --foreground: #ededed;
   --accent: #6366f1; /* indigo-500 */
   --accent-glow: 99 102 241; /* rgb triplet for alpha usage */
   --radius-sm: 4px;
   --radius-md: 8px;
   --radius-lg: 16px;
 }
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
+/* Entfernt den automatischen Wechsel – falls später Themen-Umschaltung gewünscht,
+   kann man hier wieder eine Light-Variante einführen oder per .light/.dark Klassen arbeiten. */
 
 body {
   background: var(--background);
