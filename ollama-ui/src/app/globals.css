@@ -81,6 +81,14 @@
   --accent-glow: 57 255 20; /* rgb triplet */
 }
 
+/* Theme: neon (neon purple on deep space gradient) */
+[data-theme='neon'] {
+  --background: #0a0414; /* near-black with subtle purple */
+  --foreground: #e8d6ff; /* soft lavender for text */
+  --accent: #bf39ff; /* neon purple */
+  --accent-glow: 191 57 255; /* rgb triplet */
+}
+
 /* Model indicator for dark-green theme */
 [data-theme='dark-green'] .dark-green-model-indicator {
   background: rgba(57, 255, 20, 0.12);
@@ -103,6 +111,12 @@ body {
 body[data-theme='dark-green'],
 [data-theme='dark-green'] body {
   background: radial-gradient(circle at 20% 25%, #082417 0%, #04130b 45%, #020805 100%);
+  color: var(--foreground);
+}
+
+body[data-theme='neon'],
+[data-theme='neon'] body {
+  background: radial-gradient(circle at 20% 25%, #1a0824 0%, #0a0414 45%, #050208 100%);
   color: var(--foreground);
 }
 
@@ -459,4 +473,241 @@ button[data-variant='host-manage']:hover {
   box-shadow:
     0 0 0.4rem #6366f1,
     0 0 1.5rem #818cf8;
+}
+
+/* ===== NEON THEME STYLES ===== */
+
+/* Model loaded indicator for neon theme */
+[data-theme='neon'] .neon-model-loaded-indicator {
+  border: 1px solid rgba(191, 57, 255, 0.35);
+  background: linear-gradient(
+    90deg,
+    rgba(191, 57, 255, 0.09) 0%,
+    rgba(191, 57, 255, 0.18) 100%
+  ) !important;
+  color: #bf39ff !important;
+  box-shadow: 0 0 8px 0 rgba(191, 57, 255, 0.1);
+  border-radius: 8px;
+  padding: 2px 8px;
+}
+
+[data-theme='neon'] .neon-system-prompt-bg {
+  background: linear-gradient(
+    90deg,
+    rgba(191, 57, 255, 0.09) 0%,
+    rgba(191, 57, 255, 0.18) 100%
+  ) !important;
+  border-color: rgba(191, 57, 255, 0.25) !important;
+  box-shadow: 0 0 8px 0 rgba(191, 57, 255, 0.1);
+}
+
+/* Checkbox accent color for neon theme */
+[data-theme='neon'] input[type='checkbox']:checked {
+  accent-color: #bf39ff;
+}
+
+[data-theme='neon'] .neon-chat-user {
+  background: linear-gradient(
+    90deg,
+    rgba(191, 57, 255, 0.18) 0%,
+    rgba(191, 57, 255, 0.09) 100%
+  ) !important;
+  border-color: rgba(191, 57, 255, 0.35) !important;
+  box-shadow: 0 0 8px 0 rgba(191, 57, 255, 0.18);
+}
+
+[data-theme='neon'] .neon-chat-user-text {
+  color: #bf39ff !important;
+  text-shadow: 0 0 6px rgba(191, 57, 255, 0.7);
+}
+
+[data-theme='neon'] .neon-pill {
+  background: #bf39ff !important;
+  box-shadow: 0 0 6px rgba(191, 57, 255, 0.7);
+}
+
+[data-theme='neon'] .neon-pill-ping {
+  background: #bf39ff !important;
+  opacity: 0.55 !important;
+  box-shadow: 0 0 12px 2px rgba(191, 57, 255, 0.5);
+}
+
+[data-theme='neon'] .neon-pill-bg {
+  background: linear-gradient(
+    90deg,
+    rgba(191, 57, 255, 0.12) 0%,
+    rgba(191, 57, 255, 0.18) 100%
+  ) !important;
+  border-color: rgba(191, 57, 255, 0.35) !important;
+  color: #f4d6ff !important;
+  box-shadow: 0 0 8px 0 rgba(191, 57, 255, 0.18);
+}
+
+[data-theme='neon'] .neon-pill-label {
+  color: #bf39ff !important;
+  text-shadow: 0 0 6px rgba(191, 57, 255, 0.7);
+}
+
+/* Model indicator for neon theme */
+[data-theme='neon'] .neon-model-indicator {
+  background: rgba(191, 57, 255, 0.12);
+  border: 1px solid rgba(191, 57, 255, 0.35);
+  color: #bf39ff;
+  box-shadow: 0 0 8px rgba(191, 57, 255, 0.25);
+}
+
+[data-theme='neon'] .neon-model-indicator-label {
+  color: #bf39ff;
+  text-shadow: 0 0 6px rgba(191, 57, 255, 0.7);
+}
+
+/* Button overrides for neon theme (scoped) */
+[data-theme='neon'] button[data-variant='primary'] {
+  background: linear-gradient(
+    135deg,
+    rgba(var(--accent-glow) / 0.15) 0%,
+    rgba(var(--accent-glow) / 0.05) 60%,
+    rgba(var(--accent-glow) / 0.02) 100%
+  );
+  border: 1px solid rgba(var(--accent-glow) / 0.35);
+  color: var(--foreground);
+  position: relative;
+}
+
+[data-theme='neon'] button[data-variant='primary']::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(
+    160deg,
+    rgba(var(--accent-glow) / 0.35),
+    rgba(var(--accent-glow) / 0)
+  );
+  opacity: 0.6;
+  mix-blend-mode: screen;
+  pointer-events: none;
+}
+
+[data-theme='neon'] button[data-variant='primary']:hover {
+  filter: brightness(1.25);
+  box-shadow:
+    0 0 0.4rem rgba(var(--accent-glow) / 0.8),
+    0 0 1.5rem rgba(var(--accent-glow) / 0.5);
+}
+
+[data-theme='neon'] button[data-variant='secondary'],
+[data-theme='neon'] button[data-variant='outline'],
+[data-theme='neon'] button[data-variant='ghost'] {
+  border-color: rgba(var(--accent-glow) / 0.25);
+  color: rgba(var(--accent-glow) / 0.85);
+}
+
+[data-theme='neon'] button[data-variant='secondary']:hover,
+[data-theme='neon'] button[data-variant='outline']:hover,
+[data-theme='neon'] button[data-variant='ghost']:hover {
+  background: rgba(var(--accent-glow) / 0.12);
+  color: var(--foreground);
+  box-shadow: 0 0 0.3rem rgba(var(--accent-glow) / 0.6);
+}
+
+[data-theme='neon'] a {
+  color: #bf39ff;
+  text-shadow: 0 0 6px rgba(var(--accent-glow) / 0.7);
+}
+
+/* Danger buttons adapt to theme (neon) with purple glow */
+[data-theme='neon'] button[data-variant='danger'] {
+  background: linear-gradient(135deg, #331f33 0%, #251725 50%, #1a111a 100%);
+  border: 1px solid rgba(var(--accent-glow) / 0.35);
+  color: #fff4ff;
+}
+
+[data-theme='neon'] button[data-variant='danger']::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: radial-gradient(
+    circle at 50% 15%,
+    rgba(var(--accent-glow) / 0.5),
+    rgba(var(--accent-glow) / 0)
+  );
+  mix-blend-mode: screen;
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+[data-theme='neon'] button[data-variant='danger']:hover {
+  filter: brightness(1.15) drop-shadow(0 0 6px rgba(var(--accent-glow) / 0.65));
+}
+
+/* Neon theme override for progress bars */
+[data-theme='neon'] .pull-progress .progress-track {
+  background: rgba(var(--accent-glow) / 0.12);
+  box-shadow:
+    0 0 0 1px rgba(var(--accent-glow) / 0.25),
+    inset 0 0 6px rgba(var(--accent-glow) / 0.25);
+}
+
+[data-theme='neon'] .pull-progress .progress-fill {
+  background: linear-gradient(
+    90deg,
+    rgba(var(--accent-glow) / 0.15) 0%,
+    rgba(var(--accent-glow) / 0.55) 55%,
+    rgba(var(--accent-glow) / 0.9) 100%
+  );
+  box-shadow:
+    0 0 6px rgba(var(--accent-glow) / 0.7),
+    0 0 14px rgba(var(--accent-glow) / 0.45),
+    inset 0 0 4px rgba(var(--accent-glow) / 0.4);
+  filter: brightness(1.05) saturate(1.2);
+}
+
+[data-theme='neon'] .pull-progress .progress-fill::after {
+  background: radial-gradient(
+    circle at 20% 50%,
+    rgba(var(--accent-glow) / 0.9),
+    rgba(var(--accent-glow) / 0)
+  );
+  opacity: 0.6;
+  mix-blend-mode: screen;
+}
+
+[data-theme='neon'] .pull-progress .progress-label {
+  color: rgba(var(--accent-glow) / 0.85);
+  text-shadow: 0 0 4px rgba(var(--accent-glow) / 0.6);
+}
+
+/* Neon variant for navigation underline */
+[data-theme='neon'] .nav-underline,
+body[data-theme='neon'] .nav-underline {
+  background: linear-gradient(
+    90deg,
+    rgba(var(--accent-glow) / 0.1) 0%,
+    rgba(var(--accent-glow) / 0.9) 35%,
+    rgba(var(--accent-glow) / 0.6) 70%,
+    rgba(var(--accent-glow) / 0.1) 100%
+  );
+  box-shadow:
+    0 0 6px rgba(var(--accent-glow) / 0.7),
+    0 0 14px rgba(var(--accent-glow) / 0.4);
+}
+
+/* Host-manage button for neon theme */
+[data-theme='neon'] button[data-variant='host-manage'] {
+  background: linear-gradient(135deg, #bf39ff 0%, #d166ff 60%, #e599ff 100%);
+  border: 1px solid #bf39ff;
+  color: #fff;
+  position: relative;
+  transition:
+    filter 0.2s,
+    box-shadow 0.2s;
+}
+
+[data-theme='neon'] button[data-variant='host-manage']:hover {
+  filter: brightness(1.15);
+  box-shadow:
+    0 0 0.4rem #bf39ff,
+    0 0 1.5rem #d166ff;
 }

@@ -6,6 +6,7 @@ import { cn } from '@/lib/utils';
 const THEMES: { value: ThemeName; label: string }[] = [
   { value: 'default', label: 'Default' },
   { value: 'dark-green', label: 'Dark Green' },
+  { value: 'neon', label: 'Neon Purple' },
 ];
 
 export function ThemeSwitcher() {

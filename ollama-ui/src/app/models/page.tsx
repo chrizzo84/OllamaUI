@@ -179,14 +179,14 @@ export default function ModelsPage() {
     window.addEventListener('active-host-changed', onActiveChange as EventListener);
     return () => window.removeEventListener('active-host-changed', onActiveChange as EventListener);
   }, [queryClient]);
-  // Auto refresh models list
-  useEffect(() => {
-    if (!autoRefreshModelsSeconds) return;
-    const id = setInterval(() => {
-      refetch();
-    }, autoRefreshModelsSeconds * 1000);
-    return () => clearInterval(id);
-  }, [autoRefreshModelsSeconds, refetch]);
+  // Auto refresh models list - DISABLED to prevent unnecessary API calls
+  // useEffect(() => {
+  //   if (!autoRefreshModelsSeconds) return;
+  //   const id = setInterval(() => {
+  //     refetch();
+  //   }, autoRefreshModelsSeconds * 1000);
+  //   return () => clearInterval(id);
+  // }, [autoRefreshModelsSeconds, refetch]);
   // Removed unused helper functions openHostManager/manualRefreshHost (were for legacy host UI)
 
   // derive progress from last event with percentage for the currently pulled model input
