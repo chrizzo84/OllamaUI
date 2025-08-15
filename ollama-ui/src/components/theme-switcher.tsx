@@ -7,6 +7,7 @@ const THEMES: { value: ThemeName; label: string }[] = [
   { value: 'default', label: 'Default' },
   { value: 'dark-green', label: 'Dark Green' },
   { value: 'neon', label: 'Neon Purple' },
+  { value: 'neon-orange', label: 'Neon Orange' },
 ];
 
 export function ThemeSwitcher() {

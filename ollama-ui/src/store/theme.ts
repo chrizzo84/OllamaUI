@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 
-export type ThemeName = 'default' | 'dark-green' | 'neon';
+export type ThemeName = 'default' | 'dark-green' | 'neon' | 'neon-orange';
 
 interface ThemeState {
   theme: ThemeName;
