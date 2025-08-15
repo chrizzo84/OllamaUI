@@ -5,6 +5,7 @@
 @import '../styles/themes/neon.css';
 @import '../styles/themes/neon-orange.css';
 @import '../styles/themes/neon-red.css';
+@import '../styles/themes/neon-blue.css';
 
 /* Force dauerhaft Dark Mode (heller Modus deaktiviert) */
 :root {

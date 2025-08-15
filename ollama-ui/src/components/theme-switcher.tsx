@@ -9,6 +9,7 @@ const THEMES: { value: ThemeName; label: string }[] = [
   { value: 'neon', label: 'Neon Purple' },
   { value: 'neon-orange', label: 'Neon Orange' },
   { value: 'neon-red', label: 'Neon Red' },
+  { value: 'neon-blue', label: 'Neon Blue' },
 ];
 
 export function ThemeSwitcher() {
