@@ -236,8 +236,13 @@ export function ChatPanel() {
                 const isInThinkBlock =
                   display.startsWith('<think>') && !display.includes('</think>');
 
+                // Always clean the content before storing it, unless it's the temporary "thinking" indicator.
+                const contentToStore = isInThinkBlock
+                  ? '…'
+                  : display.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+
                 update(assistantId, {
-                  content: isInThinkBlock ? '…' : display,
+                  content: contentToStore,
                   raw: assistantRaw,
                 });
               }
@@ -611,7 +616,6 @@ export function ChatPanel() {
       >
         {messages.length === 0 && <div className="text-white/40 text-xs">No messages yet.</div>}
         {messages.map((m) => {
-          console.log(JSON.stringify({ id: m.id, content: m.content, raw: m.raw }));
           const isUser = m.role === 'user';
           const thinkRegex = /<think>([\s\S]*?)<\/think>/g;
           const hasThink = !isUser && typeof m.raw === 'string' && new RegExp(thinkRegex).test(m.raw);
@@ -663,9 +667,7 @@ export function ChatPanel() {
                     </div>
                   )}
                   {(() => {
-                    const displayContent = (m.content || '')
-                      .replace(/<think>[\s\S]*?<\/think>/g, '')
-                      .trim();
+                    const displayContent = (m.content || '').trim();
                     return m.content === '…' || (m.raw?.startsWith('<think>') && !displayContent) ? (
                       <div className="flex items-center gap-1 h-6">
                         <span className="animate-bounce [animation-delay:-0.25s]">🦙</span>
