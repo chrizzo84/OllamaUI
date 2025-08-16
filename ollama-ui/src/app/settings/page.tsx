@@ -12,6 +12,8 @@ export default function SettingsPage() {
   const setRequireDeleteConfirm = usePrefsStore((s) => s.setRequireDeleteConfirm);
   const autoRefreshModelsSeconds = usePrefsStore((s) => s.autoRefreshModelsSeconds);
   const setAutoRefreshModelsSeconds = usePrefsStore((s) => s.setAutoRefreshModelsSeconds);
+  const searxngUrl = usePrefsStore((s) => s.searxngUrl);
+  const setSearxngUrl = usePrefsStore((s) => s.setSearxngUrl);
   const [activeHost, setActiveHost] = useState<string | null>(null);
 
   useEffect(() => {
@@ -83,6 +85,27 @@ export default function SettingsPage() {
                   />
                 </label>
                 <span className="text-white/30">0 disables</span>
+              </div>
+            </div>
+          </div>
+          <div>
+            <h3 className="text-lg font-semibold text-white/90 mb-1">Web Search</h3>
+            <div className="flex flex-col gap-3 text-xs text-white/60">
+              <div className="flex items-center gap-2 flex-wrap">
+                <label className="flex items-center gap-2">
+                  <span>SearXNG Instance URL</span>
+                  <input
+                    type="text"
+                    value={searxngUrl}
+                    onChange={(e) => setSearxngUrl(e.target.value)}
+                    placeholder="https://searx.example.com"
+                    className="w-80 rounded bg-white/5 border border-white/15 px-2 py-1 text-[11px]"
+                  />
+                </label>
+              </div>
+              <div className="text-[11px] text-white/40 ml-2">
+                The base URL of your self-hosted or a public SearXNG instance. This will be used for
+                the Web Search tool.
               </div>
             </div>
           </div>
