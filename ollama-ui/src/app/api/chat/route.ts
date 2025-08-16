@@ -112,14 +112,22 @@ export async function POST(req: NextRequest) {
 
     // Execute the tool
     let toolResult: unknown;
-    let thinkingMessage = `<think>Tool: ${toolName}\nArguments: ${JSON.stringify(toolArgs, null, 2)}\n`;
+    let thinkingMessage = `<details><summary>Tool: ${toolName}</summary><pre><code>Arguments: ${JSON.stringify(
+      toolArgs,
+      null,
+      2,
+    )}\n`;
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       toolResult = tools[toolName](toolArgs as any);
-      thinkingMessage += `Result: ${JSON.stringify(toolResult, null, 2)}</think>\n`;
+      thinkingMessage += `Result: ${JSON.stringify(toolResult, null, 2)}</code></pre></details>\n`;
     } catch (e) {
       toolResult = { error: e instanceof Error ? e.message : String(e) };
-      thinkingMessage += `Error: ${JSON.stringify(toolResult, null, 2)}</think>\n`;
+      thinkingMessage += `Error: ${JSON.stringify(
+        toolResult,
+        null,
+        2,
+      )}</code></pre></details>\n`;
     }
 
     // --- Second call to Ollama with the tool's result ---
