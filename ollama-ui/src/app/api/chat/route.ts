@@ -56,6 +56,7 @@ export async function POST(req: NextRequest) {
     const model = (body.model as string | undefined)?.trim();
     const messages: OllamaMessage[] = Array.isArray(body.messages) ? body.messages : [];
     const toolsFromClient = body.tools;
+    const searxngUrl = body.searxngUrl;
 
     if (!model) {
       return new Response(JSON.stringify({ error: 'Missing model' }), { status: 400 });
@@ -119,8 +120,11 @@ export async function POST(req: NextRequest) {
       2,
     )}\n`;
     try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      toolResult = tools[toolName](toolArgs as any);
+      if (toolName === 'web_search') {
+        toolResult = await tools[toolName](toolArgs as any, searxngUrl);
+      } else {
+        toolResult = await tools[toolName](toolArgs as any);
+      }
       thinkingMessage += `Result: ${JSON.stringify(toolResult, null, 2)}</code></pre></details>\n`;
     } catch (e) {
       toolResult = { error: e instanceof Error ? e.message : String(e) };

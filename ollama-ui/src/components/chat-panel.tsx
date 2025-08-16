@@ -106,11 +106,13 @@ export function ChatPanel() {
     model: string;
     messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>;
     tools?: typeof toolSchemas;
+    searxngUrl?: string;
   }
   const [lastPayload, setLastPayload] = useState<SentPayload | null>(null);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const { toolSettings } = useToolStore();
+  const searxngUrl = usePrefsStore((s) => s.searxngUrl);
   const [coldStart, setColdStart] = useState(false);
   const [coldStartSince, setColdStartSince] = useState<number | null>(null);
   const [coldElapsed, setColdElapsed] = useState(0);
@@ -204,6 +206,7 @@ export function ChatPanel() {
         model,
         messages: upstreamMessages,
         ...(enabledTools.length > 0 && { tools: enabledTools }),
+        searxngUrl,
       };
       setLastPayload(payload);
       const res = await fetch('/api/chat', {
