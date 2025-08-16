@@ -1,5 +1,3 @@
-import { NextRequest } from 'next/server';
-
 export const runtime = 'edge'; // fast flush for SSE
 
 function encoder() {
@@ -20,7 +18,7 @@ function streamText(text: string, controller: ReadableStreamDefaultController, e
   }, 120);
 }
 
-export async function GET(_req: NextRequest) {
+export async function GET() {
   const enc = encoder();
   const stream = new ReadableStream({
     start(controller) {

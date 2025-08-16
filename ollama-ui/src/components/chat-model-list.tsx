@@ -14,7 +14,6 @@ export function ChatModelList() {
   const [refreshIdx, setRefreshIdx] = useState(0);
 
   useEffect(() => {
-    const timer: NodeJS.Timeout | undefined = undefined;
     async function fetchModels(showLoading = true) {
       if (showLoading) setLoading(true);
       setError(null);

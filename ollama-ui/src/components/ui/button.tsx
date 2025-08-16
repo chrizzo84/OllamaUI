@@ -20,7 +20,7 @@ const variantClasses: Record<NonNullable<ButtonProps['variant']>, string> = {
   outline:
     'border border-white/15 text-white/80 hover:text-white hover:border-white/40 hover:bg-white/10 dark:hover:bg-white/10 hover:-translate-y-[1px]',
   danger:
-    'bg-gradient-to-br from-rose-500 via-red-500 to-orange-500 text-white shadow-md hover:shadow-lg hover:brightness-110 hover:-translate-y-[1px]',
+    'relative text-white shadow-md hover:shadow-lg hover:-translate-y-[1px] bg-gradient-to-br from-rose-500 via-red-500 to-orange-500 hover:brightness-110',
 };
 
 const sizeClasses: Record<NonNullable<ButtonProps['size']>, string> = {

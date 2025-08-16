@@ -1,6 +1,22 @@
 Chronological list of notable changes to Ollama UI.
 
-## 2025-08-13
+## 2025-08-13 - 2025-08-16
+
+- **Theme & UI Consistency**
+  - Added possibility to choose theme
+    - Now some themes are available Default (the one you already know), Dark Green, Neon Organge, .... You will see.
+      ![Theme](theme.png)
+  - Added Settings view
+    - Theme Chooser
+    - All relevant localStorage settings are shown readonly in the settings view (client-only, hydration-safe).
+    - Last selected model per host is now persisted in localStorage and restored automatically.
+    - "Delete Confirmations Settings" - When enabled, deleting a model requires a second click (“Sure?”) to confirm. Disabling allows immediate deletion with a single click.
+  - Some Bug fixes
+  - Removed autoreload from models view as it is not necessary.
+
+- **Quality of Life**
+  - Settings and Infos sections are now visually separated and clearly labeled.
+  - UI and settings layout further streamlined for clarity and consistency.
 
 - **Fix Issues**
   - CSS issues in docker image, white background and I can't see anything. #3 - Fixed, standard is now dark. (maybe will add other themes later).

@@ -23,8 +23,58 @@ async function fetchModels(): Promise<TagsResponse> {
 export function ChatPanel() {
   const { data } = useQuery({ queryKey: ['ollama-model-tags'], queryFn: fetchModels });
   const [model, setModel] = useState<string>('');
+  const [activeHost, setActiveHost] = useState<string | null>(null);
+
+  // Load active host from /api/hosts
+  useEffect(() => {
+    async function loadHost() {
+      try {
+        const r = await fetch('/api/hosts');
+        if (!r.ok) return;
+        const j = await r.json();
+        type Host = { url: string; active: boolean };
+        const active = Array.isArray(j.hosts) ? (j.hosts as Host[]).find((h) => !!h.active) : null;
+        setActiveHost(active?.url || null);
+      } catch {
+        /* ignore */
+      }
+    }
+    loadHost();
+    function onActive() {
+      loadHost();
+    }
+    window.addEventListener('active-host-changed', onActive as EventListener);
+    return () => window.removeEventListener('active-host-changed', onActive as EventListener);
+  }, []);
+
+  // Restore model selection for active host
+  useEffect(() => {
+    if (!activeHost) return;
+    try {
+      const raw = localStorage.getItem('ollama_ui_selected_models');
+      if (raw) {
+        const map = JSON.parse(raw) as Record<string, string>;
+        if (map[activeHost]) setModel(map[activeHost]);
+      }
+    } catch {
+      /* ignore */
+    }
+  }, [activeHost, data]);
+
+  // Persist model selection per host
+  useEffect(() => {
+    if (!activeHost || !model) return;
+    try {
+      const raw = localStorage.getItem('ollama_ui_selected_models');
+      const map = raw ? (JSON.parse(raw) as Record<string, string>) : {};
+      map[activeHost] = model;
+      localStorage.setItem('ollama_ui_selected_models', JSON.stringify(map));
+    } catch {
+      /* ignore */
+    }
+  }, [model, activeHost]);
   const lamaState = useSystemPromptStore((s) => s);
-  const { systemEnabled, toggleSystemEnabled, setSystemEnabled } = lamaState;
+  const { systemEnabled, setSystemEnabled } = lamaState;
   const {
     currentId,
     profiles,
@@ -87,12 +137,12 @@ export function ChatPanel() {
   async function isModelLoaded(target: string): Promise<boolean> {
     try {
       const r = await fetch('/api/ps', { cache: 'no-store' });
-      if (!r.ok) return true;
+      if (!r.ok) return false;
       const j = (await r.json()) as { models?: Array<{ name?: string; model?: string }> };
-      if (!j.models) return true;
+      if (!j.models) return false;
       return j.models.some((m) => m.name === target || m.model === target.split(':')[0]);
     } catch {
-      return true;
+      return false;
     }
   }
 
@@ -229,20 +279,20 @@ export function ChatPanel() {
           ))}
         </select>
         {coldStart && (
-          <div className="flex items-center gap-2 text-[11px] text-white/60">
+          <div className="flex items-center gap-2 text-[11px] text-white/60 dark-green-model-loaded-indicator">
             <span className="relative flex h-2 w-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
-              <span className="relative inline-flex h-2 w-2 rounded-full bg-indigo-300"></span>
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full dark-green-pill-ping"></span>
+              <span className="relative inline-flex h-2 w-2 rounded-full dark-green-pill"></span>
             </span>
             <span>Loading model… {coldElapsed}s</span>
           </div>
         )}
         {activePrompt.trim() && activeProfile && systemEnabled && (
           <span
-            className="flex items-center text-[11px] px-3 py-2 rounded-md bg-indigo-500/15 border border-indigo-500/40 text-indigo-100/90 self-start max-w-[260px] truncate h-10 leading-none"
+            className="flex items-center text-[11px] px-3 py-2 rounded-md self-start max-w-[260px] truncate h-10 leading-none dark-green-model-indicator"
             title={activeProfile.name + ' active'}
           >
-            <span className="font-semibold mr-2 text-indigo-300/80">Profile:</span>
+            <span className="font-semibold mr-2 dark-green-model-indicator-label">Profile:</span>
             <span className="truncate">{activeProfile.name}</span>
           </span>
         )}
@@ -293,7 +343,7 @@ export function ChatPanel() {
         </div>
       )}
       {showSys && systemEnabled && (
-        <div className="rounded-md border border-indigo-500/30 bg-indigo-500/5 p-3 flex flex-col gap-3">
+        <div className="rounded-md p-3 flex flex-col gap-3 dark-green-system-prompt-bg">
           <div className="flex flex-wrap gap-2 items-center">
             <span className="text-[11px] font-medium text-indigo-200/80">Profiles</span>
             <input
@@ -575,12 +625,16 @@ export function ChatPanel() {
             <div
               key={m.id}
               className={`rounded-md px-3 py-2 leading-relaxed text-sm border ${
-                isUser ? 'bg-indigo-500/20 border-indigo-500/30' : 'bg-white/10 border-white/10'
+                isUser
+                  ? 'bg-indigo-500/20 border-indigo-500/30 dark-green-chat-user'
+                  : 'bg-white/10 border-white/10'
               }`}
             >
               <div className="text-[10px] uppercase tracking-wide mb-1 text-white/40">{m.role}</div>
               {isUser ? (
-                <div className="whitespace-pre-wrap text-white/90 font-light">{m.content}</div>
+                <div className="whitespace-pre-wrap text-white/90 font-light dark-green-chat-user-text">
+                  {m.content}
+                </div>
               ) : (
                 <div className="space-y-3">
                   {hasThink && (

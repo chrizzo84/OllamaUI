@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from 'next/font/google';
 import './globals.css';
 import { AppQueryProvider } from '@/components/query-provider';
 import Link from 'next/link';
+import Image from 'next/image';
 import { SiteNav } from '@/components/site-nav';
 import { HostIndicator } from '@/components/header-brand';
 import { Toaster } from '@/components/toaster';
@@ -43,13 +44,20 @@ export const metadata: Metadata = {
   },
 };
 
-export default function RootLayout({
-  children,
-}: Readonly<{
-  children: React.ReactNode;
-}>) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="en" suppressHydrationWarning data-theme="default">
+      <head>
+        {/* Early inline theme setter to prevent FOUC (reads localStorage BEFORE React hydration) */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(() => {try {var t = localStorage.getItem('ollama_ui_theme'); if (t) { document.documentElement.dataset.theme = t; }} catch(e) { /* ignore */ }} )();`,
+          }}
+        />
+        <noscript>
+          <style>{`:root{color-scheme: dark;}`}</style>
+        </noscript>
+      </head>
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased min-h-screen bg-gradient-to-br from-[#0d0f17] via-[#141b2d] to-[#1d1329] text-foreground selection:bg-indigo-500/40 selection:text-white`}
       >
@@ -61,11 +69,18 @@ export default function RootLayout({
                   href="/"
                   className="flex items-center gap-2 font-semibold tracking-tight text-white/90 hover:text-white"
                 >
-                  <img src="/ollama-ui.ico" alt="Logo" className="h-6 w-6" />
+                  <Image
+                    src="/ollama-ui.ico"
+                    alt="Logo"
+                    width={24}
+                    height={24}
+                    className="h-6 w-6"
+                    priority
+                  />
                   <span>Ollama UI</span>
                 </Link>
                 <SiteNav />
-                <div className="ml-auto">
+                <div className="ml-auto flex items-center gap-4">
                   <HostIndicator />
                 </div>
               </div>

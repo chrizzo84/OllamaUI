@@ -32,7 +32,6 @@ const nextConfig: NextConfig = {
   // Wildcards sind NICHT erlaubt; deshalb enumerieren wir dynamisch.
   // Entferne/vereinfachen, falls zu großzügig.
   allowedDevOrigins,
-  eslint: { ignoreDuringBuilds: true },
 };
 
 export default nextConfig;
