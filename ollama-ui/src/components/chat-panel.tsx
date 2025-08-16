@@ -611,6 +611,7 @@ export function ChatPanel() {
       >
         {messages.length === 0 && <div className="text-white/40 text-xs">No messages yet.</div>}
         {messages.map((m) => {
+          console.log('Rendering message:', { id: m.id, content: m.content, raw: m.raw });
           const isUser = m.role === 'user';
           const hasThink =
             !isUser && typeof m.raw === 'string' && /<think>[\s\S]*?<\/think>/.test(m.raw);
