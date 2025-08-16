@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import { usePrefsStore } from '@/store/prefs';
 
 // Helper function for safe calculation
 const calculateExpression = (expression: string): number => {
@@ -44,10 +43,10 @@ const calculatorSchema = {
   },
 };
 
-const calculator = (args: { expression: string }): { result: number } => {
+const calculator = async (args: { expression: string }): Promise<{ result: number }> => {
   const { expression } = z.object({ expression: z.string() }).parse(args);
   const result = calculateExpression(expression);
-  return { result };
+  return Promise.resolve({ result });
 };
 
 
@@ -72,17 +71,24 @@ const getDateTimeSchema = {
 };
 
 
-const getDateTime = (args: { part: 'date' | 'time' | 'datetime' }): { result: string } => {
+const getDateTime = async (
+  args: { part: 'date' | 'time' | 'datetime' },
+): Promise<{ result: string }> => {
   const { part } = z.object({ part: z.enum(['date', 'time', 'datetime']) }).parse(args);
   const now = new Date();
+  let result = '';
   switch (part) {
     case 'date':
-      return { result: now.toLocaleDateString() };
+      result = now.toLocaleDateString();
+      break;
     case 'time':
-      return { result: now.toLocaleTimeString() };
+      result = now.toLocaleTimeString();
+      break;
     case 'datetime':
-      return { result: now.toLocaleString() };
+      result = now.toLocaleString();
+      break;
   }
+  return Promise.resolve({ result });
 };
 
 
@@ -105,12 +111,14 @@ const webSearchSchema = {
   },
 };
 
-const webSearch = async (args: { query: string }): Promise<{ results: any[] }> => {
+const webSearch = async (
+  args: { query: string },
+  searxngUrl?: string,
+): Promise<{ results: any[] }> => {
   const { query } = z.object({ query: z.string() }).parse(args);
-  const { searxngUrl } = usePrefsStore.getState();
 
   if (!searxngUrl) {
-    throw new Error('SearXNG URL is not configured in settings.');
+    throw new Error('SearXNG URL is not configured in settings or passed to the tool.');
   }
 
   // Use URL constructor for robust URL joining
