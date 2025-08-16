@@ -2,9 +2,12 @@
 import { useState, useRef, useEffect } from 'react';
 import { useChatStore } from '@/store/chat';
 import { useSystemPromptStore, LamaProfile } from '@/store/system-prompt';
+import { useToolStore } from '@/store/tools';
+import { toolSchemas, ToolName } from '@/lib/tools';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Button } from './ui/button';
+import { ToolSwitcher } from './tool-switcher';
 import { useQuery } from '@tanstack/react-query';
 
 interface ModelTag {
@@ -101,10 +104,12 @@ export function ChatPanel() {
   interface SentPayload {
     model: string;
     messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>;
+    tools?: typeof toolSchemas;
   }
   const [lastPayload, setLastPayload] = useState<SentPayload | null>(null);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
+  const { toolSettings } = useToolStore();
   const [coldStart, setColdStart] = useState(false);
   const [coldStartSince, setColdStartSince] = useState<number | null>(null);
   const [coldElapsed, setColdElapsed] = useState(0);
@@ -191,7 +196,14 @@ export function ChatPanel() {
           .map((m) => ({ role: m.role, content: m.content })),
       ];
       // last user already included
-      const payload = { model, messages: upstreamMessages };
+      const enabledTools = toolSchemas.filter(
+        (t) => toolSettings[t.function.name as ToolName],
+      );
+      const payload: SentPayload = {
+        model,
+        messages: upstreamMessages,
+        ...(enabledTools.length > 0 && { tools: enabledTools }),
+      };
       setLastPayload(payload);
       const res = await fetch('/api/chat', {
         method: 'POST',
@@ -220,22 +232,20 @@ export function ChatPanel() {
               update(assistantId, { content: '[Fehler] ' + String(obj.error), raw: assistantRaw });
             }
             if (assistantRaw) {
-              let display = assistantRaw;
-              if (assistantRaw.startsWith('<think>')) {
-                const closeIdx = assistantRaw.indexOf('</think>');
-                if (closeIdx === -1) {
-                  // still thinking, hide content
+                let display = assistantRaw;
+                if (assistantRaw.includes('</think>')) {
+                  // Completed think block
+                  display = assistantRaw.replace(/<think>[\s\S]*?<\/think>/, '').trim();
+                } else if (assistantRaw.startsWith('<think>')) {
+                  // In-progress think block
                   display = '';
-                } else {
-                  const after = assistantRaw.slice(closeIdx + 8).trim();
-                  display = after;
                 }
+
+                update(assistantId, {
+                  content: display && display.length > 0 ? display : '…',
+                  raw: assistantRaw,
+                });
               }
-              update(assistantId, {
-                content: display && display.length > 0 ? display : '…',
-                raw: assistantRaw,
-              });
-            }
           } catch {
             /* ignore */
           }
@@ -335,6 +345,7 @@ export function ChatPanel() {
           <span>{showDebug ? '🔍 Hide inspector' : '🔍 Payload Inspector'}</span>
           <span className="ml-auto text-[11px] opacity-80">{showDebug ? '▲' : '▼'}</span>
         </Button>
+        <ToolSwitcher />
       </div>
       {model && /(^|[^0-9])([0-6](?:\.[0-9]+)?)b([^0-9]|$)/i.test(model) && (
         <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-200/80">
