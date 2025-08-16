@@ -113,9 +113,13 @@ const webSearch = async (args: { query: string }): Promise<{ results: any[] }> =
     throw new Error('SearXNG URL is not configured in settings.');
   }
 
-  const response = await fetch(
-    `${searxngUrl}/search?q=${encodeURIComponent(query)}&format=json`,
-  );
+  // Use URL constructor for robust URL joining
+  const url = new URL(searxngUrl);
+  url.pathname = (url.pathname.endsWith('/') ? url.pathname : url.pathname + '/') + 'search';
+  url.searchParams.append('q', query);
+  url.searchParams.append('format', 'json');
+
+  const response = await fetch(url.toString());
   if (!response.ok) {
     throw new Error(`SearXNG request failed with status ${response.status}`);
   }
