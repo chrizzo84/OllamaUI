@@ -13,6 +13,7 @@ const items: NavItem[] = [
   { href: '/', label: 'Dashboard', match: (p) => p === '/' },
   { href: '/chat', label: 'Chat', match: (p) => p.startsWith('/chat') },
   { href: '/models', label: 'Models', match: (p) => p.startsWith('/models') },
+  { href: '/settings', label: 'Settings', match: (p) => p.startsWith('/settings') },
 ];
 
 export function SiteNav() {
@@ -32,9 +33,7 @@ export function SiteNav() {
             )}
           >
             {item.label}
-            {active && (
-              <span className="absolute -bottom-1 left-0 right-0 h-px bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500" />
-            )}
+            {active && <span className="nav-underline" />}
           </Link>
         );
       })}

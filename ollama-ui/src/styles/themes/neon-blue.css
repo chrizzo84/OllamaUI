@@ -1,0 +1,250 @@
+/* Theme: neon-blue (neon blue on deep space gradient) */
+[data-theme='neon-blue'] {
+  --background: #040a14; /* near-black with subtle blue */
+  --foreground: #d6f5ff; /* soft cyan for text */
+  --accent: #00c3ff; /* neon blue */
+  --accent-glow: 0 195 255; /* rgb triplet */
+}
+
+body[data-theme='neon-blue'],
+[data-theme='neon-blue'] body {
+  background: radial-gradient(circle at 20% 25%, #081a24 0%, #040a14 45%, #020508 100%);
+  color: var(--foreground);
+}
+
+/* ===== NEON BLUE THEME STYLES ===== */
+
+/* Model loaded indicator for neon-blue theme */
+[data-theme='neon-blue'] .neon-blue-model-loaded-indicator {
+  border: 1px solid rgba(0, 195, 255, 0.35);
+  background: linear-gradient(
+    90deg,
+    rgba(0, 195, 255, 0.09) 0%,
+    rgba(0, 195, 255, 0.18) 100%
+  ) !important;
+  color: #00c3ff !important;
+  box-shadow: 0 0 8px 0 rgba(0, 195, 255, 0.1);
+  border-radius: 8px;
+  padding: 2px 8px;
+}
+
+[data-theme='neon-blue'] .neon-blue-system-prompt-bg {
+  background: linear-gradient(
+    90deg,
+    rgba(0, 195, 255, 0.09) 0%,
+    rgba(0, 195, 255, 0.18) 100%
+  ) !important;
+  border-color: rgba(0, 195, 255, 0.25) !important;
+  box-shadow: 0 0 8px 0 rgba(0, 195, 255, 0.1);
+}
+
+/* Checkbox accent color for neon-blue theme */
+[data-theme='neon-blue'] input[type='checkbox']:checked {
+  accent-color: #00c3ff;
+}
+
+[data-theme='neon-blue'] .neon-blue-chat-user {
+  background: linear-gradient(
+    90deg,
+    rgba(0, 195, 255, 0.18) 0%,
+    rgba(0, 195, 255, 0.09) 100%
+  ) !important;
+  border-color: rgba(0, 195, 255, 0.35) !important;
+  box-shadow: 0 0 8px 0 rgba(0, 195, 255, 0.18);
+}
+
+[data-theme='neon-blue'] .neon-blue-chat-user-text {
+  color: #00c3ff !important;
+  text-shadow: 0 0 6px rgba(0, 195, 255, 0.7);
+}
+
+[data-theme='neon-blue'] .neon-blue-pill {
+  background: #00c3ff !important;
+  box-shadow: 0 0 6px rgba(0, 195, 255, 0.7);
+}
+
+[data-theme='neon-blue'] .neon-blue-pill-ping {
+  background: #00c3ff !important;
+  opacity: 0.55 !important;
+  box-shadow: 0 0 12px 2px rgba(0, 195, 255, 0.5);
+}
+
+[data-theme='neon-blue'] .neon-blue-pill-bg {
+  background: linear-gradient(
+    90deg,
+    rgba(0, 195, 255, 0.12) 0%,
+    rgba(0, 195, 255, 0.18) 100%
+  ) !important;
+  border-color: rgba(0, 195, 255, 0.35) !important;
+  color: #d6f5ff !important;
+  box-shadow: 0 0 8px 0 rgba(0, 195, 255, 0.18);
+}
+
+[data-theme='neon-blue'] .neon-blue-pill-label {
+  color: #00c3ff !important;
+  text-shadow: 0 0 6px rgba(0, 195, 255, 0.7);
+}
+
+/* Model indicator for neon-blue theme */
+[data-theme='neon-blue'] .neon-blue-model-indicator {
+  background: rgba(0, 195, 255, 0.12);
+  border: 1px solid rgba(0, 195, 255, 0.35);
+  color: #00c3ff;
+  box-shadow: 0 0 8px rgba(0, 195, 255, 0.25);
+}
+
+[data-theme='neon-blue'] .neon-blue-model-indicator-label {
+  color: #00c3ff;
+  text-shadow: 0 0 6px rgba(0, 195, 255, 0.7);
+}
+
+/* Button overrides for neon-blue theme (scoped) */
+[data-theme='neon-blue'] button[data-variant='primary'] {
+  background: linear-gradient(
+    135deg,
+    rgba(var(--accent-glow) / 0.15) 0%,
+    rgba(var(--accent-glow) / 0.05) 60%,
+    rgba(var(--accent-glow) / 0.02) 100%
+  );
+  border: 1px solid rgba(var(--accent-glow) / 0.35);
+  color: var(--foreground);
+  position: relative;
+}
+
+[data-theme='neon-blue'] button[data-variant='primary']::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(
+    160deg,
+    rgba(var(--accent-glow) / 0.35),
+    rgba(var(--accent-glow) / 0)
+  );
+  opacity: 0.6;
+  mix-blend-mode: screen;
+  pointer-events: none;
+}
+
+[data-theme='neon-blue'] button[data-variant='primary']:hover {
+  filter: brightness(1.25);
+  box-shadow:
+    0 0 0.4rem rgba(var(--accent-glow) / 0.8),
+    0 0 1.5rem rgba(var(--accent-glow) / 0.5);
+}
+
+[data-theme='neon-blue'] button[data-variant='secondary'],
+[data-theme='neon-blue'] button[data-variant='outline'],
+[data-theme='neon-blue'] button[data-variant='ghost'] {
+  border-color: rgba(var(--accent-glow) / 0.25);
+  color: rgba(var(--accent-glow) / 0.85);
+}
+
+[data-theme='neon-blue'] button[data-variant='secondary']:hover,
+[data-theme='neon-blue'] button[data-variant='outline']:hover,
+[data-theme='neon-blue'] button[data-variant='ghost']:hover {
+  background: rgba(var(--accent-glow) / 0.12);
+  color: var(--foreground);
+  box-shadow: 0 0 0.3rem rgba(var(--accent-glow) / 0.6);
+}
+
+[data-theme='neon-blue'] a {
+  color: #00c3ff;
+  text-shadow: 0 0 6px rgba(var(--accent-glow) / 0.7);
+}
+
+/* Danger buttons adapt to theme (neon-blue) with blue glow */
+[data-theme='neon-blue'] button[data-variant='danger'] {
+  background: linear-gradient(135deg, #1f2a33 0%, #171e25 50%, #11161a 100%);
+  border: 1px solid rgba(var(--accent-glow) / 0.35);
+  color: #f4fcff;
+}
+
+[data-theme='neon-blue'] button[data-variant='danger']::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: radial-gradient(
+    circle at 50% 15%,
+    rgba(var(--accent-glow) / 0.5),
+    rgba(var(--accent-glow) / 0)
+  );
+  mix-blend-mode: screen;
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+[data-theme='neon-blue'] button[data-variant='danger']:hover {
+  filter: brightness(1.15) drop-shadow(0 0 6px rgba(var(--accent-glow) / 0.65));
+}
+
+/* Neon-blue theme override for progress bars */
+[data-theme='neon-blue'] .pull-progress .progress-track {
+  background: rgba(var(--accent-glow) / 0.12);
+  box-shadow:
+    0 0 0 1px rgba(var(--accent-glow) / 0.25),
+    inset 0 0 6px rgba(var(--accent-glow) / 0.25);
+}
+
+[data-theme='neon-blue'] .pull-progress .progress-fill {
+  background: linear-gradient(
+    90deg,
+    rgba(var(--accent-glow) / 0.15) 0%,
+    rgba(var(--accent-glow) / 0.55) 55%,
+    rgba(var(--accent-glow) / 0.9) 100%
+  );
+  box-shadow:
+    0 0 6px rgba(var(--accent-glow) / 0.7),
+    0 0 14px rgba(var(--accent-glow) / 0.45),
+    inset 0 0 4px rgba(var(--accent-glow) / 0.4);
+  filter: brightness(1.05) saturate(1.2);
+}
+
+[data-theme='neon-blue'] .pull-progress .progress-fill::after {
+  background: radial-gradient(
+    circle at 20% 50%,
+    rgba(var(--accent-glow) / 0.9),
+    rgba(var(--accent-glow) / 0)
+  );
+  opacity: 0.6;
+  mix-blend-mode: screen;
+}
+
+[data-theme='neon-blue'] .pull-progress .progress-label {
+  color: rgba(var(--accent-glow) / 0.85);
+  text-shadow: 0 0 4px rgba(var(--accent-glow) / 0.6);
+}
+
+/* Neon-blue variant for navigation underline */
+[data-theme='neon-blue'] .nav-underline,
+body[data-theme='neon-blue'] .nav-underline {
+  background: linear-gradient(
+    90deg,
+    rgba(var(--accent-glow) / 0.1) 0%,
+    rgba(var(--accent-glow) / 0.9) 35%,
+    rgba(var(--accent-glow) / 0.6) 70%,
+    rgba(var(--accent-glow) / 0.1) 100%
+  );
+  box-shadow:
+    0 0 6px rgba(var(--accent-glow) / 0.7),
+    0 0 14px rgba(var(--accent-glow) / 0.4);
+}
+
+/* Host-manage button for neon-blue theme */
+[data-theme='neon-blue'] button[data-variant='host-manage'] {
+  background: linear-gradient(135deg, #00c3ff 0%, #4ddbff 60%, #80e5ff 100%);
+  border: 1px solid #00c3ff;
+  color: #fff;
+  position: relative;
+  transition:
+    filter 0.2s,
+    box-shadow 0.2s;
+}
+
+[data-theme='neon-blue'] button[data-variant='host-manage']:hover {
+  filter: brightness(1.15);
+  box-shadow:
+    0 0 0.4rem #00c3ff,
+    0 0 1.5rem #4ddbff;
+}

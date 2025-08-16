@@ -2,6 +2,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
+import { usePrefsStore } from '@/store/prefs';
 import { motion } from 'framer-motion';
 import { usePullLogStore, PullStructuredEvent } from '@/store/pull-log';
 import { useToastStore } from '@/store/toast';
@@ -136,52 +137,16 @@ export default function ModelsPage() {
     },
   });
 
-  const pullMutation = useMutation({
-    mutationFn: async (model: string) => {
-      // streaming text response
-      const res = await fetch('/api/models/pull', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model }),
-      });
-      if (!res.body) throw new Error('No stream body');
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let full = '';
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        const chunk = decoder.decode(value, { stream: true });
-        full += chunk;
-        // parse NDJSON lines
-        const lines = chunk.split('\n').filter(Boolean);
-        for (const line of lines) {
-          try {
-            const obj = JSON.parse(line);
-            addPullEvent(model, obj);
-          } catch {
-            addPullEvent(model, { raw: line });
-          }
-        }
-      }
-      return full;
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['ollama-model-tags'] });
-      pushToast({ type: 'success', message: 'Pull finished.' });
-    },
-    onError: (e: unknown) => {
-      const msg = e instanceof Error ? e.message : 'Pull failed';
-      pushToast({ type: 'error', message: msg });
-    },
-  });
-
   const [pullInput, setPullInput] = useState('');
   const [pullLog, setPullLog] = useState('');
   const [progress, setProgress] = useState<number | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const [currentPullModel, setCurrentPullModel] = useState<string | null>(null);
   const [activeHost, setActiveHost] = useState<string | null>(null);
+  const requireDeleteConfirm = usePrefsStore((s) => s.requireDeleteConfirm);
+  const autoRefreshModelsSeconds = usePrefsStore((s) => s.autoRefreshModelsSeconds);
+  const hydratePrefs = usePrefsStore((s) => s.hydrate);
+  const [deleteArm, setDeleteArm] = useState<string | null>(null);
   async function loadActiveHost() {
     try {
       const r = await fetch('/api/hosts');
@@ -204,6 +169,9 @@ export default function ModelsPage() {
     loadActiveHost();
   }, []);
   useEffect(() => {
+    hydratePrefs();
+  }, [hydratePrefs]);
+  useEffect(() => {
     function onActiveChange() {
       loadActiveHost();
       queryClient.invalidateQueries({ queryKey: ['ollama-model-tags'] });
@@ -211,6 +179,14 @@ export default function ModelsPage() {
     window.addEventListener('active-host-changed', onActiveChange as EventListener);
     return () => window.removeEventListener('active-host-changed', onActiveChange as EventListener);
   }, [queryClient]);
+  // Auto refresh models list - DISABLED to prevent unnecessary API calls
+  // useEffect(() => {
+  //   if (!autoRefreshModelsSeconds) return;
+  //   const id = setInterval(() => {
+  //     refetch();
+  //   }, autoRefreshModelsSeconds * 1000);
+  //   return () => clearInterval(id);
+  // }, [autoRefreshModelsSeconds, refetch]);
   // Removed unused helper functions openHostManager/manualRefreshHost (were for legacy host UI)
 
   // derive progress from last event with percentage for the currently pulled model input
@@ -315,7 +291,7 @@ export default function ModelsPage() {
   });
 
   const isStreamingPull = !!abortRef.current; // active streaming pull (catalog variant)
-  const anyPullActive = isStreamingPull || pullMutation.status === 'pending';
+  const anyPullActive = isStreamingPull;
   const [expandedVariants, setExpandedVariants] = useState<Record<string, boolean>>({});
   function toggleVariants(slug: string) {
     setExpandedVariants((prev) => ({ ...prev, [slug]: !prev[slug] }));
@@ -407,17 +383,37 @@ export default function ModelsPage() {
                       : `Pull installed model ${m.name}`
                   }
                 >
-                  Pull
+                  {currentPullModel === m.name && isStreamingPull ? 'Pulling…' : 'Pull'}
                 </Button>
                 <Button
                   variant="danger"
                   size="sm"
                   loading={deleteMutation.status === 'pending'}
-                  disabled={pullMutation.status === 'pending'}
-                  onClick={() => deleteMutation.mutate(m.name)}
-                  title={`Delete model ${m.name}`}
+                  disabled={anyPullActive}
+                  onClick={() => {
+                    if (requireDeleteConfirm) {
+                      if (deleteArm === m.name) {
+                        deleteMutation.mutate(m.name);
+                        setDeleteArm(null);
+                      } else {
+                        setDeleteArm(m.name);
+                        setTimeout(() => {
+                          setDeleteArm((cur) => (cur === m.name ? null : cur));
+                        }, 3500);
+                      }
+                    } else {
+                      deleteMutation.mutate(m.name);
+                    }
+                  }}
+                  title={
+                    requireDeleteConfirm
+                      ? deleteArm === m.name
+                        ? 'Click to confirm delete'
+                        : `Delete model ${m.name}`
+                      : `Delete model ${m.name}`
+                  }
                 >
-                  Delete
+                  {requireDeleteConfirm && deleteArm === m.name ? 'Sure?' : 'Delete'}
                 </Button>
               </div>
               <div className="pointer-events-none absolute inset-0 opacity-0 group-hover:opacity-100 transition" />
@@ -491,16 +487,18 @@ export default function ModelsPage() {
             )}
           </form>
           {progress !== null && (
-            <div className="flex items-center gap-3">
-              <div className="h-2 flex-1 overflow-hidden rounded bg-white/10">
+            <div className="flex items-center gap-3 pull-progress">
+              <div className="progress-track">
                 <div
-                  className="h-full bg-gradient-to-r from-slate-500 via-slate-600 to-blue-900 transition-all"
+                  className="progress-fill"
                   style={{ width: `${Math.min(progress, 100)}%` }}
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={progress}
+                  role="progressbar"
                 />
               </div>
-              <span className="w-12 text-right text-xs tabular-nums text-white/60">
-                {progress}%
-              </span>
+              <span className="progress-label">{progress}%</span>
             </div>
           )}
           {pullLog && (
