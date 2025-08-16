@@ -1,5 +1,12 @@
 @import 'tailwindcss';
 
+/* Import theme-specific styles */
+@import '../styles/themes/dark-green.css';
+@import '../styles/themes/neon.css';
+@import '../styles/themes/neon-orange.css';
+@import '../styles/themes/neon-red.css';
+@import '../styles/themes/neon-blue.css';
+
 /* Force dauerhaft Dark Mode (heller Modus deaktiviert) */
 :root {
   /* Dark palette as baseline (was previously only inside prefers-color-scheme: dark) */
@@ -11,6 +18,78 @@
   --radius-md: 8px;
   --radius-lg: 16px;
 }
+
+/* Background gradients per theme applied to body via attribute selector */
+body {
+  /* default theme gradient (existing) is applied through tailwind classes in layout; fallback only */
+  background: var(--background);
+  color: var(--foreground);
+}
+
+/* Accent utilities (used by components if they rely on CSS vars) */
+.accent-glow-shadow {
+  box-shadow:
+    0 0 0.5rem rgba(var(--accent-glow) / 0.6),
+    0 0 1.25rem rgba(var(--accent-glow) / 0.35),
+    inset 0 0 0.25rem rgba(var(--accent-glow) / 0.4);
+}
+
+/* Pull progress bar (default theme) */
+.pull-progress .progress-track {
+  height: 0.5rem;
+  flex: 1 1 auto;
+  overflow: hidden;
+  border-radius: 0.25rem;
+  background: rgba(255 255 255 / 0.1);
+  position: relative;
+}
+.pull-progress .progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #4f5b78 0%, #58627f 35%, #1e3a8a 100%);
+  box-shadow:
+    inset 0 0 0 1px rgba(255 255 255 / 0.06),
+    0 0 4px rgba(99 102 241 / 0.4);
+  transition:
+    width 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+    filter 0.3s; /* smooth width */
+  position: relative;
+}
+.pull-progress .progress-fill::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    45deg,
+    rgba(255 255 255 / 0.07) 0 8px,
+    transparent 8px 16px
+  );
+  mix-blend-mode: overlay;
+  pointer-events: none;
+}
+.pull-progress .progress-label {
+  width: 3rem; /* 12 * 0.25rem */
+  text-align: right;
+  font-size: 0.75rem;
+  line-height: 1rem;
+  font-variant-numeric: tabular-nums;
+  color: rgba(255 255 255 / 0.6);
+}
+
+/* Navigation active underline (default theme) */
+.nav-underline {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -4px;
+  height: 2px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, #6366f1 0%, #8b5cf6 40%, #ec4899 100%);
+  box-shadow:
+    0 0 4px rgba(99 102 241 / 0.6),
+    0 0 8px rgba(236 72 153 / 0.45);
+  pointer-events: none;
+}
+
 /* Entfernt den automatischen Wechsel – falls später Themen-Umschaltung gewünscht,
    kann man hier wieder eine Light-Variante einführen oder per .light/.dark Klassen arbeiten. */
 
@@ -158,4 +237,21 @@ body {
   max-width: 1600px;
   margin-inline: auto;
   padding-inline: clamp(1.5rem, 2.5vw, 3rem);
+}
+
+/* Host-manage button (default theme) */
+button[data-variant='host-manage'] {
+  background: linear-gradient(135deg, #6366f1 0%, #818cf8 60%, #a5b4fc 100%);
+  border: 1px solid #6366f1;
+  color: #fff;
+  position: relative;
+  transition:
+    filter 0.2s,
+    box-shadow 0.2s;
+}
+button[data-variant='host-manage']:hover {
+  filter: brightness(1.15);
+  box-shadow:
+    0 0 0.4rem #6366f1,
+    0 0 1.5rem #818cf8;
 }
