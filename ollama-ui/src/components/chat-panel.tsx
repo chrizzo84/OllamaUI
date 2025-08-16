@@ -232,17 +232,12 @@ export function ChatPanel() {
               update(assistantId, { content: '[Fehler] ' + String(obj.error), raw: assistantRaw });
             }
             if (assistantRaw) {
-                let display = assistantRaw;
-                if (assistantRaw.includes('</think>')) {
-                  // Completed think block
-                  display = assistantRaw.replace(/<think>[\s\S]*?<\/think>/, '').trim();
-                } else if (assistantRaw.startsWith('<think>')) {
-                  // In-progress think block
-                  display = '';
-                }
+                const display = assistantRaw;
+                const isInThinkBlock =
+                  display.startsWith('<think>') && !display.includes('</think>');
 
                 update(assistantId, {
-                  content: display && display.length > 0 ? display : '…',
+                  content: isInThinkBlock ? '…' : display,
                   raw: assistantRaw,
                 });
               }
@@ -664,17 +659,24 @@ export function ChatPanel() {
                       </button>
                     </div>
                   )}
-                  {m.content === '…' ? (
-                    <div className="flex items-center gap-1 h-6">
-                      <span className="animate-bounce [animation-delay:-0.25s]">🦙</span>
-                      <span className="animate-bounce [animation-delay:-0.15s]">🦙</span>
-                      <span className="animate-bounce [animation-delay:-0.05s]">🦙</span>
-                    </div>
-                  ) : (
-                    <div className="prose prose-invert max-w-none text-white/90 prose-p:my-2 prose-ul:my-2 prose-li:my-1 prose-pre:my-3 prose-code:px-1 prose-code:py-0.5 prose-code:bg-white/10 prose-code:rounded">
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content || '…'}</ReactMarkdown>
-                    </div>
-                  )}
+                  {(() => {
+                    const displayContent = (m.content || '')
+                      .replace(/<think>[\s\S]*?<\/think>/, '')
+                      .trim();
+                    return m.content === '…' || (m.raw?.startsWith('<think>') && !displayContent) ? (
+                      <div className="flex items-center gap-1 h-6">
+                        <span className="animate-bounce [animation-delay:-0.25s]">🦙</span>
+                        <span className="animate-bounce [animation-delay:-0.15s]">🦙</span>
+                        <span className="animate-bounce [animation-delay:-0.05s]">🦙</span>
+                      </div>
+                    ) : (
+                      <div className="prose prose-invert max-w-none text-white/90 prose-p:my-2 prose-ul:my-2 prose-li:my-1 prose-pre:my-3 prose-code:px-1 prose-code:py-0.5 prose-code:bg-white/10 prose-code:rounded">
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                          {displayContent || '…'}
+                        </ReactMarkdown>
+                      </div>
+                    );
+                  })()}
                 </div>
               )}
             </div>
