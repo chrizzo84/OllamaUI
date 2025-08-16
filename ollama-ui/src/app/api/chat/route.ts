@@ -55,6 +55,7 @@ export async function POST(req: NextRequest) {
     const body = await req.json().catch(() => ({}));
     const model = (body.model as string | undefined)?.trim();
     const messages: OllamaMessage[] = Array.isArray(body.messages) ? body.messages : [];
+    const toolsFromClient = body.tools;
 
     if (!model) {
       return new Response(JSON.stringify({ error: 'Missing model' }), { status: 400 });
@@ -71,7 +72,7 @@ export async function POST(req: NextRequest) {
     const initialPayload = {
       model,
       messages,
-      tools: toolSchemas,
+      ...(toolsFromClient && toolsFromClient.length > 0 && { tools: toolsFromClient }),
       stream: false, // Tool usage requires stream to be false
     };
 
