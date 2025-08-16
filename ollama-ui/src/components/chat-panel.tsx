@@ -613,13 +613,15 @@ export function ChatPanel() {
         {messages.map((m) => {
           console.log(JSON.stringify({ id: m.id, content: m.content, raw: m.raw }));
           const isUser = m.role === 'user';
-          const hasThink =
-            !isUser && typeof m.raw === 'string' && /<think>[\s\S]*?<\/think>/.test(m.raw);
+          const thinkRegex = /<think>([\s\S]*?)<\/think>/g;
+          const hasThink = !isUser && typeof m.raw === 'string' && new RegExp(thinkRegex).test(m.raw);
           const expanded = expandedThinkIds.has(m.id);
           let thinkContent: string | null = null;
           if (hasThink) {
-            const match = m.raw!.match(/<think>[\s\S]*?<\/think>/);
-            if (match) thinkContent = match[0].replace(/<\/?think>/g, '').trim();
+            const matches = [...(m.raw?.matchAll(thinkRegex) || [])];
+            if (matches.length > 0) {
+              thinkContent = matches.map((match) => match[1].trim()).join('\n\n---\n\n');
+            }
           }
           const toggle = () =>
             setExpandedThinkIds((prev) => {
@@ -662,7 +664,7 @@ export function ChatPanel() {
                   )}
                   {(() => {
                     const displayContent = (m.content || '')
-                      .replace(/<think>[\s\S]*?<\/think>/, '')
+                      .replace(/<think>[\s\S]*?<\/think>/g, '')
                       .trim();
                     return m.content === '…' || (m.raw?.startsWith('<think>') && !displayContent) ? (
                       <div className="flex items-center gap-1 h-6">
