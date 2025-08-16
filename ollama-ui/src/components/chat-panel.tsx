@@ -618,8 +618,13 @@ export function ChatPanel() {
         className="flex-1 min-h-0 overflow-auto rounded-md bg-black/30 p-3 text-sm space-y-3"
       >
         {messages.length === 0 && <div className="text-white/40 text-xs">No messages yet.</div>}
-        {messages.map((m) => {
+        {messages.map((m, messageIdx) => {
           const isUser = m.role === 'user';
+          const isLastMessage = messageIdx === messages.length - 1;
+          const showLlamas =
+            m.role === 'assistant' &&
+            (m.content === '…' || (!m.content && loading && isLastMessage));
+
           return (
             <div
               key={m.id}
@@ -636,7 +641,7 @@ export function ChatPanel() {
                 </div>
               ) : (
                 <div className="space-y-3">
-                  {m.content === '…' ? (
+                  {showLlamas ? (
                     <div className="flex items-center gap-1 h-6">
                       <span className="animate-bounce [animation-delay:-0.25s]">🦙</span>
                       <span className="animate-bounce [animation-delay:-0.15s]">🦙</span>
