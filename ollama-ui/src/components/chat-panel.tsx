@@ -233,14 +233,20 @@ export function ChatPanel() {
               update(assistantId, { content: '[Fehler] ' + String(obj.error), raw: assistantRaw });
             }
             if (assistantRaw) {
-                const display = assistantRaw;
+                let display = assistantRaw;
+
+                // Standardize <think> tags to <details> tags
+                display = display
+                  .replace(/<think>/g, '<details><summary>Thinking</summary>')
+                  .replace(/<\/think>/g, '</details>');
+
                 // Show "thinking" indicator if we've started a details block but haven't closed it yet.
                 const isInDetailsBlock =
                   display.includes('<details>') && !display.includes('</details>');
 
                 update(assistantId, {
                   content: isInDetailsBlock ? '…' : display,
-                  raw: assistantRaw,
+                  raw: assistantRaw, // Keep raw as the original for debugging
                 });
               }
           } catch {
