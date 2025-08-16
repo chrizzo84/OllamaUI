@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { usePrefsStore } from '@/store/prefs';
 
 // Helper function for safe calculation
 const calculateExpression = (expression: string): number => {
@@ -85,15 +86,63 @@ const getDateTime = (args: { part: 'date' | 'time' | 'datetime' }): { result: st
 };
 
 
+// 3. Web Search Tool
+const webSearchSchema = {
+  type: 'function',
+  function: {
+    name: 'web_search',
+    description: 'Searches the web for a given query using a SearXNG instance.',
+    parameters: {
+      type: 'object',
+      properties: {
+        query: {
+          type: 'string',
+          description: 'The search query.',
+        },
+      },
+      required: ['query'],
+    },
+  },
+};
+
+const webSearch = async (args: { query: string }): Promise<{ results: any[] }> => {
+  const { query } = z.object({ query: z.string() }).parse(args);
+  const { searxngUrl } = usePrefsStore.getState();
+
+  if (!searxngUrl) {
+    throw new Error('SearXNG URL is not configured in settings.');
+  }
+
+  const response = await fetch(
+    `${searxngUrl}/search?q=${encodeURIComponent(query)}&format=json`,
+  );
+  if (!response.ok) {
+    throw new Error(`SearXNG request failed with status ${response.status}`);
+  }
+
+  const data = await response.json();
+  // Return a simplified list of results
+  return {
+    results: data.results.slice(0, 5).map((r: any) => ({
+      title: r.title,
+      url: r.url,
+      snippet: r.content,
+    })),
+  };
+};
+
+
 // Export all tools and their schemas
 export const tools = {
   calculator,
   get_date_time: getDateTime,
+  web_search: webSearch,
 };
 
 export const toolSchemas = [
   calculatorSchema,
   getDateTimeSchema,
+  webSearchSchema,
 ];
 
 export type ToolName = keyof typeof tools;
