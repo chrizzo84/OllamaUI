@@ -145,6 +145,8 @@ jobs:
             echo "Previous base digest: $PREV_BASE_DIGEST"
           else
             echo "No latest image present. Will build (first build)."
+            PREV_SHA=""
+            PREV_BASE_DIGEST=""
           fi
 
           # Determine changed files between PREV_SHA and HEAD (if PREV_SHA available and in repo)
