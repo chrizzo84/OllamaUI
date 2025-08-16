@@ -3,6 +3,7 @@ import { useState, useRef, useEffect } from 'react';
 import { useChatStore } from '@/store/chat';
 import { useSystemPromptStore, LamaProfile } from '@/store/system-prompt';
 import { useToolStore } from '@/store/tools';
+import { usePrefsStore } from '@/store/prefs';
 import { toolSchemas, ToolName } from '@/lib/tools';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
