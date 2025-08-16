@@ -6,6 +6,7 @@ import { useToolStore } from '@/store/tools';
 import { toolSchemas, ToolName } from '@/lib/tools';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import rehypeRaw from 'rehype-raw';
 import { Button } from './ui/button';
 import { ToolSwitcher } from './tool-switcher';
 import { useQuery } from '@tanstack/react-query';
@@ -233,16 +234,12 @@ export function ChatPanel() {
             }
             if (assistantRaw) {
                 const display = assistantRaw;
-                const isInThinkBlock =
-                  display.startsWith('<think>') && !display.includes('</think>');
-
-                // Always clean the content before storing it, unless it's the temporary "thinking" indicator.
-                const contentToStore = isInThinkBlock
-                  ? '…'
-                  : display.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+                // Show "thinking" indicator if we've started a details block but haven't closed it yet.
+                const isInDetailsBlock =
+                  display.includes('<details>') && !display.includes('</details>');
 
                 update(assistantId, {
-                  content: contentToStore,
+                  content: isInDetailsBlock ? '…' : display,
                   raw: assistantRaw,
                 });
               }
@@ -617,23 +614,6 @@ export function ChatPanel() {
         {messages.length === 0 && <div className="text-white/40 text-xs">No messages yet.</div>}
         {messages.map((m) => {
           const isUser = m.role === 'user';
-          const thinkRegex = /<think>([\s\S]*?)<\/think>/g;
-          const hasThink = !isUser && typeof m.raw === 'string' && new RegExp(thinkRegex).test(m.raw);
-          const expanded = expandedThinkIds.has(m.id);
-          let thinkContent: string | null = null;
-          if (hasThink) {
-            const matches = [...(m.raw?.matchAll(thinkRegex) || [])];
-            if (matches.length > 0) {
-              thinkContent = matches.map((match) => match[1].trim()).join('\n\n---\n\n');
-            }
-          }
-          const toggle = () =>
-            setExpandedThinkIds((prev) => {
-              const next = new Set(prev);
-              if (next.has(m.id)) next.delete(m.id);
-              else next.add(m.id);
-              return next;
-            });
           return (
             <div
               key={m.id}
@@ -650,38 +630,19 @@ export function ChatPanel() {
                 </div>
               ) : (
                 <div className="space-y-3">
-                  {hasThink && (
-                    <div className="rounded-md border border-amber-500/30 bg-amber-500/10 p-2 text-[11px] text-amber-200/80">
-                      {expanded && thinkContent ? (
-                        <div className="whitespace-pre-wrap mb-2 opacity-90">{thinkContent}</div>
-                      ) : (
-                        <div className="italic opacity-70">Hidden reasoning collapsed</div>
-                      )}
-                      <button
-                        type="button"
-                        onClick={toggle}
-                        className="mt-1 rounded bg-amber-500/20 px-2 py-1 text-[10px] font-medium text-amber-100 hover:bg-amber-500/30 transition"
-                      >
-                        {expanded ? 'Hide reasoning' : 'Show reasoning'}
-                      </button>
+                  {m.content === '…' ? (
+                    <div className="flex items-center gap-1 h-6">
+                      <span className="animate-bounce [animation-delay:-0.25s]">🦙</span>
+                      <span className="animate-bounce [animation-delay:-0.15s]">🦙</span>
+                      <span className="animate-bounce [animation-delay:-0.05s]">🦙</span>
+                    </div>
+                  ) : (
+                    <div className="prose prose-invert max-w-none text-white/90 prose-p:my-2 prose-ul:my-2 prose-li:my-1 prose-pre:my-3 prose-code:px-1 prose-code:py-0.5 prose-code:bg-white/10 prose-code:rounded">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]}>
+                        {m.content || '…'}
+                      </ReactMarkdown>
                     </div>
                   )}
-                  {(() => {
-                    const displayContent = (m.content || '').trim();
-                    return m.content === '…' || (m.raw?.startsWith('<think>') && !displayContent) ? (
-                      <div className="flex items-center gap-1 h-6">
-                        <span className="animate-bounce [animation-delay:-0.25s]">🦙</span>
-                        <span className="animate-bounce [animation-delay:-0.15s]">🦙</span>
-                        <span className="animate-bounce [animation-delay:-0.05s]">🦙</span>
-                      </div>
-                    ) : (
-                      <div className="prose prose-invert max-w-none text-white/90 prose-p:my-2 prose-ul:my-2 prose-li:my-1 prose-pre:my-3 prose-code:px-1 prose-code:py-0.5 prose-code:bg-white/10 prose-code:rounded">
-                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                          {displayContent || '…'}
-                        </ReactMarkdown>
-                      </div>
-                    );
-                  })()}
                 </div>
               )}
             </div>
