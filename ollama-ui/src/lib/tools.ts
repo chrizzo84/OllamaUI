@@ -114,6 +114,7 @@ const webSearchSchema = {
 const webSearch = async (
   args: { query: string },
   searxngUrl?: string,
+  searchLimit?: number,
 ): Promise<{ results: any[] }> => {
   const { query } = z.object({ query: z.string() }).parse(args);
 
@@ -135,7 +136,7 @@ const webSearch = async (
   const data = await response.json();
   // Return a simplified list of results
   return {
-    results: data.results.slice(0, 5).map((r: any) => ({
+    results: data.results.slice(0, searchLimit || 5).map((r: any) => ({
       title: r.title,
       url: r.url,
       snippet: r.content,

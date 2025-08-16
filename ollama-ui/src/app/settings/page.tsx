@@ -14,6 +14,8 @@ export default function SettingsPage() {
   const setAutoRefreshModelsSeconds = usePrefsStore((s) => s.setAutoRefreshModelsSeconds);
   const searxngUrl = usePrefsStore((s) => s.searxngUrl);
   const setSearxngUrl = usePrefsStore((s) => s.setSearxngUrl);
+  const searchLimit = usePrefsStore((s) => s.searchLimit);
+  const setSearchLimit = usePrefsStore((s) => s.setSearchLimit);
   const [activeHost, setActiveHost] = useState<string | null>(null);
 
   useEffect(() => {
@@ -105,7 +107,36 @@ export default function SettingsPage() {
               </div>
               <div className="text-[11px] text-white/40 ml-2">
                 The base URL of your self-hosted or a public SearXNG instance. This will be used for
-                the Web Search tool.
+                the Web Search tool, e.g. https://searx.space.
+              </div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <label className="flex items-center gap-2">
+                  <span>Search results</span>
+                  <input
+                    type="number"
+                    min={0}
+                    step={1}
+                    value={searchLimit}
+                    onChange={(e) => setSearchLimit(Number(e.target.value) || 0)}
+                    className="w-20 rounded bg-white/5 border border-white/15 px-2 py-1 text-[11px]"
+                  />
+                </label>
+              </div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  onClick={async () => {
+                    const url = new URL(searxngUrl);
+                    url.pathname =
+                      (url.pathname.endsWith('/') ? url.pathname : url.pathname + '/') + 'search';
+                    url.searchParams.append('q', 'test');
+                    url.searchParams.append('format', 'json');
+                    window.open(url, '_blank');
+                  }}
+                  disabled={!searxngUrl}
+                  className="px-3 py-1.5 text-xs rounded-md bg-white/10 hover:bg-white/20 disabled:opacity-50"
+                >
+                  Test Search
+                </button>
               </div>
             </div>
           </div>

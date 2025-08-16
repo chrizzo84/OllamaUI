@@ -57,6 +57,7 @@ export async function POST(req: NextRequest) {
     const messages: OllamaMessage[] = Array.isArray(body.messages) ? body.messages : [];
     const toolsFromClient = body.tools;
     const searxngUrl = body.searxngUrl;
+    const searchLimit = body.searchLimit;
 
     if (!model) {
       return new Response(JSON.stringify({ error: 'Missing model' }), { status: 400 });
@@ -121,7 +122,7 @@ export async function POST(req: NextRequest) {
     )}\n`;
     try {
       if (toolName === 'web_search') {
-        toolResult = await tools[toolName](toolArgs as any, searxngUrl);
+        toolResult = await tools[toolName](toolArgs as any, searxngUrl, searchLimit);
       } else {
         toolResult = await tools[toolName](toolArgs as any);
       }
