@@ -245,8 +245,10 @@ export function ChatPanel() {
                   .replace(/<\/think>/g, '</details>');
 
                 // Show "thinking" indicator if we've started a details block but haven't closed it yet.
-                const isInDetailsBlock =
-                  display.includes('<details>') && !display.includes('</details>');
+                const openDetailsTags = (display.match(/<details>/g) || []).length;
+                const closeDetailsTags = (display.match(/<\/details>/g) || []).length;
+                const isInDetailsBlock = openDetailsTags > closeDetailsTags;
+
 
                 update(assistantId, {
                   content: isInDetailsBlock ? '…' : display,
