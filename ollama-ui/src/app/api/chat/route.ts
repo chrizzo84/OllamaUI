@@ -104,46 +104,59 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // --- Tool call requested ---
-    const toolCall = assistantMessage.tool_calls[0]; // Assuming one tool call for simplicity
-    const toolName = toolCall.function.name as ToolName;
-    const toolArgs = toolCall.function.arguments;
+    // --- Tool calls requested ---
+    const toolCalls = assistantMessage.tool_calls;
 
-    if (!tools[toolName]) {
-      throw new Error(`Unknown tool: ${toolName}`);
-    }
+    const toolPromises = toolCalls.map(async (toolCall) => {
+      const toolName = toolCall.function.name as ToolName;
+      const toolArgs = toolCall.function.arguments;
 
-    // Execute the tool
-    let toolResult: unknown;
-    let thinkingMessage = `<details><summary>Tool: ${toolName}</summary><pre><code>Arguments: ${JSON.stringify(
-      toolArgs,
-      null,
-      2,
-    )}\n`;
-    try {
-      if (toolName === 'web_search') {
-        toolResult = await tools[toolName](toolArgs as any, searxngUrl, searchLimit);
-      } else {
-        toolResult = await tools[toolName](toolArgs as any);
+      if (!tools[toolName]) {
+        throw new Error(`Unknown tool: ${toolName}`);
       }
-      thinkingMessage += `Result: ${JSON.stringify(toolResult, null, 2)}</code></pre></details>\n`;
-    } catch (e) {
-      toolResult = { error: e instanceof Error ? e.message : String(e) };
-      thinkingMessage += `Error: ${JSON.stringify(
-        toolResult,
+
+      let toolResult: unknown;
+      let thinkingMessage = `<details><summary>Tool: ${toolName}</summary><pre><code>Arguments: ${JSON.stringify(
+        toolArgs,
         null,
         2,
-      )}</code></pre></details>\n`;
-    }
+      )}\n`;
+
+      try {
+        if (toolName === 'web_search') {
+          toolResult = await tools[toolName](toolArgs as any, searxngUrl, searchLimit);
+        } else {
+          toolResult = await tools[toolName](toolArgs as any);
+        }
+        thinkingMessage += `Result: ${JSON.stringify(toolResult, null, 2)}</code></pre></details>\n`;
+      } catch (e) {
+        toolResult = { error: e instanceof Error ? e.message : String(e) };
+        thinkingMessage += `Error: ${JSON.stringify(
+          toolResult,
+          null,
+          2,
+        )}</code></pre></details>\n`;
+      }
+
+      return {
+        toolMessage: {
+          role: 'tool',
+          content: JSON.stringify(toolResult),
+        },
+        thinkingMessage,
+      };
+    });
+
+    const toolResults = await Promise.all(toolPromises);
+    const toolMessages = toolResults.map(r => r.toolMessage);
+    const thinkingMessage = toolResults.map(r => r.thinkingMessage).join('');
+
 
     // --- Second call to Ollama with the tool's result ---
     const messagesWithToolResult: OllamaMessage[] = [
       ...messages,
       assistantMessage, // Include the assistant's message with the tool_calls
-      {
-        role: 'tool',
-        content: JSON.stringify(toolResult),
-      },
+      ...toolMessages,
     ];
 
     const finalPayload = {
