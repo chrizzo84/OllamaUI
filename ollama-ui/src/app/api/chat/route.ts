@@ -162,7 +162,7 @@ export async function POST(req: NextRequest) {
     const finalPayload = {
       model,
       messages: messagesWithToolResult,
-      stream: true, // Now we can stream the final answer
+      stream: false, // Let's see what we get with a non-streaming request
     };
 
     const finalRes = await fetch(`${base}/api/chat`, {
@@ -171,68 +171,26 @@ export async function POST(req: NextRequest) {
       body: JSON.stringify(finalPayload),
     });
 
-    if (!finalRes.body) {
-      const txt = await finalRes.text();
-      return new Response(txt || JSON.stringify({ error: 'No upstream body' }), {
-        status: finalRes.status,
+    if (!finalRes.ok) {
+      const errorText = await finalRes.text();
+      // Prepend the thinking message to the error so we can see it
+      const content = thinkingMessage + `\n\n**Error from Ollama:**\n\n\`\`\`\n${errorText}\n\`\`\``;
+      const transformed = createStreamableResponse(content, model);
+      return new Response(transformed, {
+        headers: {
+          'Content-Type': 'application/x-ndjson; charset=utf-8',
+          'Cache-Control': 'no-cache',
+        },
       });
     }
 
-    // --- Stream the final response back to the client ---
-    let aggregated = '';
-    let lastCumulative = '';
-    let thinkingPrepended = false;
+    const finalData: OllamaChatResponse = await finalRes.json();
+    const finalContent = finalData.message.content;
 
-    const transformed = new ReadableStream({
-      async start(controller) {
-        const reader = finalRes.body!.getReader();
-        const decoder = new TextDecoder();
-        const encoder = new TextEncoder();
-        function emit(obj: unknown) {
-          controller.enqueue(encoder.encode(JSON.stringify(obj) + '\n'));
-        }
+    // Prepend the thinking message to the final content
+    const contentWithThinking = thinkingMessage + finalContent;
 
-        let buffer = '';
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-          let idx;
-          while ((idx = buffer.indexOf('\n')) !== -1) {
-            const line = buffer.slice(0, idx).trim();
-            buffer = buffer.slice(idx + 1);
-            if (!line) continue;
-            try {
-              const parsed: UpstreamMessageChunk = JSON.parse(line) as UpstreamMessageChunk;
-              if (parsed.message && typeof parsed.message.content === 'string') {
-                 if (!thinkingPrepended) {
-                    parsed.message.content = thinkingMessage + parsed.message.content;
-                    thinkingPrepended = true;
-                  }
-                const cumulative = parsed.message.content;
-                let delta = cumulative;
-                if (cumulative.startsWith(lastCumulative)) {
-                  delta = cumulative.slice(lastCumulative.length);
-                }
-                aggregated += delta;
-                lastCumulative = cumulative;
-                if (delta) emit({ token: delta, model });
-                if (parsed.done) {
-                  emit({ done: true, model, content: aggregated });
-                }
-              } else {
-                emit(parsed);
-              }
-            } catch {
-              emit({ raw: line });
-            }
-          }
-        }
-        if (buffer.trim()) emit({ raw: buffer.trim() });
-        if (!aggregated) emit({ info: 'empty response', model });
-        controller.close();
-      },
-    });
+    const transformed = createStreamableResponse(contentWithThinking, model);
 
     return new Response(transformed, {
       headers: {
