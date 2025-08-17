@@ -1,77 +1,67 @@
 import { create } from 'zustand';
 
 interface PrefsState {
+  // State
+  hydrated: boolean;
   requireDeleteConfirm: boolean;
-  autoRefreshModelsSeconds: number; // 0 = disabled
+  autoRefreshModelsSeconds: number;
   searxngUrl: string;
   searchLimit: number;
+
+  // Actions
   setRequireDeleteConfirm(v: boolean): void;
   setAutoRefreshModelsSeconds(v: number): void;
   setSearxngUrl(v: string): void;
   setSearchLimit(v: number): void;
-  hydrate(): void;
+  hydrate(): Promise<void>;
 }
 
-const KEY = 'ollama_ui_prefs_v1';
+async function savePrefs(patch: Partial<PrefsState>) {
+  try {
+    await fetch('/api/prefs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    });
+  } catch (e) {
+    console.error('Failed to save preferences', e);
+  }
+}
 
-type PersistShape = Pick<
-  PrefsState,
-  'requireDeleteConfirm' | 'autoRefreshModelsSeconds' | 'searxngUrl' | 'searchLimit'
->;
-
-export const usePrefsStore = create<PrefsState>((set) => ({
+export const usePrefsStore = create<PrefsState>((set, get) => ({
+  hydrated: false,
   requireDeleteConfirm: true,
   autoRefreshModelsSeconds: 0,
   searxngUrl: '',
   searchLimit: 5,
+
   setRequireDeleteConfirm: (v) => {
     set({ requireDeleteConfirm: v });
-    persist();
+    savePrefs({ requireDeleteConfirm: v });
   },
   setAutoRefreshModelsSeconds: (v) => {
     set({ autoRefreshModelsSeconds: v });
-    persist();
+    savePrefs({ autoRefreshModelsSeconds: v });
   },
   setSearxngUrl: (v) => {
     set({ searxngUrl: v });
-    persist();
+    savePrefs({ searxngUrl: v });
   },
   setSearchLimit: (v) => {
     set({ searchLimit: v });
-    persist();
+    savePrefs({ searchLimit: v });
   },
-  hydrate: () => {
-    if (typeof window === 'undefined') return;
+  hydrate: async () => {
+    if (get().hydrated) return;
     try {
-      const raw = localStorage.getItem(KEY);
-      if (raw) {
-        const parsed: Partial<PersistShape> = JSON.parse(raw);
-        if (typeof parsed.requireDeleteConfirm === 'boolean')
-          set({ requireDeleteConfirm: parsed.requireDeleteConfirm });
-        if (typeof parsed.autoRefreshModelsSeconds === 'number')
-          set({ autoRefreshModelsSeconds: parsed.autoRefreshModelsSeconds });
-        if (typeof parsed.searxngUrl === 'string') set({ searxngUrl: parsed.searxngUrl });
-        if (typeof parsed.searchLimit === 'number') set({ searchLimit: parsed.searchLimit });
-      }
-    } catch {
-      /* ignore */
+      const res = await fetch('/api/prefs');
+      if (!res.ok) throw new Error('Failed to fetch prefs');
+      const prefs = await res.json();
+      set({ ...prefs, hydrated: true });
+    } catch (e) {
+      console.error('Failed to hydrate prefs store', e);
+      // still need to mark as hydrated to avoid infinite loops
+      set({ hydrated: true });
     }
   },
 }));
-
-function persist() {
-  try {
-    if (typeof window === 'undefined') return;
-    const { requireDeleteConfirm, autoRefreshModelsSeconds, searxngUrl, searchLimit } =
-      usePrefsStore.getState();
-    const data: PersistShape = {
-      requireDeleteConfirm,
-      autoRefreshModelsSeconds,
-      searxngUrl,
-      searchLimit,
-    };
-    localStorage.setItem(KEY, JSON.stringify(data));
-  } catch {
-    /* ignore */
-  }
-}

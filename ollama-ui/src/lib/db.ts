@@ -30,8 +30,24 @@ export function getDb() {
       last_used_at INTEGER NOT NULL,
       active INTEGER NOT NULL DEFAULT 0
     );`);
+    db.exec(`CREATE TABLE IF NOT EXISTS prefs (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );`);
   }
   return db;
+}
+
+// ---- Prefs Management ----
+export function getPref(key: string): string | undefined {
+  const row = getDb().prepare('SELECT value FROM prefs WHERE key = ?').get(key) as
+    | { value: string }
+    | undefined;
+  return row?.value;
+}
+
+export function setPref(key: string, value: string) {
+  getDb().prepare('INSERT OR REPLACE INTO prefs (key, value) VALUES (?, ?)').run(key, value);
 }
 
 export interface LamaRow {

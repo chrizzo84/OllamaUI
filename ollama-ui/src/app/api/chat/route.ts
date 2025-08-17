@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server';
 import { resolveOllamaHostServer } from '@/lib/host-resolve-server';
 import { toolSchemas, tools, ToolName } from '@/lib/tools';
+import { getPref } from '@/lib/db';
 
 // Define types for Ollama API structures
 interface OllamaMessage {
@@ -58,8 +59,10 @@ export async function POST(req: NextRequest) {
     const body = await req.json().catch(() => ({}));
     const model = (body.model as string | undefined)?.trim();
     const toolsFromClient = body.tools;
-    const searxngUrl = body.searxngUrl;
-    const searchLimit = body.searchLimit;
+
+    // Get prefs from DB instead of request body
+    const searxngUrl = getPref('searxngUrl');
+    const searchLimit = Number(getPref('searchLimit') ?? '5');
 
     if (!model) {
       return new Response(JSON.stringify({ error: 'Missing model' }), { status: 400 });
