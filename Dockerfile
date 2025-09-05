@@ -3,11 +3,12 @@ FROM node:20-bullseye-slim AS builder
 WORKDIR /build
 
 # Install build dependencies for native modules
-RUN apt-get update && apt-get install -y \
+RUN apt-get clean && apt-get update && apt-get install -y \
     python3 \
     make \
     g++ \
     && rm -rf /var/lib/apt/lists/*
+
 
 # Install pnpm (preferred) – fallback to npm if desired
 RUN corepack enable && corepack prepare pnpm@latest --activate
@@ -32,12 +33,13 @@ FROM ollama/ollama:latest AS final
 WORKDIR /app
 
 # Install Node.js and build dependencies for potential native module rebuilding
-RUN apt-get update && apt-get install -y \
+RUN apt-get clean && apt-get update && apt-get install -y \
     curl \
     python3 \
     make \
     g++ \
     && rm -rf /var/lib/apt/lists/*
+
 
 # Install Node.js
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
