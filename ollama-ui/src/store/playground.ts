@@ -54,9 +54,15 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
 
   setOptions: (instance, options) => {
     if (instance === 'A') {
-      set({ temperatureA: options.temperature, seedA: options.seed });
+      set({
+        ...(options.temperature !== undefined && { temperatureA: options.temperature }),
+        ...(options.seed !== undefined && { seedA: options.seed }),
+      });
     } else {
-      set({ temperatureB: options.temperature, seedB: options.seed });
+      set({
+        ...(options.temperature !== undefined && { temperatureB: options.temperature }),
+        ...(options.seed !== undefined && { seedB: options.seed }),
+      });
     }
   },
 
