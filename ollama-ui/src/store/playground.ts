@@ -174,7 +174,7 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
             }
             if (assistantRaw) {
               updateMessage(instance, assistantId, {
-                content: assistantRaw && assistantRaw.length > 0 ? assistantRaw : '…',
+                content: assistantRaw || '…',
                 raw: assistantRaw,
               });
             }
