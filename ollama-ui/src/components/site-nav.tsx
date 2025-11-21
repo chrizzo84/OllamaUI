@@ -12,6 +12,7 @@ interface NavItem {
 const items: NavItem[] = [
   { href: '/', label: 'Dashboard', match: (p) => p === '/' },
   { href: '/chat', label: 'Chat', match: (p) => p.startsWith('/chat') },
+  { href: '/playground', label: 'Playground', match: (p) => p.startsWith('/playground') },
   { href: '/models', label: 'Models', match: (p) => p.startsWith('/models') },
   { href: '/settings', label: 'Settings', match: (p) => p.startsWith('/settings') },
 ];
