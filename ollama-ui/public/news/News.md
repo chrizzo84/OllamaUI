@@ -1,6 +1,6 @@
 Chronological list of notable changes to Ollama UI.
 
-## 2025-09-05
+## 2025-11-05
 
 - **Playground View**
   - Added a new Playground view for experimenting with different models and prompts.
