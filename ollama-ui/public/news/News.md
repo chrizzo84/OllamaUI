@@ -1,5 +1,13 @@
 Chronological list of notable changes to Ollama UI.
 
+## 2025-11-05
+
+- **Playground View**
+  - Added a new Playground view for experimenting with different models and prompts.
+  - You can select any installed model, adjust parameters, and see the results in real-time.
+  - You can send messages to both models at same time.
+    ![Playground](playground.png)
+
 ## 2025-08-13 - 2025-08-16
 
 - **Theme & UI Consistency**
