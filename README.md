@@ -50,6 +50,7 @@
 - 🔔 Toast notifications (success / error / info)
 - ⚡️ Lightweight state management with Zustand & React Query caching
 - 🐍 Python scraper (separate directory) to periodically refresh the catalog JSON
+- 🧐 Model playground to check two models at same time
 
 ---
 
@@ -357,7 +358,6 @@ Or on host: `nvidia-smi` (NVIDIA) while a model runs.
 - Per-variant progress indicator (when layers known)
 - Multi-pull queue (sequential)
 - Download speed & ETA estimation
-- Dark/light theme toggle
 - Keyboard shortcuts (focus search, abort pull)
 
 ---
