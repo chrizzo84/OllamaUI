@@ -33,6 +33,16 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
+
+      - name: Free Disk Space
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          docker system prune -af
+          docker volume prune -f
+          sudo apt-get clean
       - name: Checkout
         uses: actions/checkout@v4
         with:
