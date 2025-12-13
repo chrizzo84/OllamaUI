@@ -8,11 +8,10 @@ FROM node:20-bullseye-slim AS deps
 WORKDIR /build
 
 # Install build dependencies for native modules
-RUN apt-get clean && apt-get update && apt-get install -y \
-    python3 \
-    make \
-    g++ \
-    && rm -rf /var/lib/apt/lists/*
+RUN apt-get clean \
+ && apt-get update \
+ && for i in 1 2 3; do apt-get install -y --fix-missing python3 make g++ && break || sleep 5; done \
+ && rm -rf /var/lib/apt/lists/*
 
 # Install pnpm
 RUN corepack enable && corepack prepare pnpm@latest --activate
