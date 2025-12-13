@@ -3,11 +3,10 @@ FROM node:20-bullseye-slim AS builder
 WORKDIR /build
 
 # Install build dependencies for native modules
-RUN apt-get clean && apt-get update && apt-get install -y \
-    python3 \
-    make \
-    g++ \
-    && rm -rf /var/lib/apt/lists/*
+RUN apt-get clean \
+ && apt-get update \
+ && for i in 1 2 3; do apt-get install -y --fix-missing python3 make g++ && break || sleep 5; done \
+ && rm -rf /var/lib/apt/lists/*
 
 
 # Install pnpm (preferred) – fallback to npm if desired
@@ -33,12 +32,10 @@ FROM ollama/ollama:latest AS final
 WORKDIR /app
 
 # Install Node.js and build dependencies for potential native module rebuilding
-RUN apt-get clean && apt-get update && apt-get install -y \
-    curl \
-    python3 \
-    make \
-    g++ \
-    && rm -rf /var/lib/apt/lists/*
+RUN apt-get clean \
+ && apt-get update \
+ && for i in 1 2 3; do apt-get install -y --fix-missing curl python3 make g++ && break || sleep 5; done \
+ && rm -rf /var/lib/apt/lists/*
 
 
 # Install Node.js
