@@ -1,12 +1,15 @@
 import { Github } from 'lucide-react';
 import Link from 'next/link';
+import packageJson from '../../package.json';
 
 export function SiteFooter() {
   const year = new Date().getFullYear();
+  const appVersion = packageJson.version;
   return (
     <footer className="mt-10 border-t border-white/10 px-6 py-4 text-[11px] text-white/60 flex flex-col sm:flex-row items-center justify-center gap-2 sm:gap-4 text-center">
       <span className="whitespace-nowrap">© {year} chrizzo84</span>
       <span className="hidden sm:inline text-white/30">•</span>
+      <span className="font-mono text-white/40">v{appVersion}</span>
       <Link
         href="https://github.com/chrizzo84"
         target="_blank"
