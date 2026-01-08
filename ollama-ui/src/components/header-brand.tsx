@@ -1,7 +1,8 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { HostManagerModal } from '@/components/host-manager-modal';
+import { LoadedModelsPopover, useLoadedModelsCount } from '@/components/loaded-models-popover';
 
 interface HostState {
   url: string | null;
@@ -42,6 +43,9 @@ export function HostIndicator() {
   });
   const [refreshIdx, setRefreshIdx] = useState(0);
   const [openManager, setOpenManager] = useState(false);
+  const [openModelsPopover, setOpenModelsPopover] = useState(false);
+  const modelsAnchorRef = useRef<HTMLButtonElement>(null);
+  const { count: loadedModelsCount, loading: loadedModelsLoading } = useLoadedModelsCount();
 
   // Listen for global active host change events (refresh) and modal open requests
   useEffect(() => {
@@ -171,6 +175,34 @@ export function HostIndicator() {
         >
           ↻
         </Button>
+        {/* Loaded Models Badge */}
+        <div className="relative">
+          <button
+            ref={modelsAnchorRef}
+            type="button"
+            onClick={() => setOpenModelsPopover((o) => !o)}
+            className={`rounded-full px-2.5 py-1 flex items-center gap-1.5 text-[11px] font-medium border backdrop-blur transition-all hover:border-indigo-400/50 hover:bg-indigo-500/10 ${
+              loadedModelsCount > 0
+                ? 'border-indigo-500/40 bg-indigo-500/10 text-indigo-200'
+                : 'border-white/15 bg-white/5 text-white/50'
+            }`}
+            title={`${loadedModelsCount} model${loadedModelsCount !== 1 ? 's' : ''} loaded`}
+          >
+            {loadedModelsLoading ? (
+              <span className="animate-pulse">…</span>
+            ) : (
+              <>
+                <span className="text-[10px]">🧠</span>
+                <span>{loadedModelsCount} loaded</span>
+              </>
+            )}
+          </button>
+          <LoadedModelsPopover
+            open={openModelsPopover}
+            onClose={() => setOpenModelsPopover(false)}
+            anchorRef={modelsAnchorRef}
+          />
+        </div>
       </div>
       <HostManagerModal
         open={openManager}

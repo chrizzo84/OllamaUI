@@ -1,5 +1,15 @@
 Chronological list of notable changes to Ollama UI.
 
+## 2026-01-08
+
+- **Stop / Unload Models**
+  - Added ability to stop/unload loaded models directly from the navbar
+  - New "🧠 X loaded" badge in header shows count of currently loaded models
+  - Click badge to open popover with all loaded models and stop buttons
+  - Displays Ollama version info in popover header
+  - Feature requires Ollama v0.1.33+ (version check included)
+    ![Loaded Models Popover](loaded_models.png)
+
 ## 2025-11-05
 
 - **Playground View**
