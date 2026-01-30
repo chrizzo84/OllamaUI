@@ -74,67 +74,81 @@ async def fetch(client: httpx.AsyncClient, url: str) -> str:
 def parse_search(html: str) -> List[Dict[str, Any]]:
 	soup = BeautifulSoup(html, 'lxml')
 	out = []
-	for a in soup.select('a[href^="/library/"]'):
-		href = a.get('href','')
-		slug = href.split('/library/')[-1].strip()
-		if not slug or '/' in slug:  # skip deeper links
+	for a in soup.select('a.group.w-full'):
+		slug_el = a.select_one('[x-test-search-response-title]')
+		if not slug_el:
 			continue
-		if any(m['slug'] == slug for m in out):  # dedupe
-			continue
-		text = ' '.join(a.get_text(' ').split())
-		capabilities = sorted({w.lower() for w in text.split() if w.lower() in CAPABILITY_KEYWORDS})
-		pulls_match = PULLS_RE.search(text)
+		slug = slug_el.get_text(strip=True).lower()
+		
+		# Pulls
+		pulls_el = a.select_one('[x-test-pull-count]')
 		pulls_val = None
 		pulls_text = None
-		if pulls_match:
-			pulls_text = pulls_match.group(0)
-			num = float(pulls_match.group(1))
-			abbr = pulls_match.group(2)
-			if abbr:
-				num *= NUM_ABBR.get(abbr.upper(), 1)
-			pulls_val = int(num)
-		blurb = text
-		if pulls_match:
-			blurb = blurb.replace(pulls_match.group(0), '').strip()
-		for c in capabilities:
-			blurb = re.sub(rf"\b{re.escape(c)}\b", '', blurb, flags=re.IGNORECASE)
-		blurb = ' '.join(blurb.split())
+		if pulls_el:
+			pulls_text_raw = pulls_el.get_text(strip=True)
+			pulls_text = f"{pulls_text_raw} Pulls"
+			match = re.search(r"([0-9]+(?:\.[0-9]+)?)([KMB])?", pulls_text_raw, re.IGNORECASE)
+			if match:
+				num = float(match.group(1))
+				abbr = match.group(2)
+				if abbr:
+					num *= NUM_ABBR.get(abbr.upper(), 1)
+				pulls_val = int(num)
+
+		# Blurb - try to get the description paragraph
+		blurb_el = a.select_one('p.line-clamp-2') or a.select_one('p')
+		blurb = ' '.join(blurb_el.get_text(' ').split()) if blurb_el else None
+		
+		# Capabilities from the small tags
+		capabilities = sorted({w.get_text(strip=True).lower() for w in a.select('span[class*="bg-"]') if w.get_text(strip=True).lower() in CAPABILITY_KEYWORDS})
+
 		out.append({
 			'slug': slug,
-			'capabilities': capabilities,
+			'capabilities': list(capabilities),
 			'pulls': pulls_val,
 			'pulls_text': pulls_text,
-			'blurb': blurb or None,
+			'blurb': blurb,
 		})
 	return out
 
 def parse_library(html: str, model: Dict[str, Any]) -> None:
 	soup = BeautifulSoup(html, 'lxml')
-	title = soup.find(['h1','h2'])
-	if title:
-		model['name'] = ' '.join(title.get_text(' ').split())
+	# Try to find a more robust title
+	title_el = soup.select_one('h1') or soup.find(['h1','h2'])
+	if title_el:
+		model['name'] = ' '.join(title_el.get_text(' ').split())
+	
+	# Refine pulls/downloads from the library page if search missed it
 	text_all = soup.get_text(' ')
-	dl_match = re.search(r"([0-9]+(?:\.[0-9]+)?)([KMB])?\s*Downloads", text_all, re.IGNORECASE)
-	if dl_match:
-		num = float(dl_match.group(1))
-		abbr = dl_match.group(2)
-		if abbr:
-			num *= NUM_ABBR.get(abbr.upper(), 1)
-		model['pulls'] = int(num)
-		model['pulls_text'] = dl_match.group(0)
+	if not model.get('pulls'):
+		dl_match = re.search(r"([0-9]+(?:\.[0-9]+)?)([KMB])?\s*(?:Pulls|Downloads)", text_all, re.IGNORECASE)
+		if dl_match:
+			num = float(dl_match.group(1))
+			abbr = dl_match.group(2)
+			if abbr:
+				num *= NUM_ABBR.get(abbr.upper(), 1)
+			model['pulls'] = int(num)
+			model['pulls_text'] = dl_match.group(0)
+
+	# Update capabilities from chips on the page
 	caps_found = set(model.get('capabilities', []))
-	for kw in CAPABILITY_KEYWORDS:
-		if re.search(rf"\b{re.escape(kw)}\b", text_all, re.IGNORECASE):
-			caps_found.add(kw)
+	# Look for specific chip-like elements that contain keywords
+	for chip in soup.select('span, div'):
+		txt = chip.get_text(strip=True).lower()
+		if txt in CAPABILITY_KEYWORDS:
+			caps_found.add(txt)
 	model['capabilities'] = sorted(caps_found)
+
+	# Readme/Description
 	readme = soup.find(id=re.compile('readme', re.IGNORECASE))
 	if readme:
-		desc = ' '.join(readme.get_text(' ').split())
-		model['description'] = desc[:2000]
+		# Exclude the "Readme" header if it's there
+		desc_text = readme.get_text(' ')
+		model['description'] = ' '.join(desc_text.split())[:3000]
 	else:
 		meta = soup.find('meta', attrs={'name':'description'})
 		if meta and meta.get('content'):
-			model['description'] = meta['content'][:2000]
+			model['description'] = meta['content'][:3000]
 
 def parse_tags(html: str, model: Dict[str, Any]) -> None:
 	soup = BeautifulSoup(html, 'lxml')
@@ -192,15 +206,35 @@ async def scrape_model(client: httpx.AsyncClient, base_info: Dict[str, Any]) -> 
 
 async def main(limit: Optional[int] = None, out_path: str = 'out/ollama_models.json'):
 	async with httpx.AsyncClient(headers={'User-Agent': 'Mozilla/5.0 (compatible; OllamaScraper/1.0)'}) as client:
-		search_html = await fetch(client, SEARCH_URL)
-		base_models = parse_search(search_html)
-		if limit:
-			base_models = base_models[:limit]
-		console.log(f"Discovered {len(base_models)} model slugs")
+		base_models = []
+		page = 1
+		while True:
+			url = f"{SEARCH_URL}?page={page}"
+			console.log(f"Fetching search page {page}...")
+			html = await fetch(client, url)
+			page_models = parse_search(html)
+			if not page_models:
+				break
+			
+			# Filter out duplicates if any
+			for m in page_models:
+				if not any(existing['slug'] == m['slug'] for existing in base_models):
+					base_models.append(m)
+			
+			if limit and len(base_models) >= limit:
+				base_models = base_models[:limit]
+				break
+				
+			page += 1
+			# Safety break to avoid infinite loops if the site changes
+			if page > 100:
+				break
+
+		console.log(f"Discovered {len(base_models)} model slugs across {page-1} pages")
 		results: List[Dict[str, Any]] = []
 		sem = asyncio.Semaphore(6)
 		progress = Progress(SpinnerColumn(), *Progress.get_default_columns(), TimeElapsedColumn(), transient=True)
-		task_id = progress.add_task("Scraping models", total=len(base_models))
+		task_id = progress.add_task("Scraping model details", total=len(base_models))
 		progress.start()
 		try:
 			async def worker(info: Dict[str, Any]):
