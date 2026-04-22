@@ -40,3 +40,10 @@ export function safeUuid() {
   // Last resort (non-cryptographic)
   return 'id-' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 }
+
+// Known thinking/reasoning model name patterns
+const THINKING_MODEL_PATTERNS = [/qwen3/i, /deepseek-r\d/i, /phi4-reasoning/i, /marco-o1/i, /qwq/i];
+
+export function isThinkingModel(modelName: string): boolean {
+  return THINKING_MODEL_PATTERNS.some((p) => p.test(modelName));
+}

@@ -5,6 +5,7 @@ import { useSystemPromptStore, LamaProfile } from '@/store/system-prompt';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Button } from './ui/button';
+import { isThinkingModel } from '@/lib/utils';
 import { useQuery } from '@tanstack/react-query';
 
 interface ModelTag {
@@ -111,6 +112,7 @@ export function ChatPanel() {
   const allMessages = useChatStore((s) => s.messages);
   const messages = allMessages.filter((m) => m.profileId === currentId);
   const [expandedThinkIds, setExpandedThinkIds] = useState<Set<string>>(new Set());
+  const [streamingId, setStreamingId] = useState<string | null>(null);
   const append = useChatStore((s) => s.append);
   const update = useChatStore((s) => s.update);
   const clear = useChatStore((s) => s.clear);
@@ -179,19 +181,19 @@ export function ChatPanel() {
       setColdStartSince(Date.now());
       setColdElapsed(0);
     }
+    setStreamingId(assistantId);
     setLoading(true);
     try {
-      const current = useChatStore.getState().messages.filter((m) => m.profileId === currentId); // fresh state for this profile
+      const current = useChatStore.getState().messages.filter((m) => m.profileId === currentId);
       const upstreamMessages = [
         ...(systemEnabled && activePrompt.trim()
           ? [{ role: 'system' as const, content: activePrompt.trim() }]
           : []),
         ...current
           .filter((m) => m.role !== 'assistant' || m.content)
-          .map((m) => ({ role: m.role, content: m.content })),
+          .map((m) => ({ role: m.role as 'user' | 'assistant' | 'system', content: m.content })),
       ];
-      // last user already included
-      const payload = { model, messages: upstreamMessages };
+      const payload = { model, messages: upstreamMessages, think: isThinkingModel(model) };
       setLastPayload(payload);
       const res = await fetch('/api/chat', {
         method: 'POST',
@@ -201,8 +203,8 @@ export function ChatPanel() {
       if (!res.body) throw new Error('No body');
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
-      let assistantRaw = '';
-      // naive: replace last assistant message continuously
+      let thinkingRaw = '';
+      let responseRaw = '';
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -210,32 +212,29 @@ export function ChatPanel() {
         const lines = chunk.split('\n').filter(Boolean);
         for (const line of lines) {
           try {
-            const obj = JSON.parse(line);
-            if (typeof obj.token === 'string') {
-              assistantRaw += obj.token;
+            const obj = JSON.parse(line) as Record<string, unknown>;
+            if (typeof obj.thinking === 'string') {
+              // thinking delta from route
+              thinkingRaw += obj.thinking;
+            } else if (typeof obj.token === 'string') {
+              // response content delta
               if (coldStart) setColdStart(false);
-            } else if (obj.done && typeof obj.content === 'string') {
-              assistantRaw = obj.content; // final cumulative
+              responseRaw += obj.token;
+            } else if (obj.done === true) {
+              // final — use authoritative values if provided
+              if (typeof obj.content === 'string') responseRaw = obj.content;
+              if (typeof obj.thinking === 'string') thinkingRaw = obj.thinking;
             } else if (obj.error) {
-              update(assistantId, { content: '[Fehler] ' + String(obj.error), raw: assistantRaw });
-            }
-            if (assistantRaw) {
-              let display = assistantRaw;
-              if (assistantRaw.startsWith('<think>')) {
-                const closeIdx = assistantRaw.indexOf('</think>');
-                if (closeIdx === -1) {
-                  // still thinking, hide content
-                  display = '';
-                } else {
-                  const after = assistantRaw.slice(closeIdx + 8).trim();
-                  display = after;
-                }
-              }
               update(assistantId, {
-                content: display && display.length > 0 ? display : '…',
-                raw: assistantRaw,
+                content: '[Fehler] ' + String(obj.error),
+                thinking: thinkingRaw || undefined,
               });
+              continue;
             }
+            update(assistantId, {
+              content: responseRaw,
+              thinking: thinkingRaw || undefined,
+            });
           } catch {
             /* ignore */
           }
@@ -246,6 +245,7 @@ export function ChatPanel() {
     } finally {
       setLoading(false);
       setColdStart(false);
+      setStreamingId(null);
     }
   }
 
@@ -606,14 +606,10 @@ export function ChatPanel() {
         {messages.length === 0 && <div className="text-white/40 text-xs">No messages yet.</div>}
         {messages.map((m) => {
           const isUser = m.role === 'user';
-          const hasThink =
-            !isUser && typeof m.raw === 'string' && /<think>[\s\S]*?<\/think>/.test(m.raw);
-          const expanded = expandedThinkIds.has(m.id);
-          let thinkContent: string | null = null;
-          if (hasThink) {
-            const match = m.raw!.match(/<think>[\s\S]*?<\/think>/);
-            if (match) thinkContent = match[0].replace(/<\/?think>/g, '').trim();
-          }
+          const isStreaming = m.id === streamingId;
+          const isThinkingNow = isStreaming && !!m.thinking && !m.content;
+          const hasThinking = !!m.thinking;
+          const expanded = expandedThinkIds.has(m.id) || isThinkingNow;
           const toggle = () =>
             setExpandedThinkIds((prev) => {
               const next = new Set(prev);
@@ -627,41 +623,78 @@ export function ChatPanel() {
               className={`rounded-md px-3 py-2 leading-relaxed text-sm border ${
                 isUser
                   ? 'bg-indigo-500/20 border-indigo-500/30 dark-green-chat-user'
-                  : 'bg-white/10 border-white/10'
+                  : 'bg-white/5 border-white/10'
               }`}
             >
-              <div className="text-[10px] uppercase tracking-wide mb-1 text-white/40">{m.role}</div>
+              <div className="text-[10px] uppercase tracking-wide mb-1.5 text-white/40 flex items-center gap-2">
+                {m.role}
+                {isStreaming && isThinkingNow && (
+                  <span className="text-amber-400/70 flex items-center gap-1 normal-case">
+                    <span className="animate-pulse">●</span> Thinking…
+                  </span>
+                )}
+                {isStreaming && !isThinkingNow && !!m.content && (
+                  <span className="text-emerald-400/70 flex items-center gap-1 normal-case">
+                    <span className="animate-pulse">●</span> Responding…
+                  </span>
+                )}
+              </div>
               {isUser ? (
                 <div className="whitespace-pre-wrap text-white/90 font-light dark-green-chat-user-text">
                   {m.content}
                 </div>
               ) : (
-                <div className="space-y-3">
-                  {hasThink && (
-                    <div className="rounded-md border border-amber-500/30 bg-amber-500/10 p-2 text-[11px] text-amber-200/80">
-                      {expanded && thinkContent ? (
-                        <div className="whitespace-pre-wrap mb-2 opacity-90">{thinkContent}</div>
-                      ) : (
-                        <div className="italic opacity-70">Hidden reasoning collapsed</div>
-                      )}
+                <div className="space-y-2">
+                  {/* Thinking / Reasoning block */}
+                  {hasThinking && (
+                    <div className="rounded-md border border-amber-500/25 bg-amber-950/30 overflow-hidden">
                       <button
                         type="button"
                         onClick={toggle}
-                        className="mt-1 rounded bg-amber-500/20 px-2 py-1 text-[10px] font-medium text-amber-100 hover:bg-amber-500/30 transition"
+                        className="w-full flex items-center gap-2 px-3 py-2 text-[11px] text-amber-200/70 hover:text-amber-200 hover:bg-amber-500/10 transition text-left"
                       >
-                        {expanded ? 'Hide reasoning' : 'Show reasoning'}
+                        <span className="text-amber-400/60 text-[9px]">◆</span>
+                        <span className="font-medium">Reasoning</span>
+                        {isThinkingNow && (
+                          <span className="text-amber-400/70 animate-pulse font-normal">
+                            thinking…
+                          </span>
+                        )}
+                        <span className="ml-auto opacity-50 text-[10px]">
+                          {expanded ? '▲ hide' : '▼ show'}
+                        </span>
                       </button>
+                      {expanded && (
+                        <div className="px-3 pb-3 max-h-56 overflow-y-auto border-t border-amber-500/15">
+                          <div className="pt-2 text-[11px] text-amber-100/55 font-mono whitespace-pre-wrap leading-relaxed">
+                            {m.thinking}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
-                  {m.content === '…' ? (
+                  {/* Response content */}
+                  {isThinkingNow ? (
+                    <div className="flex items-center gap-1 h-6 text-white/30 text-sm pl-1">
+                      <span className="animate-bounce [animation-delay:-0.25s]">.</span>
+                      <span className="animate-bounce [animation-delay:-0.15s]">.</span>
+                      <span className="animate-bounce [animation-delay:-0.05s]">.</span>
+                    </div>
+                  ) : !m.content && isStreaming ? (
                     <div className="flex items-center gap-1 h-6">
                       <span className="animate-bounce [animation-delay:-0.25s]">🦙</span>
                       <span className="animate-bounce [animation-delay:-0.15s]">🦙</span>
                       <span className="animate-bounce [animation-delay:-0.05s]">🦙</span>
                     </div>
-                  ) : (
+                  ) : m.content ? (
                     <div className="prose prose-invert max-w-none text-white/90 prose-p:my-2 prose-ul:my-2 prose-li:my-1 prose-pre:my-3 prose-code:px-1 prose-code:py-0.5 prose-code:bg-white/10 prose-code:rounded">
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content || '…'}</ReactMarkdown>
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content}</ReactMarkdown>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-1 h-6">
+                      <span className="animate-bounce [animation-delay:-0.25s]">🦙</span>
+                      <span className="animate-bounce [animation-delay:-0.15s]">🦙</span>
+                      <span className="animate-bounce [animation-delay:-0.05s]">🦙</span>
                     </div>
                   )}
                 </div>

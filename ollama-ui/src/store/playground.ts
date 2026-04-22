@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { safeUuid } from '@/lib/utils';
+import { safeUuid, isThinkingModel } from '@/lib/utils';
 import { ChatMessage } from '@/components/single-chat-view';
 
 type ChatInstance = 'A' | 'B';
@@ -23,7 +23,7 @@ interface PlaygroundState {
   updateMessage: (
     instance: ChatInstance,
     id: string,
-    patch: Partial<Pick<ChatMessage, 'content' | 'raw'>>,
+    patch: Partial<Pick<ChatMessage, 'content' | 'raw' | 'thinking'>>,
   ) => void;
   setLoading: (instance: ChatInstance, loading: boolean) => void;
   clear: (instance: ChatInstance) => void;
@@ -137,6 +137,7 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
       const payload = {
         model,
         messages: upstreamMessages,
+        think: isThinkingModel(model),
         options: {
           temperature,
           seed,
@@ -153,7 +154,8 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
 
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
-      let assistantRaw = '';
+      let thinkingRaw = '';
+      let responseRaw = '';
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -161,23 +163,25 @@ export const usePlaygroundStore = create<PlaygroundState>((set, get) => ({
         const lines = chunk.split('\n').filter(Boolean);
         for (const line of lines) {
           try {
-            const obj = JSON.parse(line);
-            if (typeof obj.token === 'string') {
-              assistantRaw += obj.token;
-            } else if (obj.done && typeof obj.content === 'string') {
-              assistantRaw = obj.content; // final cumulative
+            const obj = JSON.parse(line) as Record<string, unknown>;
+            if (typeof obj.thinking === 'string') {
+              thinkingRaw += obj.thinking;
+            } else if (typeof obj.token === 'string') {
+              responseRaw += obj.token;
+            } else if (obj.done === true) {
+              if (typeof obj.content === 'string') responseRaw = obj.content;
+              if (typeof obj.thinking === 'string') thinkingRaw = obj.thinking;
             } else if (obj.error) {
               updateMessage(instance, assistantId, {
                 content: '[Error] ' + String(obj.error),
-                raw: assistantRaw,
+                thinking: thinkingRaw || undefined,
               });
+              continue;
             }
-            if (assistantRaw) {
-              updateMessage(instance, assistantId, {
-                content: assistantRaw || '…',
-                raw: assistantRaw,
-              });
-            }
+            updateMessage(instance, assistantId, {
+              content: responseRaw,
+              thinking: thinkingRaw || undefined,
+            });
           } catch {
             // ignore parse errors
           }

@@ -10,6 +10,7 @@ export interface ChatMessage {
   id: string;
   role: 'user' | 'assistant' | 'system';
   content: string;
+  thinking?: string;
   raw?: string;
   createdAt: number;
   model?: string;
@@ -134,31 +135,62 @@ export function SingleChatView({
         {messages.length === 0 && <div className="text-white/40 text-xs">No messages yet.</div>}
         {messages.map((m) => {
           const isUser = m.role === 'user';
+          const isStreaming = !m.content && !!m.thinking;
           return (
             <div
               key={m.id}
               className={`rounded-md px-3 py-2 leading-relaxed text-sm border ${
                 isUser
                   ? 'bg-indigo-500/20 border-indigo-500/30 dark-green-chat-user'
-                  : 'bg-white/10 border-white/10'
+                  : 'bg-white/5 border-white/10'
               }`}
             >
-              <div className="text-[10px] uppercase tracking-wide mb-1 text-white/40">{m.role}</div>
+              <div className="text-[10px] uppercase tracking-wide mb-1.5 text-white/40">
+                {m.role}
+              </div>
               {isUser ? (
                 <div className="whitespace-pre-wrap text-white/90 font-light dark-green-chat-user-text">
                   {m.content}
                 </div>
               ) : (
-                <div className="space-y-3">
-                  {m.content === '…' ? (
+                <div className="space-y-2">
+                  {m.thinking && (
+                    <details className="group rounded-md border border-amber-500/25 bg-amber-950/30 overflow-hidden">
+                      <summary className="flex items-center gap-2 px-3 py-2 text-[11px] text-amber-200/70 hover:text-amber-200 hover:bg-amber-500/10 transition cursor-pointer list-none">
+                        <span className="text-amber-400/60 text-[9px]">◆</span>
+                        <span className="font-medium">Reasoning</span>
+                        {isStreaming && (
+                          <span className="text-amber-400/70 animate-pulse">thinking…</span>
+                        )}
+                        <span className="ml-auto opacity-50 text-[10px] group-open:hidden">
+                          ▼ show
+                        </span>
+                        <span className="ml-auto opacity-50 text-[10px] hidden group-open:inline">
+                          ▲ hide
+                        </span>
+                      </summary>
+                      <div className="px-3 pb-3 max-h-48 overflow-y-auto border-t border-amber-500/15">
+                        <div className="pt-2 text-[11px] text-amber-100/55 font-mono whitespace-pre-wrap leading-relaxed">
+                          {m.thinking}
+                        </div>
+                      </div>
+                    </details>
+                  )}
+                  {isStreaming ? (
+                    <div className="flex items-center gap-1 h-6 text-white/30 pl-1">
+                      <span className="animate-bounce [animation-delay:-0.25s]">.</span>
+                      <span className="animate-bounce [animation-delay:-0.15s]">.</span>
+                      <span className="animate-bounce [animation-delay:-0.05s]">.</span>
+                    </div>
+                  ) : m.content ? (
+                    <div className="prose prose-invert max-w-none text-white/90 prose-p:my-2 prose-ul:my-2 prose-li:my-1 prose-pre:my-3 prose-code:px-1 prose-code:py-0.5 prose-code:bg-white/10 prose-code:rounded">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content}</ReactMarkdown>
+                    </div>
+                  ) : (
                     <div className="flex items-center gap-1 h-6">
                       <span className="animate-bounce [animation-delay:-0.25s]">🦙</span>
                       <span className="animate-bounce [animation-delay:-0.15s]">🦙</span>
                       <span className="animate-bounce [animation-delay:-0.05s]">🦙</span>
-                    </div>
-                  ) : (
-                    <div className="prose prose-invert max-w-none text-white/90 prose-p:my-2 prose-ul:my-2 prose-li:my-1 prose-pre:my-3 prose-code:px-1 prose-code:py-0.5 prose-code:bg-white/10 prose-code:rounded">
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content || '…'}</ReactMarkdown>
                     </div>
                   )}
                 </div>
