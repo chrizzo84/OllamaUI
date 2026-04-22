@@ -57,8 +57,9 @@ COPY --from=builder /build/ollama-ui/pnpm-lock.yaml ./
 
 # Install only production dependencies and rebuild native modules for the runtime environment
 RUN pnpm install --prod --frozen-lockfile --ignore-scripts
-# Manually build better-sqlite3 using node-gyp
-RUN cd /app/node_modules/.pnpm/better-sqlite3@11.10.0/node_modules/better-sqlite3 && \
+# Manually build better-sqlite3 using node-gyp (version-agnostic path)
+RUN BSQ3_DIR=$(find /app/node_modules/.pnpm -maxdepth 2 -name "better-sqlite3" -type d | grep "better-sqlite3@" | head -1) && \
+    cd "$BSQ3_DIR" && \
     npm install node-gyp -g && \
     node-gyp configure --module_name=better_sqlite3 --module_path=./build && \
     node-gyp build
