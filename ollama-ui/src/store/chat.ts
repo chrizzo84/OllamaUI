@@ -4,19 +4,21 @@ import { safeUuid } from '@/lib/utils';
 export interface ChatMessage {
   id: string;
   role: 'user' | 'assistant' | 'system';
-  // content is the displayed (sanitized) content (think blocks removed)
   content: string;
-  // raw may contain full streamed content (including <think>...</think>)
+  thinking?: string; // separated reasoning/thinking content
   raw?: string;
   createdAt: number;
   model?: string;
-  profileId?: string; // associated profile id
+  profileId?: string;
 }
 
 interface ChatState {
   messages: ChatMessage[];
   append(msg: Omit<ChatMessage, 'id' | 'createdAt'>): string; // returns new id
-  update(id: string, patch: Partial<Pick<ChatMessage, 'content' | 'role' | 'raw'>>): void;
+  update(
+    id: string,
+    patch: Partial<Pick<ChatMessage, 'content' | 'role' | 'raw' | 'thinking'>>,
+  ): void;
   clear(profileId?: string): void;
   restore(messages: ChatMessage[], profileId?: string): void; // replace full history (used for undo)
   tagUntagged(profileId: string): void; // migrate legacy messages without profile
