@@ -2,7 +2,7 @@ import { NextRequest } from 'next/server';
 import { resolveOllamaHostServer } from '@/lib/host-resolve-server';
 
 interface UpstreamMessageChunk {
-  message?: { content?: string };
+  message?: { content?: string; thinking?: string };
   response?: string; // fallback style
   done?: boolean;
   [key: string]: unknown;
@@ -19,6 +19,8 @@ export async function POST(req: NextRequest) {
     const body = await req.json().catch(() => ({}));
     const model = (body.model as string | undefined)?.trim();
     const messages = Array.isArray(body.messages) ? body.messages : [];
+    const think = body.think === true; // only enable if client explicitly requests it
+    const options = typeof body.options === 'object' && body.options ? body.options : undefined;
     if (!model) {
       return new Response(JSON.stringify({ error: 'Missing model' }), { status: 400 });
     }
@@ -32,7 +34,13 @@ export async function POST(req: NextRequest) {
     const upstream = await fetch(`${base}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model, messages, stream: true }),
+      body: JSON.stringify({
+        model,
+        messages,
+        stream: true,
+        think,
+        ...(options ? { options } : {}),
+      }),
     });
     if (!upstream.body) {
       const txt = await upstream.text();
@@ -41,8 +49,8 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    let aggregated = '';
-    let lastCumulative = '';
+    let contentAggregated = '';
+    let thinkingAggregated = '';
     const transformed = new ReadableStream({
       async start(controller) {
         const reader = upstream.body!.getReader();
@@ -63,24 +71,32 @@ export async function POST(req: NextRequest) {
             if (!line) continue;
             try {
               const parsed: UpstreamMessageChunk = JSON.parse(line) as UpstreamMessageChunk;
-              if (parsed.message && typeof parsed.message.content === 'string') {
-                const cumulative = parsed.message.content;
-                let delta = cumulative;
-                if (cumulative.startsWith(lastCumulative)) {
-                  delta = cumulative.slice(lastCumulative.length);
+              if (parsed.message) {
+                // Both message.thinking and message.content are deltas per chunk
+                const thinkDelta = parsed.message.thinking ?? '';
+                const contentDelta = parsed.message.content ?? '';
+
+                if (thinkDelta) {
+                  thinkingAggregated += thinkDelta;
+                  emit({ thinking: thinkDelta, model });
                 }
-                aggregated += delta;
-                lastCumulative = cumulative;
-                if (delta) emit({ token: delta, model });
+                if (contentDelta) {
+                  contentAggregated += contentDelta;
+                  emit({ token: contentDelta, model });
+                }
                 if (parsed.done) {
-                  emit({ done: true, model, content: aggregated });
+                  emit({
+                    done: true,
+                    model,
+                    content: contentAggregated,
+                    thinking: thinkingAggregated || undefined,
+                  });
                 }
               } else if (typeof parsed.response === 'string') {
-                // fallback to generate style
-                const token = parsed.response;
-                aggregated += token;
-                emit({ token, model });
-                if (parsed.done) emit({ done: true, model, content: aggregated });
+                // fallback: generate-style (delta)
+                contentAggregated += parsed.response;
+                emit({ token: parsed.response, model });
+                if (parsed.done) emit({ done: true, model, content: contentAggregated });
               } else emit(parsed);
             } catch {
               emit({ raw: line });
@@ -88,7 +104,7 @@ export async function POST(req: NextRequest) {
           }
         }
         if (buffer.trim()) emit({ raw: buffer.trim() });
-        if (!aggregated) emit({ info: 'empty response', model });
+        if (!contentAggregated && !thinkingAggregated) emit({ info: 'empty response', model });
         controller.close();
       },
     });
