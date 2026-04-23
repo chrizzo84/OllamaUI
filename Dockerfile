@@ -55,10 +55,8 @@ COPY --from=builder /build/ollama-ui/public ./public
 COPY --from=builder /build/ollama-ui/package.json ./
 COPY --from=builder /build/ollama-ui/pnpm-lock.yaml ./
 
-# Install only production dependencies and rebuild native modules for the runtime environment
-RUN pnpm install --prod --frozen-lockfile --ignore-scripts
-# Rebuild better-sqlite3 native module for the runtime environment
-RUN pnpm rebuild better-sqlite3
+# Install only production dependencies; scripts must run so better-sqlite3 compiles its native binding
+RUN pnpm install --prod --frozen-lockfile
 # (No local models.json needed; catalog fetched at runtime from remote repository)
 
 # Optional: default env (can be overridden). Use internal service host.
