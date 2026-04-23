@@ -107,6 +107,19 @@ export default function SettingsPage() {
             </p>
             <LocalStorageInfo />
           </div>
+          <div>
+            <h3 className="text-base font-semibold text-white/80 mb-1">Data Storage</h3>
+            <p className="text-xs text-white/50 mb-2">
+              Server-side data (Lamas, Hosts) is stored as plain JSON files on disk (
+              <code className="text-white/70">data/lamas.json</code>,{' '}
+              <code className="text-white/70">data/hosts.json</code>).
+            </p>
+            <p className="text-xs text-amber-400/80 bg-amber-400/10 border border-amber-400/20 rounded px-3 py-2">
+              <strong>Note:</strong> SQLite (<code>better-sqlite3</code>) was removed due to native
+              C++ module compilation incompatibilities across Docker and multi-platform
+              environments. JSON file storage is used instead and is fully compatible.
+            </p>
+          </div>
         </section>
       </div>
     </div>
