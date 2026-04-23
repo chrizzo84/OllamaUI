@@ -1,6 +1,6 @@
 {
   "name": "ollama-ui",
-  "version": "0.1.20260423",
+  "version": "0.1.20260423-1",
   "packageManager": "pnpm@10.14.0",
   "private": true,
   "scripts": {
@@ -16,7 +16,6 @@
     "@hookform/resolvers": "^5.2.2",
     "@tanstack/react-query": "^5.99.2",
     "ajv": "^8.18.0",
-    "better-sqlite3": "^12.9.0",
     "chart.js": "^4.5.1",
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
@@ -38,7 +37,6 @@
     "@tailwindcss/forms": "^0.5.11",
     "@tailwindcss/postcss": "^4.2.4",
     "@tailwindcss/typography": "^0.5.19",
-    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^25.6.0",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",

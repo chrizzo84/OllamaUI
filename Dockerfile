@@ -31,12 +31,11 @@ RUN pnpm build
 FROM ollama/ollama:latest AS final
 WORKDIR /app
 
-# Install Node.js and build dependencies for potential native module rebuilding
+# Install Node.js (no build tools needed – no native modules anymore)
 RUN apt-get clean \
  && apt-get update \
- && for i in 1 2 3; do apt-get install -y --fix-missing curl python3 make g++ && break || sleep 5; done \
+ && for i in 1 2 3; do apt-get install -y --fix-missing curl && break || sleep 5; done \
  && rm -rf /var/lib/apt/lists/*
-
 
 # Install Node.js
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
@@ -55,9 +54,8 @@ COPY --from=builder /build/ollama-ui/public ./public
 COPY --from=builder /build/ollama-ui/package.json ./
 COPY --from=builder /build/ollama-ui/pnpm-lock.yaml ./
 
-# Install only production dependencies; scripts must run so better-sqlite3 compiles its native binding.
-# HUSKY=0 prevents the prepare script from trying to invoke husky (a dev-only tool).
-RUN HUSKY=0 pnpm install --prod --frozen-lockfile
+# Install production dependencies (pure JS only, no native modules to compile)
+RUN HUSKY=0 pnpm install --prod --frozen-lockfile --ignore-scripts
 # (No local models.json needed; catalog fetched at runtime from remote repository)
 
 # Optional: default env (can be overridden). Use internal service host.

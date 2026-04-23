@@ -1,114 +1,128 @@
-import Database from 'better-sqlite3';
+/**
+ * Persistent storage via JSON files in /data/.
+ *
+ * Note: better-sqlite3 was removed due to native-module compilation issues in
+ * Docker/multi-platform environments. Data is now stored as plain JSON files
+ * (data/lamas.json and data/hosts.json). All previously exported functions
+ * maintain the same signature for drop-in compatibility.
+ */
 import { safeUuid } from '@/lib/utils';
 import path from 'path';
 import fs from 'fs';
 
-const dbFile = path.join(process.cwd(), 'data', 'app.db');
-const dir = path.dirname(dbFile);
-if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+const dataDir = path.join(process.cwd(), 'data');
+if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
 
-// singleton
-let db: Database.Database | null = null;
+const lamasFile = path.join(dataDir, 'lamas.json');
+const hostsFile = path.join(dataDir, 'hosts.json');
 
-export function getDb() {
-  if (!db) {
-    db = new Database(dbFile);
-    db.pragma('journal_mode = WAL');
-    // init
-    db.exec(`CREATE TABLE IF NOT EXISTS lamas (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      prompt TEXT NOT NULL DEFAULT '',
-      tags TEXT NOT NULL DEFAULT '[]',
-      updated_at INTEGER NOT NULL
-    );`);
-    db.exec(`CREATE TABLE IF NOT EXISTS hosts (
-      id TEXT PRIMARY KEY,
-      url TEXT NOT NULL UNIQUE,
-      label TEXT,
-      created_at INTEGER NOT NULL,
-      last_used_at INTEGER NOT NULL,
-      active INTEGER NOT NULL DEFAULT 0
-    );`);
+// --- Generic JSON store helpers ---
+
+function readJson<T>(file: string, fallback: T): T {
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf-8')) as T;
+  } catch {
+    return fallback;
   }
-  return db;
 }
+
+function writeJson<T>(file: string, data: T): void {
+  fs.writeFileSync(file, JSON.stringify(data, null, 2), 'utf-8');
+}
+
+// --- Lamas ---
 
 export interface LamaRow {
   id: string;
   name: string;
   prompt: string;
-  tags: string; // json array
+  tags: string; // json array string
   updated_at: number;
 }
 
+function readLamas(): LamaRow[] {
+  return readJson<LamaRow[]>(lamasFile, []);
+}
+
+function writeLamas(rows: LamaRow[]): void {
+  writeJson(lamasFile, rows);
+}
+
 export function listLamas(): LamaRow[] {
-  return getDb().prepare('SELECT * FROM lamas ORDER BY updated_at DESC').all() as LamaRow[];
+  return readLamas().sort((a, b) => b.updated_at - a.updated_at);
 }
 
 export function getLama(id: string): LamaRow | undefined {
-  return getDb().prepare('SELECT * FROM lamas WHERE id = ?').get(id) as LamaRow | undefined;
+  return readLamas().find((r) => r.id === id);
 }
 
-export function createLama(data: { id: string; name: string; prompt?: string; tags?: string[] }) {
+export function createLama(data: {
+  id: string;
+  name: string;
+  prompt?: string;
+  tags?: string[];
+}): LamaRow {
   const now = Date.now();
-  getDb()
-    .prepare(
-      'INSERT INTO lamas (id, name, prompt, tags, updated_at) VALUES (@id, @name, @prompt, @tags, @updated_at)',
-    )
-    .run({
-      id: data.id,
-      name: data.name || 'Untitled',
-      prompt: data.prompt || '',
-      tags: JSON.stringify(data.tags || []),
+  const row: LamaRow = {
+    id: data.id,
+    name: data.name || 'Untitled',
+    prompt: data.prompt || '',
+    tags: JSON.stringify(data.tags || []),
+    updated_at: now,
+  };
+  const rows = readLamas();
+  rows.push(row);
+  writeLamas(rows);
+  return row;
+}
+
+export function updateLama(
+  id: string,
+  patch: { name?: string; prompt?: string; tags?: string[] },
+): LamaRow | undefined {
+  const rows = readLamas();
+  const idx = rows.findIndex((r) => r.id === id);
+  if (idx === -1) return undefined;
+  const existing = rows[idx];
+  const updated: LamaRow = {
+    ...existing,
+    name: patch.name ?? existing.name,
+    prompt: patch.prompt ?? existing.prompt,
+    tags: JSON.stringify(patch.tags ?? JSON.parse(existing.tags)),
+    updated_at: Date.now(),
+  };
+  rows[idx] = updated;
+  writeLamas(rows);
+  return updated;
+}
+
+export function deleteLama(id: string): void {
+  writeLamas(readLamas().filter((r) => r.id !== id));
+}
+
+export function importLamas(
+  list: Array<{ name?: string; prompt?: string; tags?: string[] }>,
+): string[] {
+  const rows = readLamas();
+  const now = Date.now();
+  const ids: string[] = [];
+  for (const raw of list) {
+    const id = safeUuid();
+    rows.push({
+      id,
+      name: raw.name?.trim() || 'Import',
+      prompt: raw.prompt || '',
+      tags: JSON.stringify((raw.tags || []).slice(0, 20)),
       updated_at: now,
     });
-  return getLama(data.id)!;
+    ids.push(id);
+  }
+  writeLamas(rows);
+  return ids;
 }
 
-export function updateLama(id: string, patch: { name?: string; prompt?: string; tags?: string[] }) {
-  const existing = getLama(id);
-  if (!existing) return undefined;
-  const now = Date.now();
-  const name = patch.name ?? existing.name;
-  const prompt = patch.prompt ?? existing.prompt;
-  const tags = JSON.stringify(patch.tags ?? JSON.parse(existing.tags));
-  getDb()
-    .prepare(
-      'UPDATE lamas SET name=@name, prompt=@prompt, tags=@tags, updated_at=@updated_at WHERE id=@id',
-    )
-    .run({ id, name, prompt, tags, updated_at: now });
-  return getLama(id)!;
-}
+// --- Hosts ---
 
-export function deleteLama(id: string) {
-  getDb().prepare('DELETE FROM lamas WHERE id = ?').run(id);
-}
-
-export function importLamas(list: Array<{ name?: string; prompt?: string; tags?: string[] }>) {
-  const results: string[] = [];
-  const insert = getDb().prepare(
-    'INSERT INTO lamas (id, name, prompt, tags, updated_at) VALUES (@id, @name, @prompt, @tags, @updated_at)',
-  );
-  const now = Date.now();
-  const tx = getDb().transaction((items: typeof list) => {
-    for (const raw of items) {
-      const id = safeUuid();
-      insert.run({
-        id,
-        name: raw.name?.trim() || 'Import',
-        prompt: raw.prompt || '',
-        tags: JSON.stringify((raw.tags || []).slice(0, 20)),
-        updated_at: now,
-      });
-      results.push(id);
-    }
-  });
-  tx(list);
-  return results;
-}
-
-// ---- Ollama Hosts Management ----
 export interface HostRow {
   id: string;
   url: string;
@@ -118,85 +132,91 @@ export interface HostRow {
   active: number; // 0/1
 }
 
+function readHosts(): HostRow[] {
+  return readJson<HostRow[]>(hostsFile, []);
+}
+
+function writeHosts(rows: HostRow[]): void {
+  writeJson(hostsFile, rows);
+}
+
 export function listHosts(): HostRow[] {
-  return getDb()
-    .prepare('SELECT * FROM hosts ORDER BY active DESC, last_used_at DESC, created_at DESC')
-    .all() as HostRow[];
+  return readHosts().sort((a, b) => {
+    if (b.active !== a.active) return b.active - a.active;
+    if (b.last_used_at !== a.last_used_at) return b.last_used_at - a.last_used_at;
+    return b.created_at - a.created_at;
+  });
 }
 
 export function getActiveHost(): HostRow | undefined {
-  return getDb().prepare('SELECT * FROM hosts WHERE active = 1 LIMIT 1').get() as
-    | HostRow
-    | undefined;
+  return readHosts().find((h) => h.active === 1);
 }
 
 export function addHost(url: string, label?: string): HostRow {
-  const existing = getDb().prepare('SELECT * FROM hosts WHERE url = ?').get(url) as
-    | HostRow
-    | undefined;
+  const rows = readHosts();
+  const existing = rows.find((h) => h.url === url);
   const now = Date.now();
   if (existing) {
-    // Optionally update label
     if (label && label !== existing.label) {
-      getDb().prepare('UPDATE hosts SET label=@label WHERE id=@id').run({ id: existing.id, label });
+      existing.label = label;
+      writeHosts(rows);
     }
     return existing;
   }
-  const id = safeUuid();
-  getDb()
-    .prepare(
-      'INSERT INTO hosts (id, url, label, created_at, last_used_at, active) VALUES (@id, @url, @label, @created_at, @last_used_at, 0)',
-    )
-    .run({ id, url, label: label || null, created_at: now, last_used_at: now });
-  return getDb().prepare('SELECT * FROM hosts WHERE id=?').get(id) as HostRow;
+  const row: HostRow = {
+    id: safeUuid(),
+    url,
+    label: label || null,
+    created_at: now,
+    last_used_at: now,
+    active: 0,
+  };
+  rows.push(row);
+  writeHosts(rows);
+  return row;
 }
 
 export function activateHost(id: string): HostRow | undefined {
-  const dbi = getDb();
-  const existing = dbi.prepare('SELECT * FROM hosts WHERE id = ?').get(id) as HostRow | undefined;
-  if (!existing) return undefined;
+  const rows = readHosts();
+  const target = rows.find((h) => h.id === id);
+  if (!target) return undefined;
   const now = Date.now();
-  const tx = dbi.transaction(() => {
-    dbi.prepare('UPDATE hosts SET active = 0').run();
-    dbi.prepare('UPDATE hosts SET active = 1, last_used_at = @now WHERE id = @id').run({ id, now });
-  });
-  tx();
-  return dbi.prepare('SELECT * FROM hosts WHERE id = ?').get(id) as HostRow;
+  for (const h of rows) {
+    h.active = h.id === id ? 1 : 0;
+    if (h.id === id) h.last_used_at = now;
+  }
+  writeHosts(rows);
+  return rows.find((h) => h.id === id);
 }
 
-export function deleteHost(id: string) {
-  const dbi = getDb();
-  const row = dbi.prepare('SELECT * FROM hosts WHERE id = ?').get(id) as HostRow | undefined;
-  if (!row) return;
-  dbi.prepare('DELETE FROM hosts WHERE id = ?').run(id);
-  // If it was active, try to promote most recent remaining
-  if (row.active) {
-    const next = dbi
-      .prepare('SELECT id FROM hosts ORDER BY last_used_at DESC, created_at DESC LIMIT 1')
-      .get() as { id: string } | undefined;
-    if (next) activateHost(next.id);
+export function deleteHost(id: string): void {
+  const rows = readHosts();
+  const target = rows.find((h) => h.id === id);
+  if (!target) return;
+  const remaining = rows.filter((h) => h.id !== id);
+  if (target.active && remaining.length > 0) {
+    const next = [...remaining].sort((a, b) => b.last_used_at - a.last_used_at)[0];
+    next.active = 1;
+    next.last_used_at = Date.now();
   }
+  writeHosts(remaining);
 }
 
 export function updateHost(
   id: string,
   patch: { url?: string; label?: string },
 ): HostRow | undefined {
-  const dbi = getDb();
-  const existing = dbi.prepare('SELECT * FROM hosts WHERE id = ?').get(id) as HostRow | undefined;
-  if (!existing) return undefined;
+  const rows = readHosts();
+  const idx = rows.findIndex((h) => h.id === id);
+  if (idx === -1) return undefined;
+  const existing = rows[idx];
   const nextUrl = patch.url?.trim() || existing.url;
   const nextLabel = (patch.label === undefined ? existing.label : patch.label) || null;
   if (nextUrl !== existing.url) {
-    const conflict = dbi
-      .prepare('SELECT id FROM hosts WHERE url = ? AND id != ?')
-      .get(nextUrl, id) as { id: string } | undefined;
-    if (conflict) {
-      throw new Error('URL already exists');
-    }
+    const conflict = rows.find((h) => h.url === nextUrl && h.id !== id);
+    if (conflict) throw new Error('URL already exists');
   }
-  dbi
-    .prepare('UPDATE hosts SET url=@url, label=@label WHERE id=@id')
-    .run({ id, url: nextUrl, label: nextLabel });
-  return dbi.prepare('SELECT * FROM hosts WHERE id = ?').get(id) as HostRow;
+  rows[idx] = { ...existing, url: nextUrl, label: nextLabel };
+  writeHosts(rows);
+  return rows[idx];
 }
