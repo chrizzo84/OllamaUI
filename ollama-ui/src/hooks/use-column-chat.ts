@@ -9,6 +9,10 @@ export interface SendOptions {
   systemPrompt?: string;
   toolsEnabled: boolean;
   searxTemplate: string;
+  // Whether this model should think/reason. Pass the real value from the
+  // model's reported capabilities when known; falls back to a name-based
+  // guess (isThinkingModel) only when capabilities weren't available.
+  think?: boolean;
 }
 
 export interface ColumnChat {
@@ -145,7 +149,7 @@ export function useColumnChat(column: 'A' | 'B', sessionId: string | null): Colu
         const payload = {
           model,
           messages: upstreamMessages,
-          think: isThinkingModel(model),
+          think: opts.think ?? isThinkingModel(model),
           toolsEnabled: opts.toolsEnabled,
         };
         setLastPayload(payload);

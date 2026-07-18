@@ -290,8 +290,10 @@ export function ChatPanel() {
       toolsEnabled,
       searxTemplate,
     };
-    const jobs = [columnA.send(text, opts)];
-    if (compareMode && columnB.model) jobs.push(columnB.send(text, opts));
+    const jobs = [columnA.send(text, { ...opts, think: hasCapability(capsA, 'thinking') })];
+    if (compareMode && columnB.model) {
+      jobs.push(columnB.send(text, { ...opts, think: hasCapability(capsB, 'thinking') }));
+    }
     await Promise.all(jobs);
   }
 
