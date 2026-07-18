@@ -10,9 +10,7 @@ export interface LamaProfile {
 }
 
 interface LamaState {
-  currentId: string | null;
   profiles: LamaProfile[];
-  setCurrent: (id: string | null) => void;
   create: (data: { name: string; prompt?: string }) => string; // returns id
   updatePrompt: (id: string, patch: Partial<Pick<LamaProfile, 'name' | 'prompt' | 'tags'>>) => void;
   remove: (id: string) => void;
@@ -24,33 +22,12 @@ interface LamaState {
   setProfiles: (list: LamaProfile[]) => void;
   hydrate: () => Promise<void>;
   hydrated: boolean;
-  systemEnabled: boolean;
-  setSystemEnabled: (v: boolean) => void;
-  toggleSystemEnabled: () => void;
 }
 
 export const useSystemPromptStore = create<LamaState>()((set, get) => ({
-  currentId: null,
   profiles: [],
   hydrated: false,
-  systemEnabled: true,
-  setSystemEnabled: (v) => {
-    set({ systemEnabled: v });
-    if (typeof window !== 'undefined')
-      try {
-        localStorage.setItem('systemEnabled', JSON.stringify(v));
-      } catch {
-        /*ignore*/
-      }
-  },
-  toggleSystemEnabled: () => get().setSystemEnabled(!get().systemEnabled),
-  setCurrent: (id) => set({ currentId: id }),
-  setProfiles: (list) =>
-    set((s) => ({
-      profiles: list.sort((a, b) => b.updatedAt - a.updatedAt),
-      currentId:
-        s.currentId && list.some((p) => p.id === s.currentId) ? s.currentId : list[0]?.id || null,
-    })),
+  setProfiles: (list) => set({ profiles: list.sort((a, b) => b.updatedAt - a.updatedAt) }),
   hydrate: async () => {
     if (get().hydrated) return; // already done
     try {
@@ -84,17 +61,6 @@ export const useSystemPromptStore = create<LamaState>()((set, get) => ({
     } catch {
       /* ignore */
     }
-    if (typeof window !== 'undefined') {
-      try {
-        const raw = localStorage.getItem('systemEnabled');
-        if (raw !== null) {
-          const val = JSON.parse(raw);
-          if (typeof val === 'boolean') set({ systemEnabled: val });
-        }
-      } catch {
-        /* ignore */
-      }
-    }
     set({ hydrated: true });
   },
   create: ({ name, prompt }) => {
@@ -107,7 +73,7 @@ export const useSystemPromptStore = create<LamaState>()((set, get) => ({
       updatedAt: Date.now(),
       tags: [],
     };
-    set((s) => ({ profiles: [...s.profiles, profile], currentId: tempId }));
+    set((s) => ({ profiles: [...s.profiles, profile] }));
     fetch('/api/lamas', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -117,7 +83,6 @@ export const useSystemPromptStore = create<LamaState>()((set, get) => ({
       .then((data) => {
         set((s) => ({
           profiles: s.profiles.map((p) => (p.id === tempId ? { ...p, ...data } : p)),
-          currentId: data.id,
         }));
       })
       .catch(() => {
@@ -136,13 +101,7 @@ export const useSystemPromptStore = create<LamaState>()((set, get) => ({
     scheduleUpdate(id, patch);
   },
   remove: (id) => {
-    set((s) => {
-      const remaining = s.profiles.filter((p) => p.id !== id);
-      return {
-        profiles: remaining,
-        currentId: s.currentId === id ? remaining[0]?.id || null : s.currentId,
-      };
-    });
+    set((s) => ({ profiles: s.profiles.filter((p) => p.id !== id) }));
     fetch('/api/lamas?id=' + encodeURIComponent(id), { method: 'DELETE' }).catch(() => {
       /* ignore */
     });
@@ -196,6 +155,6 @@ function flushUpdate(id: string) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ id, ...patch }),
   }).catch(() => {
-    /* swallow */
+    // swallow
   });
 }

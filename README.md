@@ -73,7 +73,7 @@ You run / build only inside `ollama-ui/`. The Python scraper is optional and onl
 
 ## 3. Prerequisites 🛠️
 
-- Node.js 18.18+ or 20+ (recommended LTS)
+- Node.js 22.5+ (required for the built-in `node:sqlite` module used for persistence)
 - pnpm (preferred) OR npm / yarn / bun
 - Python 3.11+ (only if you run the scraper)
 - A reachable Ollama server (local or remote) exposing its HTTP API (`/api/pull`, `/api/tags`, etc.)
@@ -443,6 +443,11 @@ RUN cd /app/node_modules/.pnpm/better-sqlite3@*/node_modules/better-sqlite3 && \
     node-gyp configure --module_name=better_sqlite3 --module_path=./build && \
     node-gyp build
 ```
+
+**Update:** `better-sqlite3` was later dropped entirely (briefly replaced with plain JSON files,
+then with Node's own built-in [`node:sqlite`](https://nodejs.org/api/sqlite.html) module,
+available from Node 22.5+). Since it ships inside the Node binary itself, there's no native
+addon to compile per platform anymore — the whole class of problem above no longer applies.
 
 </details>
 

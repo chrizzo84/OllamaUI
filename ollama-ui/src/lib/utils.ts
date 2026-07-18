@@ -47,3 +47,14 @@ const THINKING_MODEL_PATTERNS = [/qwen3/i, /deepseek-r\d/i, /phi4-reasoning/i, /
 export function isThinkingModel(modelName: string): boolean {
   return THINKING_MODEL_PATTERNS.some((p) => p.test(modelName));
 }
+
+// Checks a model's declared capabilities (from Ollama's /api/show) for a
+// given feature (e.g. "tools", "thinking"). Returns undefined when the
+// capabilities list itself is unavailable (older Ollama, fetch failed),
+// signalling "unknown" rather than falsely reporting unsupported.
+export function hasCapability(
+  capabilities: string[] | undefined,
+  cap: string,
+): boolean | undefined {
+  return capabilities ? capabilities.includes(cap) : undefined;
+}

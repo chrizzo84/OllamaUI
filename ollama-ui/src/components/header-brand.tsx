@@ -121,7 +121,7 @@ export function HostIndicator() {
 
   return (
     <>
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 flex-wrap">
         <div
           className={`${pillBase} ${pillStyle} cursor-default select-text !px-3 inline-flex`}
           role="status"

@@ -1,13 +1,6 @@
 # ---------- Build stage: compile Next.js app ----------
-FROM node:20-bullseye-slim AS builder
+FROM node:24-bullseye-slim AS builder
 WORKDIR /build
-
-# Install build dependencies for native modules
-RUN apt-get clean \
- && apt-get update \
- && for i in 1 2 3; do apt-get install -y --fix-missing python3 make g++ && break || sleep 5; done \
- && rm -rf /var/lib/apt/lists/*
-
 
 # Install pnpm (preferred) – fallback to npm if desired
 RUN corepack enable && corepack prepare pnpm@latest --activate
@@ -16,9 +9,9 @@ RUN corepack enable && corepack prepare pnpm@latest --activate
 COPY ollama-ui/package.json ollama-ui/pnpm-lock.yaml ./ollama-ui/
 WORKDIR /build/ollama-ui
 
-# Install dependencies and rebuild native modules for the container architecture
+# Install dependencies (pure JS + node:sqlite built into Node itself — no
+# native modules, so no build toolchain or rebuild step needed here)
 RUN pnpm install --frozen-lockfile
-RUN pnpm rebuild better-sqlite3
 
 # Copy full source
 COPY ollama-ui .
@@ -38,7 +31,7 @@ RUN apt-get clean \
  && rm -rf /var/lib/apt/lists/*
 
 # Install Node.js
-RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
     && apt-get install -y nodejs
 
 # Install pnpm

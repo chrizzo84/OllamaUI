@@ -255,3 +255,18 @@ button[data-variant='host-manage']:hover {
     0 0 0.4rem #6366f1,
     0 0 1.5rem #818cf8;
 }
+
+/* Small status/capability pill used in the chat top bar & composer */
+.cap-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-family: var(--font-geist-mono, monospace);
+  font-size: 0.65rem;
+  padding: 0.28rem 0.55rem;
+  border-radius: 999px;
+  border-width: 1px;
+  border-style: solid;
+  white-space: nowrap;
+  line-height: 1;
+}

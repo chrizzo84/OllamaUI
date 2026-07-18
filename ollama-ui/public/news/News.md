@@ -1,5 +1,39 @@
 Chronological list of notable changes to Ollama UI.
 
+## 2026-07-18
+
+- **Chat "Console" Redesign**
+  - Chat page rebuilt around a collapsible sidebar for sessions/profiles instead of an inline dropdown that used to push the conversation down every time it was opened.
+  - Reasoning and tool calls now render as a single chronological trace (think → call a tool → think more → answer) instead of two disconnected blocks.
+  - Playground has been merged into Chat as a "Compare" toggle — two columns sharing one composer, running through the exact same pipeline as normal chat, so tool-calling, reasoning and the new Stop button work in Compare mode too.
+  - Added a Stop button to cancel an in-progress generation, and real upstream error messages instead of a generic "[Chat error]".
+  - Fixed a bug where a thinking model's reasoning text got duplicated at the end of every response.
+
+- **Tool-Calling: Web Search & Current Date**
+  - Tool-capable models can now call `web_search` (via a self-hosted SearXNG instance) and `get_current_date` mid-conversation to answer with up-to-date information.
+  - Configured once under Settings → Tools (master switch + SearXNG endpoint template) and applies to every chat; the app checks each model's capabilities automatically so the toggle warns you if the selected model doesn't support tools.
+
+- **Whole-App "Console" Redesign**
+  - The top navigation bar is gone, replaced by a single collapsible sidebar handling navigation (Dashboard / Chat / Models / Profiles / Settings), host status, and — only while on the Chat page — the session list.
+  - Models, Dashboard, Settings and Profiles pages restyled to match: consistent glass panels, mono labels, pill-style badges.
+
+- **Real, Persisted Chat Sessions**
+  - Chat sessions are now actual saved conversations, not just a profile switch — full history (including reasoning/tool traces) survives a page reload.
+  - Each session gets a short title automatically generated after the first exchange ("Generating title…" until it's ready); rename or delete a session directly from the sidebar.
+  - A session remembers its own model(s), Compare on/off state, and an optional persona.
+
+- **Personas**
+  - The persona (system prompt) picker moved next to the model selector in the chat top bar — pick one per session, or "No persona" to disable.
+  - Ships with four ready-made personas: **Research Analyst** (searches the web first, cites sources), **Code Reviewer** (terse, correctness-first), **Creative Writing Partner** (matches your voice instead of imposing one), and **Reiseplaner** (looks up current recommendations for a place you name, always checks today's date first instead of guessing the year).
+
+- **Persistence moved to SQLite**
+  - All server-side data (hosts, personas, sessions, tool settings) now lives in a single SQLite file (`data/app.db`) via Node's built-in `node:sqlite` — no native module to compile, so none of the earlier Docker cross-platform build issues apply.
+  - Requires Node ≥ 22.5. `pnpm dev` now runs without `--turbopack` (a current Turbopack limitation with `node:sqlite`); production builds already used webpack and are unaffected.
+
+- **Token & Context Stats**
+  - Every reply now shows tokens generated and tokens/sec underneath it.
+  - A context-window badge sits next to the model picker and turns amber once a conversation gets close to filling it.
+
 ## 2026-01-08
 
 - **Stop / Unload Models**

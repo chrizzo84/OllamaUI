@@ -131,7 +131,7 @@ export function LoadedModelsPopover({ open, onClose, anchorRef }: LoadedModelsPo
   return (
     <div
       ref={popoverRef}
-      className="absolute right-0 top-full mt-2 z-50 min-w-[320px] max-w-[400px] rounded-lg border border-white/15 bg-[#1a1f2e]/95 backdrop-blur-xl shadow-2xl"
+      className="absolute left-0 top-full mt-2 z-50 min-w-[320px] max-w-[400px] rounded-lg border border-white/15 bg-[#1a1f2e]/95 backdrop-blur-xl shadow-2xl"
       role="dialog"
       aria-label="Loaded Models"
     >

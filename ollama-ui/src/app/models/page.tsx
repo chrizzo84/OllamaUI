@@ -298,22 +298,29 @@ export default function ModelsPage() {
   }
 
   return (
-    <div className="relative mx-auto flex min-h-[calc(100vh-3.5rem)] w-full max-w-6xl flex-col gap-10 px-10 py-14">
-      <div className="flex flex-wrap items-center gap-4">
-        <h1 className="text-2xl font-bold tracking-tight bg-gradient-to-br from-white via-white/80 to-white/40 bg-clip-text text-transparent">
-          Installed Models
-        </h1>
-        <Button
-          onClick={() => refetch()}
-          variant="outline"
-          size="sm"
-          loading={isFetching}
-          title="Refresh installed models"
-        >
-          Refresh
-        </Button>
-        <div className="ml-auto flex items-center gap-2 text-xs text-white/40">
-          {/* Removed catalog snapshot from installed models header */}
+    <div className="relative mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-10 px-10 py-14">
+      <div className="flex flex-col gap-1">
+        <span className="text-[10px] font-mono uppercase tracking-wider text-white/30">
+          Local inventory
+        </span>
+        <div className="flex flex-wrap items-center gap-4">
+          <h1 className="text-2xl font-bold tracking-tight bg-gradient-to-br from-white via-white/80 to-white/40 bg-clip-text text-transparent">
+            Installed Models
+          </h1>
+          <Button
+            onClick={() => refetch()}
+            variant="outline"
+            size="sm"
+            loading={isFetching}
+            title="Refresh installed models"
+          >
+            Refresh
+          </Button>
+          {data && (
+            <span className="cap-pill border-white/15 bg-white/5 text-white/50">
+              {data.models.length} installed
+            </span>
+          )}
         </div>
       </div>
       {/* Host info bar removed; host management centralized in header */}
@@ -346,20 +353,20 @@ export default function ModelsPage() {
           {data.models.map((m) => (
             <li
               key={m.name}
-              className="group relative overflow-hidden rounded-xl border border-white/10 bg-white/[0.06] p-5 backdrop-blur-sm transition hover:border-white/20 hover:bg-white/[0.08]"
+              className="group relative overflow-hidden rounded-xl border border-white/10 bg-white/[0.04] p-5 transition hover:border-indigo-400/30 hover:bg-white/[0.06]"
             >
               <div className="flex items-start justify-between gap-3">
-                <div>
-                  <h2 className="font-semibold text-white/90 tracking-tight">{m.name}</h2>
-                  <p className="text-xs mt-1 text-white/40 font-mono">{m.model}</p>
+                <div className="min-w-0">
+                  <h2 className="font-semibold text-white/90 tracking-tight truncate">{m.name}</h2>
+                  <p className="text-xs mt-1 text-white/40 font-mono truncate">{m.model}</p>
                 </div>
                 {m.size && (
-                  <span className="rounded-full bg-white/10 px-2 py-1 text-[10px] font-medium text-white/60">
+                  <span className="cap-pill border-white/15 bg-white/5 text-white/60 shrink-0">
                     {formatSize(m.size)}
                   </span>
                 )}
               </div>
-              <div className="mt-4 flex items-center justify-between text-xs text-white/40">
+              <div className="mt-4 flex items-center justify-between text-[11px] font-mono text-white/35">
                 <span>{m.digest?.slice(0, 12) ?? '—'}</span>
                 <span>
                   {m.modified_at
@@ -424,32 +431,40 @@ export default function ModelsPage() {
       {/* Catalog Section */}
       <div className="mt-10 flex flex-col gap-4">
         {/* Catalog Header */}
-        <div className="flex flex-wrap items-center gap-4 w-full">
-          <h2 className="text-2xl font-bold tracking-tight bg-gradient-to-br from-white via-white/80 to-white/40 bg-clip-text text-transparent">
-            Model Catalog (available variants)
-          </h2>
-          <Button
-            onClick={() => refetchCatalog()}
-            variant="outline"
-            size="sm"
-            loading={catalogFetching}
-            title="Reload catalog data"
-          >
-            Refresh
-          </Button>
-          <div className="ml-auto flex items-center gap-2 text-xs text-white/40">
-            <span>Snapshot:</span>
-            {catalogLoading ? (
-              <span className="animate-pulse">loading…</span>
-            ) : catalog?.scraped_at ? (
-              <time>{new Date(catalog.scraped_at).toLocaleString()}</time>
-            ) : (
-              '—'
-            )}
+        <div className="flex flex-col gap-1 w-full">
+          <span className="text-[10px] font-mono uppercase tracking-wider text-white/30">
+            Remote catalog
+          </span>
+          <div className="flex flex-wrap items-center gap-4 w-full">
+            <h2 className="text-2xl font-bold tracking-tight bg-gradient-to-br from-white via-white/80 to-white/40 bg-clip-text text-transparent">
+              Model Catalog
+            </h2>
+            <Button
+              onClick={() => refetchCatalog()}
+              variant="outline"
+              size="sm"
+              loading={catalogFetching}
+              title="Reload catalog data"
+            >
+              Refresh
+            </Button>
+            <div className="ml-auto flex items-center gap-2 text-xs text-white/40">
+              <span>Snapshot:</span>
+              {catalogLoading ? (
+                <span className="animate-pulse">loading…</span>
+              ) : catalog?.scraped_at ? (
+                <time>{new Date(catalog.scraped_at).toLocaleString()}</time>
+              ) : (
+                '—'
+              )}
+            </div>
           </div>
         </div>
         {/* Pullbox directly below header */}
         <div className="rounded-xl border border-white/10 bg-white/5 p-4 flex flex-col gap-4">
+          <span className="text-[10px] font-mono uppercase tracking-wider text-white/30">
+            Pull a model
+          </span>
           <form
             onSubmit={handlePullSubmit}
             className="flex flex-col gap-3 sm:flex-row sm:items-center"
@@ -502,7 +517,7 @@ export default function ModelsPage() {
             </div>
           )}
           {pullLog && (
-            <pre className="max-h-60 overflow-auto whitespace-pre-wrap rounded-md bg-black/30 p-3 text-xs text-white/70">
+            <pre className="max-h-60 overflow-auto whitespace-pre-wrap rounded-md border border-white/10 bg-black/40 p-3 font-mono text-[11px] leading-relaxed text-white/60">
               {pullLog}
             </pre>
           )}
@@ -527,15 +542,15 @@ export default function ModelsPage() {
                   key={cap}
                   type="button"
                   onClick={() => toggleCap(cap)}
-                  className={`px-3 py-1 rounded-md border text-xs transition focus:outline-none focus:ring-2 focus:ring-indigo-500/60 ${
+                  className={`cap-pill transition focus:outline-none focus:ring-2 focus:ring-indigo-500/60 ${
                     active
-                      ? 'bg-indigo-500/30 border-indigo-400/60 text-indigo-200'
-                      : 'bg-white/5 border-white/15 hover:border-white/30'
+                      ? 'border-indigo-400/50 bg-indigo-500/20 text-indigo-200'
+                      : 'border-white/15 bg-white/5 text-white/50 hover:border-white/30'
                   }`}
                   aria-pressed={active}
                   title={active ? `Remove ${cap}` : `Filter by ${cap}`}
                 >
-                  <span className="font-medium">{cap}</span>
+                  {cap}
                 </button>
               );
             })}
@@ -543,7 +558,7 @@ export default function ModelsPage() {
               type="button"
               onClick={() => selectedCaps.length && setSelectedCaps([])}
               disabled={!selectedCaps.length}
-              className={`px-2 py-1 rounded-md border text-[10px] uppercase tracking-wide transition focus:outline-none focus:ring-2 focus:ring-indigo-500/60 ${
+              className={`cap-pill transition focus:outline-none focus:ring-2 focus:ring-indigo-500/60 ${
                 selectedCaps.length
                   ? 'border-white/25 bg-white/10 text-white/60 hover:border-white/40 hover:text-white/80'
                   : 'border-white/10 bg-white/5 text-white/25 cursor-not-allowed'
@@ -604,17 +619,19 @@ export default function ModelsPage() {
             {catalog.models.map((cm) => (
               <div
                 key={cm.slug}
-                className="rounded-xl border border-white/10 bg-white/[0.04] p-5 flex flex-col gap-3"
+                className="rounded-xl border border-white/10 bg-white/[0.04] p-5 flex flex-col gap-3 transition hover:border-indigo-400/30"
               >
                 <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <h3 className="font-semibold text-white/90 tracking-tight">{cm.slug}</h3>
+                  <div className="min-w-0">
+                    <h3 className="font-semibold text-white/90 tracking-tight truncate">
+                      {cm.slug}
+                    </h3>
                     {cm.capabilities && cm.capabilities.length > 0 && (
-                      <div className="mt-1 flex flex-wrap gap-1">
+                      <div className="mt-1.5 flex flex-wrap gap-1">
                         {cm.capabilities.slice(0, 6).map((c) => (
                           <span
                             key={c}
-                            className="rounded bg-indigo-500/20 px-2 py-[2px] text-[10px] uppercase tracking-wide text-indigo-200/80"
+                            className="cap-pill border-indigo-400/25 bg-indigo-500/10 text-indigo-200/80 !text-[9px]"
                           >
                             {c}
                           </span>
@@ -624,7 +641,7 @@ export default function ModelsPage() {
                   </div>
                   {typeof cm.pulls === 'number' && (
                     <span
-                      className="rounded-full bg-white/10 px-2 py-1 text-[10px] font-medium text-white/60"
+                      className="cap-pill border-white/15 bg-white/5 text-white/60 shrink-0"
                       title={cm.pulls_text || String(cm.pulls)}
                     >
                       {(cm.pulls / 1_000_000).toFixed(1)}M

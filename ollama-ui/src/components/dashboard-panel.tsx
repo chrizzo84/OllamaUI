@@ -64,49 +64,68 @@ export function DashboardPanel({ newsContent }: { newsContent: string }) {
     return () => window.removeEventListener('active-host-changed', onHostChange as EventListener);
   }, []);
 
-  if (loading) return <div>Loading…</div>;
-  if (error) return <div className="text-red-400">Error: {error}</div>;
-  if (!stats) return <div>No data available.</div>;
+  if (loading) return <div className="text-white/50 animate-pulse text-sm">Loading…</div>;
+  if (error) return <div className="text-red-400 text-sm">Error: {error}</div>;
+  if (!stats) return <div className="text-white/50 text-sm">No data available.</div>;
+
+  const stat = [
+    { label: 'Total models', value: String(stats.count) },
+    { label: 'Total size', value: formatBytes(stats.totalSize) },
+    { label: 'Average size', value: formatBytes(stats.averageSize) },
+  ];
 
   return (
-    <section className="grid grid-cols-1 md:grid-cols-2 gap-8">
-      <div className="rounded-lg bg-white/5 border border-white/10 p-6 flex flex-col gap-2">
-        <h2 className="text-lg font-semibold mb-2">Model Summary</h2>
-        <div>
-          <strong>Total Models:</strong> {stats.count}
-        </div>
-        <div>
-          <strong>Total Size:</strong> {formatBytes(stats.totalSize)}
-        </div>
-        <div>
-          <strong>Average Size:</strong> {formatBytes(stats.averageSize)}
+    <section className="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <div className="rounded-xl border border-white/10 bg-white/5 p-6 flex flex-col gap-4">
+        <span className="text-[10px] font-mono uppercase tracking-wider text-white/30">
+          Model summary
+        </span>
+        <div className="grid grid-cols-3 gap-3">
+          {stat.map((s) => (
+            <div key={s.label} className="rounded-lg border border-white/10 bg-black/20 p-3">
+              <div className="text-lg font-semibold tabular-nums text-white/90 truncate">
+                {s.value}
+              </div>
+              <div className="text-[10px] uppercase tracking-wide text-white/35 mt-1">
+                {s.label}
+              </div>
+            </div>
+          ))}
         </div>
         {stats.largest && (
-          <div>
-            <strong>Largest Model:</strong> {stats.largest.name} ({formatBytes(stats.largest.size)})
+          <div className="cap-pill border-indigo-400/25 bg-indigo-500/10 text-indigo-200/80 self-start">
+            🏆 largest: {stats.largest.name} · {formatBytes(stats.largest.size)}
           </div>
         )}
       </div>
-      <div className="rounded-lg bg-white/5 border border-white/10 p-6 flex flex-col gap-2">
-        <h2 className="text-lg font-semibold mb-2">Models Breakdown</h2>
-        <ul className="max-h-64 overflow-auto text-sm">
+      <div className="rounded-xl border border-white/10 bg-white/5 p-6 flex flex-col gap-3">
+        <span className="text-[10px] font-mono uppercase tracking-wider text-white/30">
+          Models breakdown
+        </span>
+        <ul className="max-h-64 overflow-auto text-sm flex flex-col gap-0.5">
           {stats.models.map((m) => (
             <li
               key={m.name}
-              className="flex justify-between py-1 border-b border-white/5 last:border-none"
+              className="flex justify-between items-center py-1.5 px-2 rounded hover:bg-white/5 transition"
             >
-              <span className="font-mono">{m.name}</span>
-              <span>{formatBytes(m.size)}</span>
+              <span className="font-mono text-xs text-white/70 truncate">{m.name}</span>
+              <span className="font-mono text-xs text-white/40 tabular-nums shrink-0 ml-2">
+                {formatBytes(m.size)}
+              </span>
             </li>
           ))}
         </ul>
       </div>
-      <div className="md:col-span-2 rounded-lg bg-white/5 border border-white/10 p-6 mt-2">
-        <h2 className="text-lg font-semibold mb-2">Visualizations</h2>
+      <div className="md:col-span-2 rounded-xl border border-white/10 bg-white/5 p-6 flex flex-col gap-3">
+        <span className="text-[10px] font-mono uppercase tracking-wider text-white/30">
+          Visualizations
+        </span>
         <DashboardCharts models={stats.models} />
       </div>
-      <div className="md:col-span-2 rounded-lg bg-white/5 border border-white/10 p-6 mt-2">
-        <h2 className="text-lg font-semibold mb-2">News / Release Notes</h2>
+      <div className="md:col-span-2 rounded-xl border border-white/10 bg-white/5 p-6 flex flex-col gap-3">
+        <span className="text-[10px] font-mono uppercase tracking-wider text-white/30">
+          News / release notes
+        </span>
         <NewsViewer content={newsContent} />
       </div>
     </section>
