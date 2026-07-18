@@ -9,6 +9,17 @@
  * static `import`, `require()`, or a dynamically-built module name (all
  * three fail with different errors). `next build`/`next start` already use
  * webpack, which handles it fine, so this only affects local dev.
+ *
+ * The actual DB connection/schema/migration is created LAZILY (see `db`
+ * below), not at module top-level: `next build`'s "Collecting page data"
+ * step imports every route module (including this one, transitively) in
+ * several parallel worker processes just to inspect it, without ever
+ * calling a handler. Opening + migrating the database eagerly at import
+ * time meant every one of those workers raced to write the same fresh
+ * `app.db` simultaneously, which fails with SQLite errors like "attempt to
+ * write a readonly database" / "disk I/O error". Deferring all of this
+ * until the first real `db.prepare(...)` call (i.e. an actual request at
+ * runtime) means plain module import is side-effect-free.
  */
 import { DatabaseSync } from 'node:sqlite';
 import { safeUuid } from '@/lib/utils';
@@ -17,8 +28,6 @@ import path from 'path';
 import fs from 'fs';
 
 const dataDir = path.join(process.cwd(), 'data');
-if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
-
 const dbFile = path.join(dataDir, 'app.db');
 const lamasJsonFile = path.join(dataDir, 'lamas.json');
 const hostsJsonFile = path.join(dataDir, 'hosts.json');
@@ -41,46 +50,68 @@ function isLegacyDb(): boolean {
     return true;
   }
 }
-if (isLegacyDb()) {
-  for (const f of [dbFile, `${dbFile}-shm`, `${dbFile}-wal`]) {
-    if (fs.existsSync(f)) fs.rmSync(f);
+
+let realDb: DatabaseSync | null = null;
+
+function initDb(): DatabaseSync {
+  if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+
+  if (isLegacyDb()) {
+    for (const f of [dbFile, `${dbFile}-shm`, `${dbFile}-wal`]) {
+      if (fs.existsSync(f)) fs.rmSync(f);
+    }
   }
+
+  const instance = new DatabaseSync(dbFile);
+  instance.exec(`
+    CREATE TABLE IF NOT EXISTS lamas (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      prompt TEXT NOT NULL DEFAULT '',
+      tags TEXT NOT NULL DEFAULT '[]',
+      updated_at INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS hosts (
+      id TEXT PRIMARY KEY,
+      url TEXT NOT NULL UNIQUE,
+      label TEXT,
+      created_at INTEGER NOT NULL,
+      last_used_at INTEGER NOT NULL,
+      active INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE TABLE IF NOT EXISTS sessions (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      title_status TEXT NOT NULL DEFAULT 'pending',
+      profile_id TEXT,
+      model_a TEXT NOT NULL DEFAULT '',
+      model_b TEXT NOT NULL DEFAULT '',
+      compare_mode INTEGER NOT NULL DEFAULT 0,
+      messages TEXT NOT NULL DEFAULT '[]',
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
+  `);
+  return instance;
 }
 
-const db = new DatabaseSync(dbFile);
-db.exec(`
-  CREATE TABLE IF NOT EXISTS lamas (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    prompt TEXT NOT NULL DEFAULT '',
-    tags TEXT NOT NULL DEFAULT '[]',
-    updated_at INTEGER NOT NULL
-  );
-  CREATE TABLE IF NOT EXISTS hosts (
-    id TEXT PRIMARY KEY,
-    url TEXT NOT NULL UNIQUE,
-    label TEXT,
-    created_at INTEGER NOT NULL,
-    last_used_at INTEGER NOT NULL,
-    active INTEGER NOT NULL DEFAULT 0
-  );
-  CREATE TABLE IF NOT EXISTS sessions (
-    id TEXT PRIMARY KEY,
-    title TEXT NOT NULL,
-    title_status TEXT NOT NULL DEFAULT 'pending',
-    profile_id TEXT,
-    model_a TEXT NOT NULL DEFAULT '',
-    model_b TEXT NOT NULL DEFAULT '',
-    compare_mode INTEGER NOT NULL DEFAULT 0,
-    messages TEXT NOT NULL DEFAULT '[]',
-    created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL
-  );
-  CREATE TABLE IF NOT EXISTS settings (
-    key TEXT PRIMARY KEY,
-    value TEXT NOT NULL
-  );
-`);
+// Lazily initializes on first real property access (e.g. the first
+// `db.prepare(...)` call from an actual CRUD function below), not on
+// module import — see the note above for why that distinction matters.
+const db = new Proxy({} as DatabaseSync, {
+  get(_target, prop, receiver) {
+    if (!realDb) {
+      realDb = initDb();
+      migrateFromJson(realDb);
+    }
+    const value = Reflect.get(realDb, prop, receiver);
+    return typeof value === 'function' ? value.bind(realDb) : value;
+  },
+});
 
 // Personas seeded into a genuinely empty database (fresh install/Docker
 // volume, nothing to migrate from) so there's something useful to pick from
@@ -112,9 +143,9 @@ const DEFAULT_PERSONAS: Array<{ name: string; prompt: string; tags: string[] }> 
   },
 ];
 
-function seedDefaultLamas() {
+function seedDefaultLamas(instance: DatabaseSync) {
   const now = Date.now();
-  const insert = db.prepare(
+  const insert = instance.prepare(
     'INSERT INTO lamas (id, name, prompt, tags, updated_at) VALUES (?, ?, ?, ?, ?)',
   );
   DEFAULT_PERSONAS.forEach((p, idx) => {
@@ -124,13 +155,15 @@ function seedDefaultLamas() {
 
 // --- One-time migration from the JSON-file era (safe to re-run: only
 // inserts when a table is still empty), falling back to seeding the default
-// personas when there's no legacy JSON to migrate from either ---
-(function migrateFromJson() {
-  const lamaCount = (db.prepare('SELECT COUNT(*) as c FROM lamas').get() as { c: number }).c;
+// personas when there's no legacy JSON to migrate from either. Takes the
+// raw instance directly (not the lazy `db` proxy) since it's invoked from
+// inside that proxy's own initialization step. ---
+function migrateFromJson(instance: DatabaseSync) {
+  const lamaCount = (instance.prepare('SELECT COUNT(*) as c FROM lamas').get() as { c: number }).c;
   if (lamaCount === 0 && fs.existsSync(lamasJsonFile)) {
     try {
       const rows: LamaRow[] = JSON.parse(fs.readFileSync(lamasJsonFile, 'utf-8'));
-      const insert = db.prepare(
+      const insert = instance.prepare(
         'INSERT INTO lamas (id, name, prompt, tags, updated_at) VALUES (?, ?, ?, ?, ?)',
       );
       for (const r of rows) insert.run(r.id, r.name, r.prompt, r.tags, r.updated_at);
@@ -138,14 +171,14 @@ function seedDefaultLamas() {
       /* ignore malformed legacy file */
     }
   } else if (lamaCount === 0) {
-    seedDefaultLamas();
+    seedDefaultLamas(instance);
   }
 
-  const hostCount = (db.prepare('SELECT COUNT(*) as c FROM hosts').get() as { c: number }).c;
+  const hostCount = (instance.prepare('SELECT COUNT(*) as c FROM hosts').get() as { c: number }).c;
   if (hostCount === 0 && fs.existsSync(hostsJsonFile)) {
     try {
       const rows: HostRow[] = JSON.parse(fs.readFileSync(hostsJsonFile, 'utf-8'));
-      const insert = db.prepare(
+      const insert = instance.prepare(
         'INSERT INTO hosts (id, url, label, created_at, last_used_at, active) VALUES (?, ?, ?, ?, ?, ?)',
       );
       for (const r of rows)
@@ -155,11 +188,13 @@ function seedDefaultLamas() {
     }
   }
 
-  const sessionCount = (db.prepare('SELECT COUNT(*) as c FROM sessions').get() as { c: number }).c;
+  const sessionCount = (
+    instance.prepare('SELECT COUNT(*) as c FROM sessions').get() as { c: number }
+  ).c;
   if (sessionCount === 0 && fs.existsSync(sessionsJsonFile)) {
     try {
       const rows: SessionRow[] = JSON.parse(fs.readFileSync(sessionsJsonFile, 'utf-8'));
-      const insert = db.prepare(
+      const insert = instance.prepare(
         'INSERT INTO sessions (id, title, title_status, profile_id, model_a, model_b, compare_mode, messages, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       );
       for (const r of rows) {
@@ -180,7 +215,7 @@ function seedDefaultLamas() {
       /* ignore */
     }
   }
-})();
+}
 
 // --- Lamas ---
 
