@@ -24,7 +24,7 @@
     "date-fns": "^4.1.0",
     "framer-motion": "^12.38.0",
     "lucide-react": "^1.8.0",
-    "next": "16.2.4",
+    "next": "16.2.10",
     "react": "19.2.5",
     "react-chartjs-2": "^5.3.1",
     "react-dom": "19.2.5",
@@ -44,7 +44,7 @@
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "eslint": "^9.39.4",
-    "eslint-config-next": "16.2.4",
+    "eslint-config-next": "16.2.10",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-react": "^7.37.5",
     "eslint-plugin-react-hooks": "^7.1.1",
@@ -61,5 +61,14 @@
     "**/*.{ts,tsx,js,jsx,md,css,json}": [
       "prettier --write"
     ]
+  },
+  "pnpm": {
+    "overrides": {
+      "fast-uri": ">=3.1.2",
+      "postcss": ">=8.5.10",
+      "minimatch@10>brace-expansion": ">=5.0.6",
+      "js-yaml": ">=4.2.0",
+      "@babel/core": ">=7.29.6"
+    }
   }
 }
