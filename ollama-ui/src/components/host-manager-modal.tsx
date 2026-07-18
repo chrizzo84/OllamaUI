@@ -356,7 +356,7 @@ export function HostManagerModal({ open, onClose, onActivated }: Props) {
                 </div>
               )}
               <p className="mt-4">
-                All changes are persisted locally (SQLite). Switching dispatches a global{' '}
+                All changes are persisted server-side as JSON. Switching dispatches a global{' '}
                 <code className="bg-white/5 px-1 rounded">active-host-changed</code> event to update
                 open views.
               </p>

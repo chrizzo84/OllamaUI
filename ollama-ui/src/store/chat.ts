@@ -1,15 +1,36 @@
 import { create } from 'zustand';
 import { safeUuid } from '@/lib/utils';
+import type { ChatStats } from '@/lib/chat-stream';
+
+export type { ChatStats };
+
+// A single reasoning burst or tool call, in the order it actually happened.
+// Kept as one ordered array (instead of a flat `thinking` string + separate
+// `toolCalls` array) so a real think -> call tool -> think more -> answer
+// sequence renders in the order the model produced it, not flattened into
+// "all thinking, then all tool calls".
+export type TraceEvent =
+  | { type: 'thinking'; id: string; text: string }
+  | {
+      type: 'tool';
+      id: string;
+      name: string;
+      arguments: unknown;
+      result?: unknown;
+      error?: string;
+    };
 
 export interface ChatMessage {
   id: string;
   role: 'user' | 'assistant' | 'system';
-  content: string;
-  thinking?: string; // separated reasoning/thinking content
+  content: string; // final answer text only
+  trace?: TraceEvent[];
+  stats?: ChatStats; // token/speed stats for a completed assistant reply
+  column?: 'A' | 'B'; // undefined = single-chat message
   raw?: string;
   createdAt: number;
   model?: string;
-  profileId?: string;
+  sessionId?: string;
 }
 
 interface ChatState {
@@ -17,11 +38,11 @@ interface ChatState {
   append(msg: Omit<ChatMessage, 'id' | 'createdAt'>): string; // returns new id
   update(
     id: string,
-    patch: Partial<Pick<ChatMessage, 'content' | 'role' | 'raw' | 'thinking'>>,
+    patch: Partial<Pick<ChatMessage, 'content' | 'role' | 'raw' | 'trace' | 'stats'>>,
   ): void;
-  clear(profileId?: string): void;
-  restore(messages: ChatMessage[], profileId?: string): void; // replace full history (used for undo)
-  tagUntagged(profileId: string): void; // migrate legacy messages without profile
+  clear(sessionId?: string): void;
+  restore(messages: ChatMessage[], sessionId?: string): void; // replace full history (used for undo)
+  setSessionMessages(sessionId: string, messages: ChatMessage[]): void; // load from persistence
 }
 
 export const useChatStore = create<ChatState>((set) => ({
@@ -37,18 +58,18 @@ export const useChatStore = create<ChatState>((set) => ({
     set((s) => ({
       messages: s.messages.map((m) => (m.id === id ? { ...m, ...patch } : m)),
     })),
-  clear: (profileId) =>
+  clear: (sessionId) =>
     set((s) => ({
-      messages: profileId ? s.messages.filter((m) => m.profileId !== profileId) : [],
+      messages: sessionId ? s.messages.filter((m) => m.sessionId !== sessionId) : [],
     })),
-  restore: (messages: ChatMessage[], profileId) =>
+  restore: (messages: ChatMessage[], sessionId) =>
     set((s) => ({
-      messages: profileId
-        ? [...s.messages.filter((m) => m.profileId !== profileId), ...messages].slice(-500)
+      messages: sessionId
+        ? [...s.messages.filter((m) => m.sessionId !== sessionId), ...messages].slice(-500)
         : messages.slice(-500),
     })),
-  tagUntagged: (profileId: string) =>
+  setSessionMessages: (sessionId, messages) =>
     set((s) => ({
-      messages: s.messages.map((m) => (m.profileId ? m : { ...m, profileId })),
+      messages: [...s.messages.filter((m) => m.sessionId !== sessionId), ...messages].slice(-500),
     })),
 }));

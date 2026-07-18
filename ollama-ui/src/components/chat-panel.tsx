@@ -1,18 +1,24 @@
 'use client';
-import { useState, useRef, useEffect } from 'react';
-import { useChatStore } from '@/store/chat';
-import { useSystemPromptStore, LamaProfile } from '@/store/system-prompt';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
-import { Button } from './ui/button';
-import { isThinkingModel } from '@/lib/utils';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { useChatStore } from '@/store/chat';
+import { useSystemPromptStore } from '@/store/system-prompt';
+import { useToolsStore } from '@/store/tools';
+import { useSessionsStore, loadSessionMessages, persistSessionMessages } from '@/store/sessions';
+import { useColumnChat } from '@/hooks/use-column-chat';
+import { ChatColumn } from './chat-column';
+import { Button } from './ui/button';
+import { hasCapability } from '@/lib/utils';
 
 interface ModelTag {
   name: string;
+  details?: { context_length?: number };
 }
 interface TagsResponse {
   models: ModelTag[];
+}
+interface ModelShowResponse {
+  capabilities?: string[];
 }
 
 async function fetchModels(): Promise<TagsResponse> {
@@ -21,12 +27,128 @@ async function fetchModels(): Promise<TagsResponse> {
   return r.json();
 }
 
+function formatTokenCount(n: number): string {
+  if (n >= 1_000_000) return `${Math.round(n / 100_000) / 10}M`;
+  if (n >= 1_000) return `${Math.round(n / 100) / 10}K`;
+  return String(n);
+}
+
+async function fetchModelShow(model: string): Promise<ModelShowResponse> {
+  const r = await fetch('/api/models/show', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model }),
+  });
+  if (!r.ok) throw new Error('Model info load failed');
+  return r.json();
+}
+
+function useModelCapabilities(model: string) {
+  const { data } = useQuery({
+    queryKey: ['ollama-model-show', model],
+    queryFn: () => fetchModelShow(model),
+    enabled: !!model,
+    staleTime: 5 * 60 * 1000,
+    retry: false,
+  });
+  return data?.capabilities;
+}
+
+function CapabilityBadges({ capabilities }: { capabilities: string[] | undefined }) {
+  if (!capabilities) return null;
+  return (
+    <>
+      {hasCapability(capabilities, 'thinking') && (
+        <span className="cap-pill border-amber-500/30 bg-amber-500/10 text-amber-300/90">
+          ◆ thinking
+        </span>
+      )}
+      {hasCapability(capabilities, 'tools') && (
+        <span className="cap-pill border-cyan-500/30 bg-cyan-500/10 text-cyan-300/90">
+          🔧 tools
+        </span>
+      )}
+    </>
+  );
+}
+
+function ContextBadge({
+  contextLength,
+  usedTokens,
+}: {
+  contextLength: number | undefined;
+  usedTokens: number | undefined;
+}) {
+  if (!contextLength) return null;
+  const pct =
+    usedTokens != null ? Math.min(100, Math.round((usedTokens / contextLength) * 100)) : null;
+  return (
+    <span
+      className={`cap-pill ${
+        pct != null && pct >= 80
+          ? 'border-amber-500/30 bg-amber-500/10 text-amber-300/90'
+          : 'border-white/15 bg-white/5 text-white/45'
+      }`}
+      title={
+        usedTokens != null
+          ? `~${usedTokens} of ${contextLength} context tokens used (based on the last request)`
+          : `Context window: ${contextLength} tokens`
+      }
+    >
+      {usedTokens != null
+        ? `${formatTokenCount(usedTokens)}/${formatTokenCount(contextLength)} ctx`
+        : `${formatTokenCount(contextLength)} ctx`}
+    </span>
+  );
+}
+
+function ModelSelect({
+  value,
+  onChange,
+  models,
+  placeholder,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  models: ModelTag[] | undefined;
+  placeholder: string;
+}) {
+  return (
+    <select
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className="rounded-md border border-white/15 bg-white/10 px-2 py-1.5 text-xs text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/60"
+    >
+      <option value="" disabled>
+        {placeholder}
+      </option>
+      {models?.map((m) => (
+        <option key={m.name} value={m.name} className="bg-neutral-900">
+          {m.name}
+        </option>
+      ))}
+    </select>
+  );
+}
+
 export function ChatPanel() {
   const { data } = useQuery({ queryKey: ['ollama-model-tags'], queryFn: fetchModels });
-  const [model, setModel] = useState<string>('');
   const [activeHost, setActiveHost] = useState<string | null>(null);
+  const [compareMode, setCompareMode] = useState(false);
+  const [showDebug, setShowDebug] = useState(false);
+  const [pendingConfirm, setPendingConfirm] = useState(false);
+  const [lastSnapshot, setLastSnapshot] = useState<
+    ReturnType<typeof useChatStore.getState>['messages'] | null
+  >(null);
+  const [undoTimeoutId, setUndoTimeoutId] = useState<ReturnType<typeof setTimeout> | null>(null);
+  const [input, setInput] = useState('');
 
-  // Load active host from /api/hosts
+  const sessions = useSessionsStore((s) => s.sessions);
+  const activeSessionId = useSessionsStore((s) => s.activeId);
+  const patchSession = useSessionsStore((s) => s.patch);
+  const activeSession = sessions.find((s) => s.id === activeSessionId);
+  const setSessionMessages = useChatStore((s) => s.setSessionMessages);
+
   useEffect(() => {
     async function loadHost() {
       try {
@@ -48,723 +170,387 @@ export function ChatPanel() {
     return () => window.removeEventListener('active-host-changed', onActive as EventListener);
   }, []);
 
-  // Restore model selection for active host
+  const profiles = useSystemPromptStore((s) => s.profiles);
+  const hydrateProfiles = useSystemPromptStore((s) => s.hydrate);
   useEffect(() => {
-    if (!activeHost) return;
+    hydrateProfiles?.();
+  }, [hydrateProfiles]);
+  const activeProfile = profiles.find((p) => p.id === activeSession?.profileId);
+  const activePrompt = activeProfile?.prompt || '';
+
+  const toolsEnabled = useToolsStore((s) => s.toolsEnabled);
+  const searxTemplate = useToolsStore((s) => s.searxngTemplate);
+  const hydrateTools = useToolsStore((s) => s.hydrate);
+  useEffect(() => {
+    hydrateTools();
+  }, [hydrateTools]);
+
+  // Always instantiate both columns (rules of hooks) — column B is simply
+  // unused/unmounted in single mode.
+  const columnA = useColumnChat('A', activeSessionId);
+  const columnB = useColumnChat('B', activeSessionId);
+
+  const capsA = useModelCapabilities(columnA.model);
+  const capsB = useModelCapabilities(compareMode ? columnB.model : '');
+  const supportsToolsA = hasCapability(capsA, 'tools');
+
+  const contextLengthA = data?.models.find((m) => m.name === columnA.model)?.details
+    ?.context_length;
+  const contextLengthB = data?.models.find((m) => m.name === columnB.model)?.details
+    ?.context_length;
+  const lastPromptTokensA = [...columnA.messages]
+    .reverse()
+    .find((m) => m.role === 'assistant' && m.stats?.promptTokens != null)?.stats?.promptTokens;
+  const lastPromptTokensB = [...columnB.messages]
+    .reverse()
+    .find((m) => m.role === 'assistant' && m.stats?.promptTokens != null)?.stats?.promptTokens;
+
+  // On session switch: load its persisted history, restore which models &
+  // compare-mode it used. Column A falls back to the last model used on
+  // this host if the session doesn't have one yet (brand-new session).
+  useEffect(() => {
+    if (!activeSessionId) return;
+    let cancelled = false;
+    (async () => {
+      const messages = await loadSessionMessages(activeSessionId);
+      if (cancelled) return;
+      setSessionMessages(activeSessionId, messages);
+      const session = useSessionsStore.getState().sessions.find((s) => s.id === activeSessionId);
+      let fallbackModelA = '';
+      try {
+        if (activeHost) {
+          const raw = localStorage.getItem('ollama_ui_selected_models');
+          const map = raw ? (JSON.parse(raw) as Record<string, string>) : {};
+          fallbackModelA = map[activeHost] || '';
+        }
+      } catch {
+        /* ignore */
+      }
+      columnA.setModel(session?.modelA || fallbackModelA);
+      columnB.setModel(session?.modelB || '');
+      setCompareMode(!!session?.compareMode);
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSessionId]);
+
+  // Deep link from the retired /playground route.
+  useEffect(() => {
+    if (typeof window === 'undefined' || !activeSessionId) return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('compare') === '1') {
+      setCompareMode(true);
+      patchSession(activeSessionId, { compareMode: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSessionId]);
+
+  // Persist model/compare-mode choices onto the active session.
+  useEffect(() => {
+    if (!activeSessionId || !columnA.model) return;
+    patchSession(activeSessionId, { modelA: columnA.model });
     try {
-      const raw = localStorage.getItem('ollama_ui_selected_models');
-      if (raw) {
-        const map = JSON.parse(raw) as Record<string, string>;
-        if (map[activeHost]) setModel(map[activeHost]);
+      if (activeHost) {
+        const raw = localStorage.getItem('ollama_ui_selected_models');
+        const map = raw ? (JSON.parse(raw) as Record<string, string>) : {};
+        map[activeHost] = columnA.model;
+        localStorage.setItem('ollama_ui_selected_models', JSON.stringify(map));
       }
     } catch {
       /* ignore */
     }
-  }, [activeHost, data]);
-
-  // Persist model selection per host
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [columnA.model, activeSessionId, activeHost]);
   useEffect(() => {
-    if (!activeHost || !model) return;
-    try {
-      const raw = localStorage.getItem('ollama_ui_selected_models');
-      const map = raw ? (JSON.parse(raw) as Record<string, string>) : {};
-      map[activeHost] = model;
-      localStorage.setItem('ollama_ui_selected_models', JSON.stringify(map));
-    } catch {
-      /* ignore */
-    }
-  }, [model, activeHost]);
-  const lamaState = useSystemPromptStore((s) => s);
-  const { systemEnabled, setSystemEnabled } = lamaState;
-  const {
-    currentId,
-    profiles,
-    setCurrent,
-    create,
-    updatePrompt,
-    remove,
-    duplicate,
-    resetPrompt,
-    setTags,
-    importProfiles,
-    exportProfiles,
-  } = lamaState;
-  const activeProfile: LamaProfile | undefined = profiles.find(
-    (p: LamaProfile) => p.id === currentId,
-  );
-  const activePrompt = activeProfile?.prompt || '';
-  const [showSys, setShowSys] = useState(false);
-  const [lamaDeleteConfirm, setLamaDeleteConfirm] = useState<string | null>(null);
-  const [editingName, setEditingName] = useState(false);
-  const [lamaSearch, setLamaSearch] = useState('');
-  const [tagInput, setTagInput] = useState('');
-  const [showDebug, setShowDebug] = useState(false);
-  interface SentPayload {
-    model: string;
-    messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>;
-  }
-  const [lastPayload, setLastPayload] = useState<SentPayload | null>(null);
-  const [input, setInput] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [coldStart, setColdStart] = useState(false);
-  const [coldStartSince, setColdStartSince] = useState<number | null>(null);
-  const [coldElapsed, setColdElapsed] = useState(0);
+    if (!activeSessionId || !columnB.model) return;
+    patchSession(activeSessionId, { modelB: columnB.model });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [columnB.model, activeSessionId]);
+  useEffect(() => {
+    if (!activeSessionId) return;
+    patchSession(activeSessionId, { compareMode });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [compareMode, activeSessionId]);
+
   const allMessages = useChatStore((s) => s.messages);
-  const messages = allMessages.filter((m) => m.profileId === currentId);
-  const [expandedThinkIds, setExpandedThinkIds] = useState<Set<string>>(new Set());
-  const [streamingId, setStreamingId] = useState<string | null>(null);
-  const append = useChatStore((s) => s.append);
-  const update = useChatStore((s) => s.update);
   const clear = useChatStore((s) => s.clear);
   const restore = useChatStore((s) => s.restore);
-  const tagUntagged = useChatStore((s) => s.tagUntagged);
-  const [pendingConfirm, setPendingConfirm] = useState(false);
-  const [lastSnapshot, setLastSnapshot] = useState<typeof messages | null>(null);
-  const [undoTimeoutId, setUndoTimeoutId] = useState<ReturnType<typeof setTimeout> | null>(null);
+  const sessionMessages = allMessages.filter((m) => m.sessionId === activeSessionId);
+
   const containerRef = useRef<HTMLDivElement | null>(null);
 
-  useEffect(() => {
-    const el = containerRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [messages]);
-
-  useEffect(() => {
-    if (!coldStart || !coldStartSince) return;
-    const id = setInterval(() => {
-      setColdElapsed(Math.floor((Date.now() - coldStartSince) / 1000));
-    }, 500);
-    return () => clearInterval(id);
-  }, [coldStart, coldStartSince]);
-
-  async function isModelLoaded(target: string): Promise<boolean> {
-    try {
-      const r = await fetch('/api/ps', { cache: 'no-store' });
-      if (!r.ok) return false;
-      const j = (await r.json()) as { models?: Array<{ name?: string; model?: string }> };
-      if (!j.models) return false;
-      return j.models.some((m) => m.name === target || m.model === target.split(':')[0]);
-    } catch {
-      return false;
-    }
+  async function handleSend() {
+    if (!input.trim()) return;
+    const text = input.trim();
+    setInput('');
+    const opts = {
+      systemPrompt: activePrompt || undefined,
+      toolsEnabled,
+      searxTemplate,
+    };
+    const jobs = [columnA.send(text, opts)];
+    if (compareMode && columnB.model) jobs.push(columnB.send(text, opts));
+    await Promise.all(jobs);
   }
 
-  // ensure at least one profile exists for convenience
-  useEffect(() => {
-    // hydrate only once
-    lamaState.hydrate?.();
-  }, [lamaState]);
-
-  useEffect(() => {
-    // after hydration decide if a default profile must be created
-    if (!lamaState.hydrated) return;
-    if (profiles.length === 0) {
-      create({ name: 'Default', prompt: '' });
-    } else if (!currentId) {
-      setCurrent(profiles[0].id);
-    }
-  }, [profiles, currentId, create, setCurrent, lamaState.hydrated]);
-
-  async function send() {
-    if (!input.trim() || !model) return;
-    const userContent = input.trim();
-    setInput('');
-    append({ role: 'user', content: userContent, model, profileId: currentId || undefined });
-    const assistantId = append({
-      role: 'assistant',
-      content: '',
-      model,
-      profileId: currentId || undefined,
-    });
-    const loaded = await isModelLoaded(model);
-    if (!loaded) {
-      setColdStart(true);
-      setColdStartSince(Date.now());
-      setColdElapsed(0);
-    }
-    setStreamingId(assistantId);
-    setLoading(true);
-    try {
-      const current = useChatStore.getState().messages.filter((m) => m.profileId === currentId);
-      const upstreamMessages = [
-        ...(systemEnabled && activePrompt.trim()
-          ? [{ role: 'system' as const, content: activePrompt.trim() }]
-          : []),
-        ...current
-          .filter((m) => m.role !== 'assistant' || m.content)
-          .map((m) => ({ role: m.role as 'user' | 'assistant' | 'system', content: m.content })),
-      ];
-      const payload = { model, messages: upstreamMessages, think: isThinkingModel(model) };
-      setLastPayload(payload);
-      const res = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      if (!res.body) throw new Error('No body');
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let thinkingRaw = '';
-      let responseRaw = '';
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        const chunk = decoder.decode(value, { stream: true });
-        const lines = chunk.split('\n').filter(Boolean);
-        for (const line of lines) {
-          try {
-            const obj = JSON.parse(line) as Record<string, unknown>;
-            if (typeof obj.thinking === 'string') {
-              // thinking delta from route
-              thinkingRaw += obj.thinking;
-            } else if (typeof obj.token === 'string') {
-              // response content delta
-              if (coldStart) setColdStart(false);
-              responseRaw += obj.token;
-            } else if (obj.done === true) {
-              // final — use authoritative values if provided
-              if (typeof obj.content === 'string') responseRaw = obj.content;
-              if (typeof obj.thinking === 'string') thinkingRaw = obj.thinking;
-            } else if (obj.error) {
-              update(assistantId, {
-                content: '[Fehler] ' + String(obj.error),
-                thinking: thinkingRaw || undefined,
-              });
-              continue;
-            }
-            update(assistantId, {
-              content: responseRaw,
-              thinking: thinkingRaw || undefined,
-            });
-          } catch {
-            /* ignore */
-          }
-        }
-      }
-    } catch {
-      update(assistantId, { content: '[Chat error]' });
-    } finally {
-      setLoading(false);
-      setColdStart(false);
-      setStreamingId(null);
-    }
+  function handleStop() {
+    columnA.stop();
+    if (compareMode) columnB.stop();
   }
 
   function onKey(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      send();
+      handleSend();
     }
   }
 
-  // migrate legacy messages (no profileId) to current profile when user selects one
-  useEffect(() => {
-    if (currentId) tagUntagged(currentId);
-  }, [currentId, tagUntagged]);
+  const anyLoading = columnA.loading || (compareMode && columnB.loading);
+  const activeModels = compareMode
+    ? [columnA.model, columnB.model].filter(Boolean)
+    : [columnA.model].filter(Boolean);
+  const hasSub7b = activeModels.some((m) => /(^|[^0-9])([0-6](?:\.[0-9]+)?)b([^0-9]|$)/i.test(m));
 
   return (
-    <div className="rounded-xl border border-white/10 bg-white/5 p-6 flex flex-col gap-4 flex-1 min-h-0 overflow-hidden">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-        <select
-          value={model}
-          onChange={(e) => setModel(e.target.value)}
-          className="w-full sm:w-60 rounded-md border border-white/15 bg-white/10 px-2 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/60"
-        >
-          <option value="" disabled>
-            Select model
-          </option>
-          {data?.models.map((m) => (
-            <option key={m.name} value={m.name} className="bg-neutral-900">
-              {m.name}
-            </option>
-          ))}
-        </select>
-        {coldStart && (
-          <div className="flex items-center gap-2 text-[11px] text-white/60 dark-green-model-loaded-indicator">
-            <span className="relative flex h-2 w-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full dark-green-pill-ping"></span>
-              <span className="relative inline-flex h-2 w-2 rounded-full dark-green-pill"></span>
-            </span>
-            <span>Loading model… {coldElapsed}s</span>
-          </div>
-        )}
-        {activePrompt.trim() && activeProfile && systemEnabled && (
-          <span
-            className="flex items-center text-[11px] px-3 py-2 rounded-md self-start max-w-[260px] truncate h-10 leading-none dark-green-model-indicator"
-            title={activeProfile.name + ' active'}
-          >
-            <span className="font-semibold mr-2 dark-green-model-indicator-label">Profile:</span>
-            <span className="truncate">{activeProfile.name}</span>
-          </span>
-        )}
-      </div>
-      <div className="-mt-1 flex gap-2 flex-wrap">
-        <label
-          className={`flex items-center gap-2 text-[11px] px-2.5 py-1.5 rounded-md border transition select-none min-w-[140px] justify-start
-          ${systemEnabled ? 'bg-white/10 border-white/15 hover:border-white/25 hover:bg-white/15' : 'bg-white/5 border-white/10 opacity-70'}
-        `}
-        >
-          <input
-            type="checkbox"
-            className="h-3.5 w-3.5 accent-indigo-500 rounded-sm border border-white/30 bg-neutral-900"
-            checked={systemEnabled}
-            onChange={(e) => setSystemEnabled(e.target.checked)}
-          />
-          <span className="whitespace-nowrap leading-none">
-            System prompt {systemEnabled ? 'enabled' : 'disabled'}
-          </span>
-        </label>
-        {systemEnabled && (
-          <Button
-            type="button"
-            size="sm"
-            variant={showSys ? 'primary' : 'outline'}
-            onClick={() => setShowSys((v) => !v)}
-            className="flex-1 justify-start gap-2 min-w-[140px]"
-          >
-            <span>{showSys ? '🧠 Hide system prompt' : '🧠 Show system prompt'}</span>
-            <span className="ml-auto text-[11px] opacity-80">{showSys ? '▲' : '▼'}</span>
-          </Button>
-        )}
-        <Button
-          type="button"
-          size="sm"
-          variant={showDebug ? 'primary' : 'outline'}
-          onClick={() => setShowDebug((v) => !v)}
-          className="flex-1 justify-start gap-2 min-w-[140px]"
-        >
-          <span>{showDebug ? '🔍 Hide inspector' : '🔍 Payload Inspector'}</span>
-          <span className="ml-auto text-[11px] opacity-80">{showDebug ? '▲' : '▼'}</span>
-        </Button>
-      </div>
-      {model && /(^|[^0-9])([0-6](?:\.[0-9]+)?)b([^0-9]|$)/i.test(model) && (
-        <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-200/80">
-          Note: This selected sub‑7B model may only partially respect system prompts or ignore them.
-          For more reliable adherence choose a model ≥ 7B.
-        </div>
-      )}
-      {showSys && systemEnabled && (
-        <div className="rounded-md p-3 flex flex-col gap-3 dark-green-system-prompt-bg">
-          <div className="flex flex-wrap gap-2 items-center">
-            <span className="text-[11px] font-medium text-indigo-200/80">Profiles</span>
-            <input
-              value={lamaSearch}
-              onChange={(e) => setLamaSearch(e.target.value)}
-              placeholder="Search..."
-              className="text-xs bg-white/10 border border-white/15 rounded px-2 py-1 text-white focus:outline-none"
-            />
-            <select
-              value={currentId || ''}
-              onChange={(e) => setCurrent(e.target.value || null)}
-              className="text-xs bg-white/10 border border-white/15 rounded px-2 py-1 text-white focus:outline-none"
-            >
-              {profiles
-                .filter((p: LamaProfile) => {
-                  if (!lamaSearch.trim()) return true;
-                  const q = lamaSearch.toLowerCase();
-                  return (
-                    p.name.toLowerCase().includes(q) ||
-                    (p.tags || []).some((t) => t.toLowerCase().includes(q))
-                  );
-                })
-                .map((p: LamaProfile) => (
-                  <option key={p.id} value={p.id} className="bg-neutral-900">
-                    {p.name}
-                  </option>
-                ))}
-            </select>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => {
-                const id = create({ name: 'New', prompt: '' });
-                setCurrent(id);
-                setEditingName(true);
-              }}
-            >
-              + New
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => {
-                const data = exportProfiles();
-                const blob = new Blob([JSON.stringify(data, null, 2)], {
-                  type: 'application/json',
-                });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = 'lamas.json';
-                a.click();
-                URL.revokeObjectURL(url);
-              }}
-            >
-              Export
-            </Button>
-            <>
-              <input
-                id="lama-import-input"
-                type="file"
-                accept="application/json"
-                className="hidden"
-                onChange={async (e) => {
-                  const file = e.target.files?.[0];
-                  if (!file) return;
-                  try {
-                    const txt = await file.text();
-                    const json = JSON.parse(txt);
-                    type ImportLike = {
-                      id?: string;
-                      name?: string;
-                      prompt?: string;
-                      tags?: unknown;
-                      updatedAt?: number;
-                    };
-                    const normalize = (arr: unknown[]): ImportLike[] =>
-                      arr.filter((x): x is ImportLike => !!x && typeof x === 'object');
-                    const adapt = (arr: ImportLike[]) =>
-                      arr.map((o) => ({
-                        name: o.name || 'Import',
-                        prompt: o.prompt || '',
-                        tags: Array.isArray(o.tags)
-                          ? o.tags.filter((t) => typeof t === 'string').slice(0, 20)
-                          : [],
-                      }));
-                    if (Array.isArray(json)) {
-                      importProfiles(adapt(normalize(json)));
-                    } else if (
-                      typeof json === 'object' &&
-                      json &&
-                      Array.isArray((json as { profiles?: unknown }).profiles)
-                    ) {
-                      importProfiles(adapt(normalize((json as { profiles: unknown[] }).profiles)));
-                    }
-                  } catch {
-                    /* ignore */
-                  }
-                  e.target.value = '';
-                }}
-              />
-              <Button
-                size="sm"
-                variant="outline"
-                type="button"
-                onClick={() => document.getElementById('lama-import-input')?.click()}
-              >
-                Import
-              </Button>
-            </>
-            {currentId && (
-              <Button size="sm" variant="outline" onClick={() => duplicate(currentId)}>
-                Duplicate
-              </Button>
-            )}
-            {currentId && (
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => {
-                  if (lamaDeleteConfirm === currentId) {
-                    remove(currentId);
-                    setLamaDeleteConfirm(null);
-                  } else {
-                    setLamaDeleteConfirm(currentId);
-                    setTimeout(() => setLamaDeleteConfirm(null), 4000);
-                  }
-                }}
-              >
-                {lamaDeleteConfirm === currentId ? 'Sure?' : 'Delete'}
-              </Button>
-            )}
-            {currentId && activePrompt && (
-              <Button size="sm" variant="outline" onClick={() => resetPrompt(currentId)}>
-                Clear prompt
-              </Button>
-            )}
-          </div>
-          {activeProfile && (
-            <div className="flex flex-col gap-2">
-              <div className="flex items-center gap-2">
-                {editingName ? (
-                  <input
-                    value={activeProfile.name}
-                    onChange={(e) => updatePrompt(activeProfile.id, { name: e.target.value })}
-                    onBlur={() => setEditingName(false)}
-                    className="text-xs bg-white/10 border border-white/15 rounded px-2 py-1 text-white focus:outline-none"
-                    autoFocus
-                  />
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => setEditingName(true)}
-                    className="text-left text-xs font-medium text-indigo-100 hover:underline"
-                    title="Edit name"
-                  >
-                    {activeProfile.name}
-                  </button>
-                )}
-                <span className="text-[10px] text-white/30">
-                  {new Date(activeProfile.updatedAt).toLocaleTimeString()}
-                </span>
-              </div>
-              <textarea
-                value={activePrompt}
-                onChange={(e) => updatePrompt(activeProfile.id, { prompt: e.target.value })}
-                placeholder="System instruction for this profile..."
-                className="min-h-[90px] rounded-md border border-white/15 bg-white/10 px-2 py-2 text-xs text-white placeholder:text-white/30 focus:outline-none focus:ring-2 focus:ring-indigo-500/60"
-              />
-              <div className="flex flex-col gap-2">
-                <div className="flex gap-2">
-                  <input
-                    value={tagInput}
-                    onChange={(e) => setTagInput(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault();
-                        const raw = tagInput.trim();
-                        if (!raw) return;
-                        const tags = Array.from(
-                          new Set([
-                            ...(activeProfile.tags || []),
-                            ...raw
-                              .split(',')
-                              .map((t) => t.trim())
-                              .filter(Boolean),
-                          ]),
-                        ).slice(0, 20);
-                        setTags(activeProfile.id, tags);
-                        setTagInput('');
-                      }
-                      if (e.key === 'Backspace' && !tagInput) {
-                        // remove last
-                        const current = activeProfile.tags || [];
-                        if (current.length > 0) {
-                          setTags(activeProfile.id, current.slice(0, current.length - 1));
-                        }
-                      }
-                    }}
-                    placeholder="Enter tag + Enter"
-                    className="text-xs bg-white/10 border border-white/15 rounded px-2 py-1 text-white focus:outline-none flex-1"
-                  />
-                  {activeProfile.tags && activeProfile.tags.length > 0 && (
-                    <button
-                      type="button"
-                      title="Remove all tags"
-                      onClick={() => setTags(activeProfile.id, [])}
-                      className="text-[10px] px-2 py-1 rounded border border-white/15 bg-white/5 hover:bg-white/10 text-white/60 hover:text-white/80 transition"
-                    >
-                      Reset
-                    </button>
-                  )}
-                </div>
-                {activeProfile.tags && activeProfile.tags.length > 0 && (
-                  <div className="flex flex-wrap gap-1">
-                    {activeProfile.tags.map((t) => (
-                      <button
-                        key={t}
-                        type="button"
-                        onClick={() =>
-                          setTags(
-                            activeProfile.id,
-                            (activeProfile.tags || []).filter((x) => x !== t),
-                          )
-                        }
-                        className="group text-[10px] px-2 py-0.5 rounded bg-white/10 border border-white/15 text-white/70 hover:bg-pink-500/20 hover:border-pink-500/40 hover:text-white flex items-center gap-1"
-                        title="Remove tag"
-                      >
-                        {t}
-                        <span className="opacity-0 group-hover:opacity-80 transition">×</span>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-              <div className="text-[10px] text-white/40 flex justify-between">
-                <span>{activePrompt.trim().length} characters</span>
-                {activePrompt && <span>prepended to every request</span>}
-              </div>
-              {activePrompt.trim().length > 8000 && (
-                <div className="text-[10px] text-amber-300/80 bg-amber-500/10 border border-amber-500/30 rounded px-2 py-1">
-                  Warning: Very long prompt – risk of token/context truncation.
-                </div>
-              )}
-            </div>
-          )}
-          {!activeProfile && <div className="text-[11px] text-white/40">No profile selected.</div>}
-        </div>
-      )}
-      {showDebug && lastPayload && (
-        <div className="rounded-md border border-pink-500/30 bg-pink-500/5 p-3 text-[11px] font-mono whitespace-pre-wrap max-h-40 overflow-auto">
-          <div className="mb-1 text-pink-200/70">Last sent payload:</div>
-          {JSON.stringify(lastPayload, null, 2)}
-        </div>
-      )}
-      <div
-        ref={containerRef}
-        className="flex-1 min-h-0 overflow-auto rounded-md bg-black/30 p-3 text-sm space-y-3"
-      >
-        {messages.length === 0 && <div className="text-white/40 text-xs">No messages yet.</div>}
-        {messages.map((m) => {
-          const isUser = m.role === 'user';
-          const isStreaming = m.id === streamingId;
-          const isThinkingNow = isStreaming && !!m.thinking && !m.content;
-          const hasThinking = !!m.thinking;
-          const expanded = expandedThinkIds.has(m.id) || isThinkingNow;
-          const toggle = () =>
-            setExpandedThinkIds((prev) => {
-              const next = new Set(prev);
-              if (next.has(m.id)) next.delete(m.id);
-              else next.add(m.id);
-              return next;
-            });
-          return (
-            <div
-              key={m.id}
-              className={`rounded-md px-3 py-2 leading-relaxed text-sm border ${
-                isUser
-                  ? 'bg-indigo-500/20 border-indigo-500/30 dark-green-chat-user'
-                  : 'bg-white/5 border-white/10'
+    <div className="flex flex-1 min-h-0 overflow-hidden rounded-xl border border-white/10 bg-white/5">
+      <div className="flex flex-col flex-1 min-w-0 min-h-0">
+        {/* Top bar */}
+        <div className="flex items-center gap-2 px-4 py-2.5 border-b border-white/10 flex-wrap">
+          <div className="flex bg-black/30 border border-white/10 rounded-full p-0.5 text-[11px] font-mono">
+            <button
+              type="button"
+              onClick={() => setCompareMode(false)}
+              className={`px-3 py-1 rounded-full transition ${
+                !compareMode
+                  ? 'bg-indigo-500/20 text-indigo-200'
+                  : 'text-white/40 hover:text-white/70'
               }`}
             >
-              <div className="text-[10px] uppercase tracking-wide mb-1.5 text-white/40 flex items-center gap-2">
-                {m.role}
-                {isStreaming && isThinkingNow && (
-                  <span className="text-amber-400/70 flex items-center gap-1 normal-case">
-                    <span className="animate-pulse">●</span> Thinking…
-                  </span>
-                )}
-                {isStreaming && !isThinkingNow && !!m.content && (
-                  <span className="text-emerald-400/70 flex items-center gap-1 normal-case">
-                    <span className="animate-pulse">●</span> Responding…
-                  </span>
-                )}
-              </div>
-              {isUser ? (
-                <div className="whitespace-pre-wrap text-white/90 font-light dark-green-chat-user-text">
-                  {m.content}
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  {/* Thinking / Reasoning block */}
-                  {hasThinking && (
-                    <div className="rounded-md border border-amber-500/25 bg-amber-950/30 overflow-hidden">
-                      <button
-                        type="button"
-                        onClick={toggle}
-                        className="w-full flex items-center gap-2 px-3 py-2 text-[11px] text-amber-200/70 hover:text-amber-200 hover:bg-amber-500/10 transition text-left"
-                      >
-                        <span className="text-amber-400/60 text-[9px]">◆</span>
-                        <span className="font-medium">Reasoning</span>
-                        {isThinkingNow && (
-                          <span className="text-amber-400/70 animate-pulse font-normal">
-                            thinking…
-                          </span>
-                        )}
-                        <span className="ml-auto opacity-50 text-[10px]">
-                          {expanded ? '▲ hide' : '▼ show'}
-                        </span>
-                      </button>
-                      {expanded && (
-                        <div className="px-3 pb-3 max-h-56 overflow-y-auto border-t border-amber-500/15">
-                          <div className="pt-2 text-[11px] text-amber-100/55 font-mono whitespace-pre-wrap leading-relaxed">
-                            {m.thinking}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                  {/* Response content */}
-                  {isThinkingNow ? (
-                    <div className="flex items-center gap-1 h-6 text-white/30 text-sm pl-1">
-                      <span className="animate-bounce [animation-delay:-0.25s]">.</span>
-                      <span className="animate-bounce [animation-delay:-0.15s]">.</span>
-                      <span className="animate-bounce [animation-delay:-0.05s]">.</span>
-                    </div>
-                  ) : !m.content && isStreaming ? (
-                    <div className="flex items-center gap-1 h-6">
-                      <span className="animate-bounce [animation-delay:-0.25s]">🦙</span>
-                      <span className="animate-bounce [animation-delay:-0.15s]">🦙</span>
-                      <span className="animate-bounce [animation-delay:-0.05s]">🦙</span>
-                    </div>
-                  ) : m.content ? (
-                    <div className="prose prose-invert max-w-none text-white/90 prose-p:my-2 prose-ul:my-2 prose-li:my-1 prose-pre:my-3 prose-code:px-1 prose-code:py-0.5 prose-code:bg-white/10 prose-code:rounded">
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content}</ReactMarkdown>
-                    </div>
-                  ) : (
-                    <div className="flex items-center gap-1 h-6">
-                      <span className="animate-bounce [animation-delay:-0.25s]">🦙</span>
-                      <span className="animate-bounce [animation-delay:-0.15s]">🦙</span>
-                      <span className="animate-bounce [animation-delay:-0.05s]">🦙</span>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
-      <div className="flex flex-col gap-3">
-        <textarea
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={onKey}
-          placeholder={model ? 'Type a message…' : 'Select a model first'}
-          className="min-h-[80px] rounded-md border border-white/15 bg-white/10 px-3 py-2 text-sm text-white placeholder:text-white/30 focus:outline-none focus:ring-2 focus:ring-indigo-500/60"
-        />
-        <div className="flex gap-2">
-          <Button
-            onClick={send}
-            size="sm"
-            disabled={!input.trim() || !model || loading}
-            loading={loading}
-          >
-            Send
-          </Button>
-          {!pendingConfirm && (
-            <Button
-              onClick={() => setPendingConfirm(true)}
-              size="sm"
-              variant="secondary"
-              disabled={loading || messages.length === 0}
+              Single
+            </button>
+            <button
+              type="button"
+              onClick={() => setCompareMode(true)}
+              className={`px-3 py-1 rounded-full transition ${
+                compareMode
+                  ? 'bg-indigo-500/20 text-indigo-200'
+                  : 'text-white/40 hover:text-white/70'
+              }`}
             >
-              Clear history
-            </Button>
+              Compare
+            </button>
+          </div>
+
+          <ModelSelect
+            value={columnA.model}
+            onChange={columnA.setModel}
+            models={data?.models}
+            placeholder="Select model"
+          />
+          <select
+            value={activeSession?.profileId || ''}
+            onChange={(e) =>
+              activeSessionId &&
+              patchSession(activeSessionId, { profileId: e.target.value || null })
+            }
+            title="Persona (system prompt) for this session"
+            className="cap-pill border-white/15 bg-white/5 text-white/60 focus:outline-none"
+          >
+            <option value="">🧠 No persona</option>
+            {profiles.map((p) => (
+              <option key={p.id} value={p.id} className="bg-neutral-900">
+                🧠 {p.name}
+              </option>
+            ))}
+          </select>
+          <CapabilityBadges capabilities={capsA} />
+          <ContextBadge contextLength={contextLengthA} usedTokens={lastPromptTokensA} />
+
+          {compareMode && (
+            <>
+              <span className="text-white/20 text-xs">vs</span>
+              <ModelSelect
+                value={columnB.model}
+                onChange={columnB.setModel}
+                models={data?.models}
+                placeholder="Select model B"
+              />
+              <CapabilityBadges capabilities={capsB} />
+              <ContextBadge contextLength={contextLengthB} usedTokens={lastPromptTokensB} />
+            </>
           )}
-          {pendingConfirm && (
-            <div className="flex items-center gap-2 text-[11px]">
-              <span className="text-white/50">Sure?</span>
+
+          {toolsEnabled && (
+            <span
+              className={`cap-pill ${
+                supportsToolsA === false
+                  ? 'border-amber-500/30 bg-amber-500/10 text-amber-200/80'
+                  : 'border-cyan-500/25 bg-cyan-950/20 text-cyan-200/80'
+              }`}
+              title={
+                supportsToolsA === false
+                  ? 'Tools are enabled in Settings, but the selected model does not advertise tool support.'
+                  : 'Web search + current date available to the model (configured in Settings).'
+              }
+            >
+              {supportsToolsA === false ? '⚠️ tools unsupported' : '🔎🗓️ tools active'}
+            </span>
+          )}
+
+          <div className="ml-auto flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => setShowDebug((v) => !v)}
+              title="Payload inspector"
+              className={`h-7 w-7 grid place-items-center rounded-md text-xs transition ${
+                showDebug
+                  ? 'bg-white/15 text-white'
+                  : 'text-white/40 hover:bg-white/10 hover:text-white/80'
+              }`}
+            >
+              {'{ }'}
+            </button>
+          </div>
+        </div>
+
+        {hasSub7b && (
+          <div className="mx-4 mt-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-200/80">
+            Note: A selected sub‑7B model may only partially respect system prompts or ignore them.
+          </div>
+        )}
+
+        {showDebug && (
+          <div className="mx-4 mt-2 rounded-md border border-pink-500/30 bg-pink-500/5 p-3 text-[11px] font-mono whitespace-pre-wrap max-h-40 overflow-auto">
+            <div className="mb-1 text-pink-200/70">Last sent payload (A):</div>
+            {JSON.stringify(columnA.lastPayload, null, 2)}
+            {compareMode && (
+              <>
+                <div className="mt-2 mb-1 text-pink-200/70">Last sent payload (B):</div>
+                {JSON.stringify(columnB.lastPayload, null, 2)}
+              </>
+            )}
+          </div>
+        )}
+
+        {/* Trace columns */}
+        <div ref={containerRef} className="flex-1 min-h-0 flex gap-3 px-4 pt-3">
+          <ChatColumn
+            messages={columnA.messages}
+            streamingId={columnA.streamingId}
+            coldStart={columnA.coldStart}
+            coldElapsed={columnA.coldElapsed}
+            emptyLabel={compareMode ? 'Column A — no messages yet.' : 'No messages yet.'}
+          />
+          {compareMode && (
+            <ChatColumn
+              messages={columnB.messages}
+              streamingId={columnB.streamingId}
+              coldStart={columnB.coldStart}
+              coldElapsed={columnB.coldElapsed}
+              emptyLabel="Column B — no messages yet."
+            />
+          )}
+        </div>
+
+        {/* Composer */}
+        <div className="flex flex-col gap-2 px-4 pb-4 pt-3">
+          <div className="flex gap-2 flex-wrap">
+            <span
+              className={`cap-pill ${
+                activePrompt.trim()
+                  ? 'border-indigo-500/25 bg-indigo-500/10 text-indigo-200/80'
+                  : 'border-white/10 bg-white/5 text-white/30'
+              }`}
+            >
+              {activePrompt.trim() ? `🧠 ${activeProfile?.name}` : 'no persona'}
+            </span>
+            <span
+              className={`cap-pill ${
+                toolsEnabled
+                  ? 'border-cyan-500/25 bg-cyan-500/10 text-cyan-200/80'
+                  : 'border-white/10 bg-white/5 text-white/30'
+              }`}
+            >
+              {toolsEnabled ? '🔎 tools on' : 'tools off'}
+            </span>
+            <a
+              href="/settings"
+              className="text-[10px] text-white/30 hover:text-white/60 self-center underline"
+            >
+              change in Settings
+            </a>
+          </div>
+          <textarea
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={onKey}
+            placeholder={columnA.model ? 'Type a message…' : 'Select a model first'}
+            className="min-h-[72px] rounded-md border border-white/15 bg-white/10 px-3 py-2 text-sm text-white placeholder:text-white/30 focus:outline-none focus:ring-2 focus:ring-indigo-500/60"
+          />
+          <div className="flex gap-2">
+            <Button
+              onClick={handleSend}
+              size="sm"
+              disabled={!input.trim() || !columnA.model || anyLoading}
+              loading={anyLoading}
+            >
+              Send
+            </Button>
+            {anyLoading && (
+              <Button onClick={handleStop} size="sm" variant="danger">
+                Stop
+              </Button>
+            )}
+            {!pendingConfirm && (
+              <Button
+                onClick={() => setPendingConfirm(true)}
+                size="sm"
+                variant="secondary"
+                disabled={anyLoading || sessionMessages.length === 0}
+              >
+                Clear history
+              </Button>
+            )}
+            {pendingConfirm && (
+              <div className="flex items-center gap-2 text-[11px]">
+                <span className="text-white/50">Sure?</span>
+                <Button
+                  size="sm"
+                  variant="danger"
+                  onClick={() => {
+                    setPendingConfirm(false);
+                    setLastSnapshot(sessionMessages);
+                    clear(activeSessionId || undefined);
+                    if (activeSessionId) persistSessionMessages(activeSessionId, []);
+                    if (undoTimeoutId) clearTimeout(undoTimeoutId);
+                    const id = setTimeout(() => setLastSnapshot(null), 8000);
+                    setUndoTimeoutId(id);
+                  }}
+                >
+                  Yes
+                </Button>
+                <Button size="sm" variant="secondary" onClick={() => setPendingConfirm(false)}>
+                  No
+                </Button>
+              </div>
+            )}
+            {lastSnapshot && !pendingConfirm && (
               <Button
                 size="sm"
-                variant="danger"
+                variant="outline"
                 onClick={() => {
-                  setPendingConfirm(false);
-                  setLastSnapshot(messages);
-                  clear(currentId || undefined);
+                  restore(lastSnapshot, activeSessionId || undefined);
+                  if (activeSessionId) persistSessionMessages(activeSessionId, lastSnapshot);
+                  setLastSnapshot(null);
                   if (undoTimeoutId) clearTimeout(undoTimeoutId);
-                  const id = setTimeout(() => setLastSnapshot(null), 8000);
-                  setUndoTimeoutId(id);
                 }}
               >
-                Yes
+                Undo
               </Button>
-              <Button size="sm" variant="secondary" onClick={() => setPendingConfirm(false)}>
-                No
-              </Button>
-            </div>
-          )}
-          {lastSnapshot && !pendingConfirm && (
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => {
-                restore(lastSnapshot, currentId || undefined);
-                setLastSnapshot(null);
-                if (undoTimeoutId) clearTimeout(undoTimeoutId);
-              }}
-            >
-              Undo
-            </Button>
-          )}
+            )}
+          </div>
         </div>
       </div>
     </div>

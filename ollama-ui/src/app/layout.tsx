@@ -2,10 +2,7 @@ import type { Metadata } from 'next';
 import { Geist, Geist_Mono } from 'next/font/google';
 import './globals.css';
 import { AppQueryProvider } from '@/components/query-provider';
-import Link from 'next/link';
-import Image from 'next/image';
-import { SiteNav } from '@/components/site-nav';
-import { HostIndicator } from '@/components/header-brand';
+import { AppSidebar } from '@/components/app-sidebar';
 import { Toaster } from '@/components/toaster';
 import { SiteFooter } from '@/components/site-footer';
 
@@ -62,33 +59,14 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         className={`${geistSans.variable} ${geistMono.variable} antialiased min-h-screen bg-gradient-to-br from-[#0d0f17] via-[#141b2d] to-[#1d1329] text-foreground selection:bg-indigo-500/40 selection:text-white`}
       >
         <AppQueryProvider>
-          <div className="mx-auto flex min-h-screen w-full max-w-7xl flex-col">
-            <header className="sticky top-0 z-40 backdrop-blur supports-[backdrop-filter]:bg-white/5 border-b border-white/10 bg-white/5">
-              <div className="flex h-14 items-center gap-6 px-6">
-                <Link
-                  href="/"
-                  className="flex items-center gap-2 font-semibold tracking-tight text-white/90 hover:text-white"
-                >
-                  <Image
-                    src="/ollama-ui.ico"
-                    alt="Logo"
-                    width={24}
-                    height={24}
-                    className="h-6 w-6"
-                    priority
-                  />
-                  <span>Ollama UI</span>
-                </Link>
-                <SiteNav />
-                <div className="ml-auto flex items-center gap-4">
-                  <HostIndicator />
-                </div>
-              </div>
-            </header>
-            <main className="flex-1">{children}</main>
-            <SiteFooter />
-            <Toaster />
+          <div className="flex min-h-screen w-full">
+            <AppSidebar />
+            <div className="flex-1 min-w-0 flex flex-col">
+              <main className="flex-1 min-h-0">{children}</main>
+              <SiteFooter />
+            </div>
           </div>
+          <Toaster />
         </AppQueryProvider>
       </body>
     </html>

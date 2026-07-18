@@ -63,14 +63,21 @@ export default function LamaAdminPage() {
 
   return (
     <div className="mx-auto max-w-5xl px-8 py-12 flex flex-col gap-8">
-      <header>
+      <header className="flex flex-col gap-1">
+        <span className="text-[10px] font-mono uppercase tracking-wider text-white/30">
+          Session presets
+        </span>
         <h1 className="text-3xl font-bold tracking-tight bg-gradient-to-r from-white via-white/80 to-white/40 bg-clip-text text-transparent">
-          Manage Profiles
+          Profiles
         </h1>
-        <p className="text-white/50 text-sm mt-2">System prompts centrally stored in SQLite.</p>
+        <p className="text-white/50 text-sm mt-1">
+          System prompts available in the Chat sidebar, stored as JSON on disk.
+        </p>
       </header>
-      <section className="flex flex-col gap-4 p-4 rounded-lg border border-white/10 bg-white/5">
-        <h2 className="text-sm font-semibold text-white/80">New Profile</h2>
+      <section className="flex flex-col gap-4 p-5 rounded-xl border border-white/10 bg-white/5">
+        <span className="text-[10px] font-mono uppercase tracking-wider text-white/30">
+          New profile
+        </span>
         <input
           value={newName}
           onChange={(e) => setNewName(e.target.value)}
@@ -96,8 +103,15 @@ export default function LamaAdminPage() {
         </Button>
       </section>
       <section className="flex flex-col gap-3">
-        <h2 className="text-sm font-semibold text-white/80">Existing Profiles</h2>
-        {isLoading && <div className="text-white/40 text-sm">Loading…</div>}
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] font-mono uppercase tracking-wider text-white/30">
+            Existing profiles
+          </span>
+          {data && (
+            <span className="cap-pill border-white/15 bg-white/5 text-white/50">{data.length}</span>
+          )}
+        </div>
+        {isLoading && <div className="text-white/40 text-sm animate-pulse">Loading…</div>}
         <div className="grid gap-4">
           {data?.map((l) => (
             <LamaItem key={l.id} lama={l} onUpdate={updateMut.mutate} onDelete={deleteMut.mutate} />
@@ -125,7 +139,7 @@ function LamaItem({
   const [editing, setEditing] = useState(false);
   const dirty = name !== lama.name || prompt !== lama.prompt;
   return (
-    <div className="rounded-lg border border-white/10 bg-white/5 p-4 flex flex-col gap-2">
+    <div className="rounded-xl border border-white/10 bg-white/[0.04] p-4 flex flex-col gap-2 transition hover:border-indigo-400/25">
       <div className="flex items-center gap-2">
         {editing ? (
           <input
@@ -136,7 +150,7 @@ function LamaItem({
         ) : (
           <div className="font-medium text-white/80 flex-1">{lama.name}</div>
         )}
-        <span className="text-[10px] text-white/30">
+        <span className="text-[10px] font-mono text-white/30">
           {new Date(lama.updatedAt).toLocaleTimeString()}
         </span>
       </div>

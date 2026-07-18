@@ -1,0 +1,246 @@
+'use client';
+import { useEffect, useRef, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import { ChatMessage, TraceEvent } from '@/store/chat';
+
+interface ChatColumnProps {
+  messages: ChatMessage[];
+  streamingId: string | null;
+  coldStart: boolean;
+  coldElapsed: number;
+  emptyLabel?: string;
+}
+
+function ThinkingLine({
+  ev,
+  expanded,
+  active,
+  onToggle,
+}: {
+  ev: Extract<TraceEvent, { type: 'thinking' }>;
+  expanded: boolean;
+  active: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <div className="rounded-md border border-amber-500/25 bg-amber-950/30 overflow-hidden">
+      <button
+        type="button"
+        onClick={onToggle}
+        className="w-full flex items-center gap-2 px-3 py-2 text-[11px] text-amber-200/70 hover:text-amber-200 hover:bg-amber-500/10 transition text-left"
+      >
+        <span className="text-amber-400/60 text-[9px]">◆</span>
+        <span className="font-medium">Reasoning</span>
+        {active && <span className="text-amber-400/70 animate-pulse font-normal">thinking…</span>}
+        <span className="ml-auto opacity-50 text-[10px]">{expanded ? '▲ hide' : '▼ show'}</span>
+      </button>
+      {expanded && (
+        <div className="px-3 pb-3 max-h-56 overflow-y-auto border-t border-amber-500/15">
+          <div className="pt-2 text-[11px] text-amber-100/55 font-mono whitespace-pre-wrap leading-relaxed">
+            {ev.text}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ToolLine({
+  ev,
+  expanded,
+  onToggle,
+}: {
+  ev: Extract<TraceEvent, { type: 'tool' }>;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  const pending = ev.result === undefined && ev.error === undefined;
+  const searchResults =
+    ev.result && typeof ev.result === 'object' && 'results' in ev.result
+      ? ((ev.result as { results?: Array<{ title?: string; url?: string; snippet?: string }> })
+          .results ?? [])
+      : [];
+  const query =
+    ev.arguments && typeof ev.arguments === 'object' && 'query' in ev.arguments
+      ? String((ev.arguments as { query?: unknown }).query ?? '')
+      : '';
+  return (
+    <div className="rounded-md border border-cyan-500/25 bg-cyan-950/20 overflow-hidden">
+      <button
+        type="button"
+        onClick={onToggle}
+        className="w-full flex items-center gap-2 px-3 py-2 text-[11px] text-cyan-200/70 hover:text-cyan-200 hover:bg-cyan-500/10 transition text-left"
+      >
+        <span className="text-cyan-400/60 text-[9px]">◆</span>
+        <span className="font-medium">
+          🔎 {ev.name}
+          {query ? `: "${query}"` : ''}
+        </span>
+        {pending && <span className="text-cyan-400/70 animate-pulse font-normal">running…</span>}
+        <span className="ml-auto opacity-50 text-[10px]">{expanded ? '▲ hide' : '▼ show'}</span>
+      </button>
+      {expanded && (
+        <div className="px-3 pb-3 max-h-56 overflow-y-auto border-t border-cyan-500/15 pt-2">
+          {ev.error && <div className="text-[11px] text-red-300/80">{ev.error}</div>}
+          {!ev.error && searchResults.length === 0 && !pending && (
+            <div className="text-[11px] text-cyan-100/50">No results.</div>
+          )}
+          {!ev.error && ev.name === 'get_current_date' && ev.result != null && (
+            <div className="text-[11px] text-cyan-100/70 font-mono">
+              {JSON.stringify(ev.result)}
+            </div>
+          )}
+          {searchResults.length > 0 && (
+            <ul className="space-y-2">
+              {searchResults.map((r, idx) => (
+                <li key={idx} className="text-[11px]">
+                  <a
+                    href={r.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-cyan-300 hover:underline font-medium"
+                  >
+                    {r.title || r.url}
+                  </a>
+                  {r.snippet && <div className="text-cyan-100/50 mt-0.5">{r.snippet}</div>}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function ChatColumn({
+  messages,
+  streamingId,
+  coldStart,
+  coldElapsed,
+  emptyLabel,
+}: ChatColumnProps) {
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  const containerRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [messages]);
+
+  function toggle(id: string) {
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  return (
+    <div
+      ref={containerRef}
+      className="flex-1 min-h-0 overflow-auto rounded-md bg-black/30 p-3 text-sm space-y-3"
+    >
+      {coldStart && (
+        <div className="flex items-center gap-2 text-[11px] text-white/60 dark-green-model-loaded-indicator">
+          <span className="relative flex h-2 w-2">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400/60 dark-green-pill-ping"></span>
+            <span className="relative inline-flex h-2 w-2 rounded-full bg-indigo-400 dark-green-pill"></span>
+          </span>
+          <span>Loading model… {coldElapsed}s</span>
+        </div>
+      )}
+      {messages.length === 0 && (
+        <div className="text-white/40 text-xs">{emptyLabel ?? 'No messages yet.'}</div>
+      )}
+      {messages.map((m) => {
+        const isUser = m.role === 'user';
+        const isStreaming = m.id === streamingId;
+        const trace = m.trace ?? [];
+        const lastTrace = trace[trace.length - 1];
+        const traceActive = isStreaming && !m.content && !!lastTrace;
+        return (
+          <div
+            key={m.id}
+            className={`rounded-md px-3 py-2 leading-relaxed text-sm border ${
+              isUser
+                ? 'bg-indigo-500/20 border-indigo-500/30 dark-green-chat-user'
+                : 'bg-white/5 border-white/10'
+            }`}
+          >
+            <div className="text-[10px] uppercase tracking-wide mb-1.5 text-white/40 flex items-center gap-2">
+              {m.role}
+              {isStreaming && !m.content && (
+                <span className="text-amber-400/70 flex items-center gap-1 normal-case">
+                  <span className="animate-pulse">●</span> {traceActive ? 'Working…' : 'Thinking…'}
+                </span>
+              )}
+              {isStreaming && !!m.content && (
+                <span className="text-emerald-400/70 flex items-center gap-1 normal-case">
+                  <span className="animate-pulse">●</span> Responding…
+                </span>
+              )}
+            </div>
+            {isUser ? (
+              <div className="whitespace-pre-wrap text-white/90 font-light dark-green-chat-user-text">
+                {m.content}
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {trace.map((ev, idx) => {
+                  const isLast = idx === trace.length - 1;
+                  const active = traceActive && isLast;
+                  const expanded = expandedIds.has(ev.id) || active;
+                  return ev.type === 'thinking' ? (
+                    <ThinkingLine
+                      key={ev.id}
+                      ev={ev}
+                      expanded={expanded}
+                      active={active}
+                      onToggle={() => toggle(ev.id)}
+                    />
+                  ) : (
+                    <ToolLine
+                      key={ev.id}
+                      ev={ev}
+                      expanded={expanded}
+                      onToggle={() => toggle(ev.id)}
+                    />
+                  );
+                })}
+                {!m.content && isStreaming ? (
+                  <div className="flex items-center gap-1 h-6">
+                    <span className="animate-bounce [animation-delay:-0.25s]">🦙</span>
+                    <span className="animate-bounce [animation-delay:-0.15s]">🦙</span>
+                    <span className="animate-bounce [animation-delay:-0.05s]">🦙</span>
+                  </div>
+                ) : m.content ? (
+                  <div className="prose prose-invert max-w-none text-white/90 prose-p:my-2 prose-ul:my-2 prose-li:my-1 prose-pre:my-3 prose-code:px-1 prose-code:py-0.5 prose-code:bg-white/10 prose-code:rounded">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content}</ReactMarkdown>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-1 h-6">
+                    <span className="animate-bounce [animation-delay:-0.25s]">🦙</span>
+                    <span className="animate-bounce [animation-delay:-0.15s]">🦙</span>
+                    <span className="animate-bounce [animation-delay:-0.05s]">🦙</span>
+                  </div>
+                )}
+                {!isStreaming &&
+                  m.stats &&
+                  (m.stats.completionTokens || m.stats.tokensPerSecond) && (
+                    <div className="text-[10px] font-mono text-white/25 pt-0.5">
+                      {m.stats.completionTokens != null && `${m.stats.completionTokens} tok`}
+                      {m.stats.completionTokens != null && m.stats.tokensPerSecond != null && ' · '}
+                      {m.stats.tokensPerSecond != null && `${m.stats.tokensPerSecond} tok/s`}
+                    </div>
+                  )}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
