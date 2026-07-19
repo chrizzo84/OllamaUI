@@ -1,5 +1,31 @@
 Chronological list of notable changes to Ollama UI.
 
+## 2026-07-19
+
+- **Modern Glass Redesign (theme-adaptive)**
+  - New ambient background: a slowly drifting aurora glow driven by the active theme's accent color, over a deep-space base with a subtle blueprint grid — every one of the 5 color themes gets matching ambience automatically.
+  - App-wide glass design system: translucent cards with gradient hairline borders, hover lift + accent glow, gradient hero titles, and staggered entrance animations (respects `prefers-reduced-motion`).
+  - Sidebar rebuilt with proper Lucide icons (emojis retired), accent-colored active states with a glowing indicator bar, and a refreshed logo.
+  - Chat console polish: accent-tinted user bubbles, icon-based reasoning/tool trace lines, restyled composer, segmented Single/Compare control with accent glow.
+  - Toasts got type icons and a slide-in animation; the host manager modal got entrance animations, accent styling and icon buttons. Scrollbars and text selection follow the theme accent too.
+
+- **Dashboard Charts Rebuilt**
+  - Model sizes now render as a sorted horizontal bar chart (long model names finally readable), colored with the live theme accent — switching themes recolors the chart instantly.
+  - The size-share pie became a doughnut with a colorblind-safe, validated 8-color palette; beyond 7 models the rest folds into a neutral "Other" slice. Tooltips show real GB/MB values and percentages.
+
+- **Context Compaction**
+  - New **Compact** button in the chat composer: older messages are summarized by the model itself into a dense context note (facts, decisions and open questions survive; filler doesn't). The last 4 messages stay verbatim.
+  - The summary appears as a collapsible "Compacted context" card in the conversation and replaces the old history in what gets sent to the model — with a 15-second Undo.
+  - Works per column in Compare mode, each with its own model.
+
+- **Honest Context Window Display**
+  - The context badge previously showed the model's _architectural maximum_ from the registry (e.g. 262K) — but Ollama actually runs models with its server default (`num_ctx`, usually 4096) unless told otherwise, silently truncating anything beyond it.
+  - The badge now shows the **real runtime window** reported by `/api/ps` once the model is loaded (e.g. `1.2K/4K ctx`); before that it shows `≤262.1K ctx` with an explanatory tooltip. The amber near-full warning now refers to the real limit.
+
+- **Per-Model Context Slider (num_ctx)**
+  - New gauge pill next to the context badge opens a slider ranging from 2K up to the selected model's maximum, with quick presets (4K/8K/16K/… /Max) and a reset to server default.
+  - The chosen window is persisted per model, sent as `options.num_ctx` with every chat request _and_ during context compaction, and Ollama reloads the model with the new window on the next message.
+
 ## 2026-07-18
 
 - **Chat "Console" Redesign**

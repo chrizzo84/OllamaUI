@@ -46,11 +46,15 @@
 - 🧩 Expandable variant lists with size info and one‑click pull
 - 🔒 Global pull lock (avoids concurrent overwriting / race conditions)
 - 🏠 Host configuration (cookie + header + env fallback resolution)
-- 🎨 Consistent gradient UI theme + custom scrollbars
+- 💬 Chat console with persisted sessions, personas, reasoning/tool-call traces, and a Compare mode to run two models side by side
+- 🛠️ Tool-calling for capable models (`web_search` via SearXNG, `get_current_date`)
+- 🗜️ Context compaction — summarize older chat history into a dense context note via the model itself (with undo)
+- 📏 Honest context-window badge (real runtime `num_ctx` from `/api/ps`, not the model's theoretical max) + per-model context slider up to the model's maximum
+- 🎨 Theme-adaptive glass UI — 5 accent themes driving an ambient aurora background, glass cards, charts and scrollbars
+- 📊 Dashboard with model stats and accessible, colorblind-safe charts
 - 🔔 Toast notifications (success / error / info)
 - ⚡️ Lightweight state management with Zustand & React Query caching
 - 🐍 Python scraper (separate directory) to periodically refresh the catalog JSON
-- 🧐 Model playground to check two models at same time
 
 ---
 
@@ -157,7 +161,7 @@ Client logic (React) merges these events into a progress bar; a final `{ done: t
 - **React Query**: Data caching & stale control for models and catalog.
 - **Zustand Stores**: Lightweight stores for pull logs & toast queue.
 - **Streaming**: Manual `ReadableStream` consumption with incremental parsing of NDJSON lines.
-- **Styling**: Tailwind CSS (v4) + custom gradients + scrollbar styling (WebKit + Firefox).
+- **Styling**: Tailwind CSS (v4) + theme-adaptive glass design system (accent-driven aurora background, glass cards, scrollbars) with 5 color themes.
 - **Components**: Reusable `<Button />` with variants (`primary`, `outline`, `danger`, etc.).
 
 State highlights:
@@ -388,7 +392,7 @@ Distributed under the MIT License. See the `LICENSE` file for full text.
 | Framework | Next.js App Router (Edge + Node runtime) |
 | Data | React Query, NDJSON streaming |
 | State | Zustand |
-| Styling | Tailwind CSS v4, custom gradients, motion via Framer Motion |
+| Styling | Tailwind CSS v4, theme-adaptive glass design system, motion via Framer Motion |
 | Backend Integrations | Ollama HTTP API |
 | Scraping | Python (httpx, BeautifulSoup, tenacity) |
 
