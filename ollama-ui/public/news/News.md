@@ -2,6 +2,10 @@ Chronological list of notable changes to Ollama UI.
 
 ## 2026-07-19
 
+- **Command Palette (⌘K / Ctrl+K)**
+  - A global overlay (in the style of VS Code / Raycast) for jumping around the app fast: page navigation, switching or creating chat sessions, opening the host manager, and switching color themes — all searchable from one box.
+  - Full keyboard navigation (↑↓ to move, ↵ to run, Esc to close); a small "⌘K" hint sits at the bottom of the sidebar.
+
 - **Auto-Compact Context**
   - New "Auto-compact context" toggle in Settings → Context, with a threshold (60/70/80/90%).
   - Once a reply pushes the real runtime context usage above the threshold, older history is automatically summarized — same mechanism as the manual Compact button, including the 15-second Undo. Off by default; a 30-second cooldown prevents back-to-back auto-compactions.
