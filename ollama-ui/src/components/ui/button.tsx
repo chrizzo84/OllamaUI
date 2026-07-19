@@ -9,8 +9,8 @@ export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElemen
 
 const variantClasses: Record<NonNullable<ButtonProps['variant']>, string> = {
   primary:
-    // Harmonize with page background gradient (#0d0f17 -> #141b2d -> #1d1329) but brighter for contrast
-    'bg-gradient-to-br from-[#2a3244] via-[#3b4258] to-[#4c2b5e] text-white shadow-sm hover:shadow-md hover:brightness-110 hover:-translate-y-[1px] border border-white/5 hover:border-white/15',
+    // Accent-driven gradient — follows the active theme via --accent-glow
+    'bg-gradient-to-br from-[rgb(var(--accent-glow)/0.85)] via-[rgb(var(--accent-glow)/0.7)] to-[rgb(var(--accent-glow)/0.5)] text-white shadow-[0_8px_24px_-10px_rgb(var(--accent-glow)/0.6)] hover:shadow-[0_10px_30px_-10px_rgb(var(--accent-glow)/0.8)] hover:brightness-110 hover:-translate-y-[1px] border border-white/10 hover:border-white/20',
   secondary:
     'bg-white/5 text-white/80 hover:text-white hover:bg-white/10 dark:bg-white/10 dark:hover:bg-white/15 hover:-translate-y-[1px] border border-white/10',
   // Make ghost clearly visible on hover with subtle background + outline highlight.
@@ -24,10 +24,10 @@ const variantClasses: Record<NonNullable<ButtonProps['variant']>, string> = {
 };
 
 const sizeClasses: Record<NonNullable<ButtonProps['size']>, string> = {
-  sm: 'h-8 px-3 text-xs rounded-md',
-  md: 'h-10 px-4 text-sm rounded-md',
-  lg: 'h-12 px-6 text-base rounded-lg',
-  icon: 'h-10 w-10 rounded-md',
+  sm: 'h-8 px-3 text-xs rounded-lg',
+  md: 'h-10 px-4 text-sm rounded-lg',
+  lg: 'h-12 px-6 text-base rounded-xl',
+  icon: 'h-10 w-10 rounded-lg',
 };
 
 export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(

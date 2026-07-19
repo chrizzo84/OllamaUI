@@ -1,5 +1,6 @@
 'use client';
 import React, { useEffect, useState } from 'react';
+import { Boxes, Database, Scale, Trophy, BarChart3, Newspaper, ListTree } from 'lucide-react';
 import { DashboardCharts } from './dashboard-charts';
 import { NewsViewer } from './news-viewer';
 
@@ -69,44 +70,54 @@ export function DashboardPanel({ newsContent }: { newsContent: string }) {
   if (!stats) return <div className="text-white/50 text-sm">No data available.</div>;
 
   const stat = [
-    { label: 'Total models', value: String(stats.count) },
-    { label: 'Total size', value: formatBytes(stats.totalSize) },
-    { label: 'Average size', value: formatBytes(stats.averageSize) },
+    { label: 'Total models', value: String(stats.count), icon: Boxes },
+    { label: 'Total size', value: formatBytes(stats.totalSize), icon: Database },
+    { label: 'Average size', value: formatBytes(stats.averageSize), icon: Scale },
   ];
 
   return (
-    <section className="grid grid-cols-1 md:grid-cols-2 gap-6">
-      <div className="rounded-xl border border-white/10 bg-white/5 p-6 flex flex-col gap-4">
-        <span className="text-[10px] font-mono uppercase tracking-wider text-white/30">
+    <section className="grid grid-cols-1 md:grid-cols-2 gap-6 stagger-children">
+      <div className="glass-card glass-card--hover p-6 flex flex-col gap-4">
+        <span className="section-label">
+          <Boxes />
           Model summary
         </span>
         <div className="grid grid-cols-3 gap-3">
-          {stat.map((s) => (
-            <div key={s.label} className="rounded-lg border border-white/10 bg-black/20 p-3">
-              <div className="text-lg font-semibold tabular-nums text-white/90 truncate">
-                {s.value}
+          {stat.map((s) => {
+            const Icon = s.icon;
+            return (
+              <div
+                key={s.label}
+                className="relative overflow-hidden rounded-xl border border-white/[0.07] bg-black/25 p-3.5"
+              >
+                <Icon className="absolute -right-2 -bottom-2 h-12 w-12 text-[rgb(var(--accent-glow)/0.1)]" />
+                <div className="text-xl font-semibold tabular-nums text-white/90 truncate">
+                  {s.value}
+                </div>
+                <div className="text-[10px] uppercase tracking-wide text-white/35 mt-1">
+                  {s.label}
+                </div>
               </div>
-              <div className="text-[10px] uppercase tracking-wide text-white/35 mt-1">
-                {s.label}
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
         {stats.largest && (
-          <div className="cap-pill border-indigo-400/25 bg-indigo-500/10 text-indigo-200/80 self-start">
-            🏆 largest: {stats.largest.name} · {formatBytes(stats.largest.size)}
+          <div className="cap-pill border-[rgb(var(--accent-glow)/0.3)] bg-[rgb(var(--accent-glow)/0.1)] text-white/70 self-start">
+            <Trophy className="h-3 w-3 text-[rgb(var(--accent-glow)/0.9)]" />
+            largest: {stats.largest.name} · {formatBytes(stats.largest.size)}
           </div>
         )}
       </div>
-      <div className="rounded-xl border border-white/10 bg-white/5 p-6 flex flex-col gap-3">
-        <span className="text-[10px] font-mono uppercase tracking-wider text-white/30">
+      <div className="glass-card glass-card--hover p-6 flex flex-col gap-3">
+        <span className="section-label">
+          <ListTree />
           Models breakdown
         </span>
         <ul className="max-h-64 overflow-auto text-sm flex flex-col gap-0.5">
           {stats.models.map((m) => (
             <li
               key={m.name}
-              className="flex justify-between items-center py-1.5 px-2 rounded hover:bg-white/5 transition"
+              className="flex justify-between items-center py-1.5 px-2 rounded-lg hover:bg-white/5 transition"
             >
               <span className="font-mono text-xs text-white/70 truncate">{m.name}</span>
               <span className="font-mono text-xs text-white/40 tabular-nums shrink-0 ml-2">
@@ -116,14 +127,16 @@ export function DashboardPanel({ newsContent }: { newsContent: string }) {
           ))}
         </ul>
       </div>
-      <div className="md:col-span-2 rounded-xl border border-white/10 bg-white/5 p-6 flex flex-col gap-3">
-        <span className="text-[10px] font-mono uppercase tracking-wider text-white/30">
+      <div className="md:col-span-2 glass-card p-6 flex flex-col gap-3">
+        <span className="section-label">
+          <BarChart3 />
           Visualizations
         </span>
         <DashboardCharts models={stats.models} />
       </div>
-      <div className="md:col-span-2 rounded-xl border border-white/10 bg-white/5 p-6 flex flex-col gap-3">
-        <span className="text-[10px] font-mono uppercase tracking-wider text-white/30">
+      <div className="md:col-span-2 glass-card p-6 flex flex-col gap-3">
+        <span className="section-label">
+          <Newspaper />
           News / release notes
         </span>
         <NewsViewer content={newsContent} />

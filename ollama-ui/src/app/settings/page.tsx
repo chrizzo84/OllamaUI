@@ -48,12 +48,12 @@ export default function SettingsPage() {
   return (
     <div className="p-6 flex flex-col gap-8 max-w-3xl mx-auto items-center">
       <div className="w-full flex flex-col gap-8">
-        <section className="rounded-xl border border-white/10 bg-white/5 p-5 flex flex-col gap-8">
+        <section className="glass-card p-5 flex flex-col gap-8">
           <div>
             <span className="block text-center text-[10px] font-mono uppercase tracking-wider text-white/30 mb-1">
               Preferences
             </span>
-            <h2 className="text-3xl font-bold tracking-tight bg-gradient-to-br from-white via-white/80 to-white/30 bg-clip-text text-transparent text-center mb-4">
+            <h2 className="text-3xl font-bold tracking-tight text-gradient-hero text-center mb-4">
               Settings
             </h2>
             <h3 className="text-lg font-semibold text-white/90 mb-1">Theme</h3>
@@ -97,7 +97,7 @@ export default function SettingsPage() {
             </div>
           </div>
         </section>
-        <section className="rounded-xl border border-white/10 bg-white/5 p-5 flex flex-col gap-4">
+        <section className="glass-card p-5 flex flex-col gap-4">
           <div>
             <h2 className="text-lg font-semibold text-white/90 mb-1">Tools</h2>
             <p className="text-xs text-white/50 mb-3">
@@ -141,7 +141,7 @@ export default function SettingsPage() {
             )}
           </div>
         </section>
-        <section className="rounded-xl border border-white/10 bg-white/5 p-5 flex flex-col gap-4">
+        <section className="glass-card p-5 flex flex-col gap-4">
           <div>
             <h2 className="text-lg font-semibold text-white/90 mb-1">Infos</h2>
           </div>

@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { Server, X, Pencil, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
 interface HostRowUI {
@@ -194,30 +195,38 @@ export function HostManagerModal({ open, onClose, onActivated }: Props) {
   const active = hosts.find((h) => h.active);
   const content = (
     <div className="fixed inset-0 z-[100] flex items-start justify-center p-6 overflow-y-auto">
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
       <div
-        className="relative w-full max-w-3xl rounded-xl border border-white/10 bg-[#121826]/95 shadow-2xl p-6 flex flex-col gap-6"
+        className="anim-backdrop-in absolute inset-0 bg-black/65 backdrop-blur-md"
+        onClick={onClose}
+      />
+      <div
+        className="anim-modal-in relative w-full max-w-3xl rounded-2xl border border-white/10 bg-[#0e1220]/95 shadow-[0_24px_80px_-24px_rgba(0,0,0,0.8),0_0_40px_-12px_rgb(var(--accent-glow)/0.25)] backdrop-blur-xl p-6 flex flex-col gap-6"
         role="dialog"
         aria-modal="true"
       >
         <div className="flex items-start justify-between gap-4">
-          <div>
-            <h2 className="text-lg font-semibold tracking-tight text-white/90">
-              Manage Ollama Hosts
-            </h2>
-            <p className="text-xs text-white/40 mt-1">
-              Switch, add, test or edit remote Ollama endpoints.
-            </p>
+          <div className="flex items-start gap-3">
+            <span className="mt-0.5 grid h-9 w-9 place-items-center rounded-xl border border-[rgb(var(--accent-glow)/0.3)] bg-[rgb(var(--accent-glow)/0.12)] text-[rgb(var(--accent-glow))]">
+              <Server className="h-4 w-4" />
+            </span>
+            <div>
+              <h2 className="text-lg font-semibold tracking-tight text-gradient-hero">
+                Manage Ollama Hosts
+              </h2>
+              <p className="text-xs text-white/40 mt-1">
+                Switch, add, test or edit remote Ollama endpoints.
+              </p>
+            </div>
           </div>
           <Button variant="ghost" size="icon" onClick={onClose} aria-label="Close" title="Close">
-            ✕
+            <X className="h-4 w-4" />
           </Button>
         </div>
         <div className="flex flex-col md:flex-row gap-8">
           <div className="md:w-1/2 flex flex-col gap-4">
             <form
               onSubmit={addHost}
-              className="flex flex-col gap-2 rounded-lg border border-white/10 bg-white/[0.03] p-4"
+              className="flex flex-col gap-2 rounded-xl border border-white/[0.08] bg-white/[0.03] p-4"
             >
               <div className="text-xs font-medium uppercase tracking-wide text-white/50">
                 Add Host
@@ -225,13 +234,13 @@ export function HostManagerModal({ open, onClose, onActivated }: Props) {
               <input
                 value={addUrl}
                 onChange={(e) => setAddUrl(e.target.value)}
-                className="w-full rounded bg-white/5 border border-white/15 px-2 py-1 text-xs font-mono text-white/80"
+                className="w-full rounded-lg bg-black/25 border border-white/10 px-2.5 py-1.5 text-xs font-mono text-white/80 placeholder:text-white/25 transition-colors focus:outline-none focus:border-[rgb(var(--accent-glow)/0.5)] focus:ring-1 focus:ring-[rgb(var(--accent-glow)/0.3)]"
                 placeholder="https://host:11434"
               />
               <input
                 value={addLabel}
                 onChange={(e) => setAddLabel(e.target.value)}
-                className="w-full rounded bg-white/5 border border-white/15 px-2 py-1 text-xs text-white/80"
+                className="w-full rounded-lg bg-black/25 border border-white/10 px-2.5 py-1.5 text-xs text-white/80 placeholder:text-white/25 transition-colors focus:outline-none focus:border-[rgb(var(--accent-glow)/0.5)] focus:ring-1 focus:ring-[rgb(var(--accent-glow)/0.3)]"
                 placeholder="Label (optional)"
               />
               {addErr && <div className="text-[10px] text-red-300">{addErr}</div>}
@@ -250,7 +259,7 @@ export function HostManagerModal({ open, onClose, onActivated }: Props) {
                 </Button>
               </div>
             </form>
-            <div className="flex-1 min-h-[220px] rounded-lg border border-white/10 bg-white/[0.03] p-4 flex flex-col gap-3">
+            <div className="flex-1 min-h-[220px] rounded-xl border border-white/[0.08] bg-white/[0.03] p-4 flex flex-col gap-3">
               <div className="text-xs font-medium uppercase tracking-wide text-white/50 flex items-center justify-between">
                 <span>Hosts</span>
                 {loading && (
@@ -262,19 +271,19 @@ export function HostManagerModal({ open, onClose, onActivated }: Props) {
                 {hosts.map((h) => (
                   <li
                     key={h.id}
-                    className={`group rounded border px-3 py-2 flex flex-col gap-1 transition bg-white/5 border-white/10 hover:border-white/25 ${h.active ? 'ring-1 ring-indigo-400/40 bg-indigo-500/10' : ''}`}
+                    className={`group rounded-lg border px-3 py-2 flex flex-col gap-1 transition bg-white/5 border-white/10 hover:border-white/25 ${h.active ? 'ring-1 ring-[rgb(var(--accent-glow)/0.45)] bg-[rgb(var(--accent-glow)/0.1)]' : ''}`}
                   >
                     {editingId === h.id ? (
                       <form onSubmit={saveEdit} className="flex flex-col gap-2">
                         <input
                           autoFocus
-                          className="w-full rounded bg-white/5 border border-white/15 px-2 py-1 text-[11px] font-mono"
+                          className="w-full rounded-lg bg-black/25 border border-white/10 px-2.5 py-1.5 text-[11px] font-mono transition-colors focus:outline-none focus:border-[rgb(var(--accent-glow)/0.5)]"
                           value={editUrl}
                           onChange={(e) => setEditUrl(e.target.value)}
                           placeholder="URL"
                         />
                         <input
-                          className="w-full rounded bg-white/5 border border-white/15 px-2 py-1 text-[11px]"
+                          className="w-full rounded-lg bg-black/25 border border-white/10 px-2.5 py-1.5 text-[11px] transition-colors focus:outline-none focus:border-[rgb(var(--accent-glow)/0.5)]"
                           value={editLabel}
                           onChange={(e) => setEditLabel(e.target.value)}
                           placeholder="Label"
@@ -319,7 +328,7 @@ export function HostManagerModal({ open, onClose, onActivated }: Props) {
                               onClick={() => beginEdit(h)}
                               title="Edit"
                             >
-                              ✎
+                              <Pencil className="h-3 w-3" />
                             </Button>
                             <Button
                               size="sm"
@@ -328,7 +337,7 @@ export function HostManagerModal({ open, onClose, onActivated }: Props) {
                               onClick={() => remove(h.id)}
                               title="Delete"
                             >
-                              ✕
+                              <Trash2 className="h-3 w-3" />
                             </Button>
                           </div>
                         </div>
@@ -343,7 +352,7 @@ export function HostManagerModal({ open, onClose, onActivated }: Props) {
             </div>
           </div>
           <div className="md:flex-1 flex flex-col gap-4">
-            <div className="rounded-lg border border-white/10 bg-white/[0.02] p-4 text-xs text-white/60 leading-relaxed">
+            <div className="rounded-xl border border-white/[0.08] bg-white/[0.02] p-4 text-xs text-white/60 leading-relaxed">
               <p className="mb-2 font-semibold text-white/80">Quick Switch</p>
               <p>
                 Select one of your configured hosts in the list on the left. The green dot marks the

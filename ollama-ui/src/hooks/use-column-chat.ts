@@ -13,6 +13,8 @@ export interface SendOptions {
   // model's reported capabilities when known; falls back to a name-based
   // guess (isThinkingModel) only when capabilities weren't available.
   think?: boolean;
+  // Context window override (num_ctx) for this model; undefined = server default.
+  numCtx?: number;
 }
 
 export interface ColumnChat {
@@ -151,6 +153,7 @@ export function useColumnChat(column: 'A' | 'B', sessionId: string | null): Colu
           messages: upstreamMessages,
           think: opts.think ?? isThinkingModel(model),
           toolsEnabled: opts.toolsEnabled,
+          ...(opts.numCtx ? { options: { num_ctx: opts.numCtx } } : {}),
         };
         setLastPayload(payload);
         const res = await fetch('/api/chat', {

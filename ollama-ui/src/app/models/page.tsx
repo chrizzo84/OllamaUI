@@ -304,9 +304,7 @@ export default function ModelsPage() {
           Local inventory
         </span>
         <div className="flex flex-wrap items-center gap-4">
-          <h1 className="text-2xl font-bold tracking-tight bg-gradient-to-br from-white via-white/80 to-white/40 bg-clip-text text-transparent">
-            Installed Models
-          </h1>
+          <h1 className="text-2xl font-bold tracking-tight text-gradient-hero">Installed Models</h1>
           <Button
             onClick={() => refetch()}
             variant="outline"
@@ -436,9 +434,7 @@ export default function ModelsPage() {
             Remote catalog
           </span>
           <div className="flex flex-wrap items-center gap-4 w-full">
-            <h2 className="text-2xl font-bold tracking-tight bg-gradient-to-br from-white via-white/80 to-white/40 bg-clip-text text-transparent">
-              Model Catalog
-            </h2>
+            <h2 className="text-2xl font-bold tracking-tight text-gradient-hero">Model Catalog</h2>
             <Button
               onClick={() => refetchCatalog()}
               variant="outline"
@@ -461,7 +457,7 @@ export default function ModelsPage() {
           </div>
         </div>
         {/* Pullbox directly below header */}
-        <div className="rounded-xl border border-white/10 bg-white/5 p-4 flex flex-col gap-4">
+        <div className="glass-card p-4 flex flex-col gap-4">
           <span className="text-[10px] font-mono uppercase tracking-wider text-white/30">
             Pull a model
           </span>
@@ -523,7 +519,7 @@ export default function ModelsPage() {
           )}
         </div>
         {/* Search, Limit & Capability Filters grouped */}
-        <div className="rounded-xl border border-white/10 bg-white/5 p-4 flex flex-col gap-4">
+        <div className="glass-card p-4 flex flex-col gap-4">
           <div className="flex flex-col sm:flex-row gap-3 items-stretch w-full">
             <div className="flex flex-1 gap-3">
               <input
