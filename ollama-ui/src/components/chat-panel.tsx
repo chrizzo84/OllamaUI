@@ -438,7 +438,7 @@ export function ChatPanel() {
     return [summaryMessage, ...recent];
   }
 
-  async function handleCompact() {
+  async function handleCompact(auto = false) {
     if (!activeSessionId || compacting || anyLoading) return;
     setCompacting(true);
     try {
@@ -479,7 +479,7 @@ export function ChatPanel() {
       setUndoTimeoutId(id);
       pushToast({
         type: 'success',
-        title: 'Context compacted',
+        title: auto ? 'Context auto-compacted' : 'Context compacted',
         message: `${snapshot.length} messages → ${next.length}. Older history was replaced by a dense summary${tooShort ? ' (one column was too short and left untouched)' : ''}. Undo is available for 15s.`,
       });
     } catch (e) {
@@ -501,6 +501,24 @@ export function ChatPanel() {
   }
 
   const anyLoading = columnA.loading || (compareMode && columnB.loading);
+
+  // Auto-compact: once a reply lands, check column A's REAL runtime context
+  // usage (never the model's architectural max) against the threshold. A
+  // cooldown prevents back-to-back auto-compactions from a single burst.
+  const autoCompactEnabled = usePrefsStore((s) => s.autoCompactEnabled);
+  const autoCompactThresholdPct = usePrefsStore((s) => s.autoCompactThresholdPct);
+  const lastAutoCompactRef = useRef(0);
+  useEffect(() => {
+    if (!autoCompactEnabled || compacting || anyLoading) return;
+    const limit = effectiveCtxA;
+    if (!limit || lastPromptTokensA == null) return;
+    const pct = (lastPromptTokensA / limit) * 100;
+    if (pct < autoCompactThresholdPct) return;
+    if (Date.now() - lastAutoCompactRef.current < 30_000) return;
+    lastAutoCompactRef.current = Date.now();
+    void handleCompact(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [anyLoading, autoCompactEnabled, autoCompactThresholdPct]);
   const activeModels = compareMode
     ? [columnA.model, columnB.model].filter(Boolean)
     : [columnA.model].filter(Boolean);
@@ -736,7 +754,7 @@ export function ChatPanel() {
               </Button>
             )}
             <Button
-              onClick={handleCompact}
+              onClick={() => handleCompact()}
               size="sm"
               variant="outline"
               disabled={anyLoading || compacting || sessionMessages.length === 0}
