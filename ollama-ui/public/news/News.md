@@ -2,6 +2,10 @@ Chronological list of notable changes to Ollama UI.
 
 ## 2026-07-19
 
+- **Message Actions — Copy, Regenerate, Delete**
+  - Every chat message now shows a small action bar on hover: copy the text to the clipboard, regenerate the last assistant reply (re-runs the same question through the model), or delete a question/answer pair.
+  - Regenerate and delete are available per column in Compare mode without touching the other column, and are disabled while a reply is streaming.
+
 - **Modern Glass Redesign (theme-adaptive)**
   - New ambient background: a slowly drifting aurora glow driven by the active theme's accent color, over a deep-space base with a subtle blueprint grid — every one of the 5 color themes gets matching ambience automatically.
   - App-wide glass design system: translucent cards with gradient hairline borders, hover lift + accent glow, gradient hero titles, and staggered entrance animations (respects `prefers-reduced-motion`).
