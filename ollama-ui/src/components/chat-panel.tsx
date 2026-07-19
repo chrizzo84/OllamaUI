@@ -1,14 +1,18 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { useChatStore } from '@/store/chat';
+import { useChatStore, type ChatMessage } from '@/store/chat';
+import { useToastStore } from '@/store/toast';
 import { useSystemPromptStore } from '@/store/system-prompt';
 import { useToolsStore } from '@/store/tools';
 import { useSessionsStore, loadSessionMessages, persistSessionMessages } from '@/store/sessions';
+import { usePrefsStore } from '@/store/prefs';
 import { useColumnChat } from '@/hooks/use-column-chat';
 import { ChatColumn } from './chat-column';
+import { NumCtxControl } from './num-ctx-control';
+import { Brain, Wrench, Search, TriangleAlert, Send, Square, FoldVertical } from 'lucide-react';
 import { Button } from './ui/button';
-import { hasCapability } from '@/lib/utils';
+import { hasCapability, safeUuid } from '@/lib/utils';
 
 interface ModelTag {
   name: string;
@@ -54,18 +58,49 @@ function useModelCapabilities(model: string) {
   return data?.capabilities;
 }
 
+interface PsModel {
+  name?: string;
+  model?: string;
+  context_length?: number;
+}
+
+/**
+ * The context window the model is ACTUALLY running with (num_ctx), as reported
+ * by /api/ps for loaded models (Ollama >= 0.6). The context_length in /api/tags
+ * is only the model's architectural maximum — Ollama's runtime default (4096,
+ * or OLLAMA_CONTEXT_LENGTH) is usually far smaller.
+ */
+function useEffectiveContext(model: string): number | undefined {
+  const { data } = useQuery({
+    queryKey: ['ollama-ps-context', model],
+    queryFn: async () => {
+      const r = await fetch('/api/ps', { cache: 'no-store' });
+      if (!r.ok) return null;
+      return (await r.json()) as { models?: PsModel[] };
+    },
+    enabled: !!model,
+    refetchInterval: 30_000,
+    staleTime: 10_000,
+    retry: false,
+  });
+  const entry = data?.models?.find((m) => m.name === model || m.model === model);
+  return typeof entry?.context_length === 'number' && entry.context_length > 0
+    ? entry.context_length
+    : undefined;
+}
+
 function CapabilityBadges({ capabilities }: { capabilities: string[] | undefined }) {
   if (!capabilities) return null;
   return (
     <>
       {hasCapability(capabilities, 'thinking') && (
         <span className="cap-pill border-amber-500/30 bg-amber-500/10 text-amber-300/90">
-          ◆ thinking
+          <Brain className="h-3 w-3" /> thinking
         </span>
       )}
       {hasCapability(capabilities, 'tools') && (
         <span className="cap-pill border-cyan-500/30 bg-cyan-500/10 text-cyan-300/90">
-          🔧 tools
+          <Wrench className="h-3 w-3" /> tools
         </span>
       )}
     </>
@@ -73,15 +108,30 @@ function CapabilityBadges({ capabilities }: { capabilities: string[] | undefined
 }
 
 function ContextBadge({
-  contextLength,
+  maxContext,
+  effectiveContext,
   usedTokens,
 }: {
-  contextLength: number | undefined;
+  maxContext: number | undefined;
+  effectiveContext: number | undefined;
   usedTokens: number | undefined;
 }) {
-  if (!contextLength) return null;
-  const pct =
-    usedTokens != null ? Math.min(100, Math.round((usedTokens / contextLength) * 100)) : null;
+  // Prefer the runtime window (/api/ps); the tags value is only the model max.
+  const limit = effectiveContext ?? maxContext;
+  if (!limit) return null;
+  const isRuntime = effectiveContext != null;
+  const pct = usedTokens != null ? Math.min(100, Math.round((usedTokens / limit) * 100)) : null;
+  const titleParts: string[] = [];
+  if (usedTokens != null) titleParts.push(`~${usedTokens} context tokens used (last request)`);
+  if (isRuntime) {
+    titleParts.push(`Runtime context window (num_ctx): ${effectiveContext} tokens`);
+    if (maxContext && maxContext !== effectiveContext)
+      titleParts.push(`Model maximum: ${maxContext} tokens`);
+  } else {
+    titleParts.push(
+      `Model maximum: ${maxContext} tokens — the actual runtime window is set by the Ollama server (default 4096) and is often much smaller. Load the model to see the effective value.`,
+    );
+  }
   return (
     <span
       className={`cap-pill ${
@@ -89,15 +139,11 @@ function ContextBadge({
           ? 'border-amber-500/30 bg-amber-500/10 text-amber-300/90'
           : 'border-white/15 bg-white/5 text-white/45'
       }`}
-      title={
-        usedTokens != null
-          ? `~${usedTokens} of ${contextLength} context tokens used (based on the last request)`
-          : `Context window: ${contextLength} tokens`
-      }
+      title={titleParts.join(' · ')}
     >
       {usedTokens != null
-        ? `${formatTokenCount(usedTokens)}/${formatTokenCount(contextLength)} ctx`
-        : `${formatTokenCount(contextLength)} ctx`}
+        ? `${formatTokenCount(usedTokens)}/${isRuntime ? '' : '≤'}${formatTokenCount(limit)} ctx`
+        : `${isRuntime ? '' : '≤'}${formatTokenCount(limit)} ctx`}
     </span>
   );
 }
@@ -117,7 +163,7 @@ function ModelSelect({
     <select
       value={value}
       onChange={(e) => onChange(e.target.value)}
-      className="rounded-md border border-white/15 bg-white/10 px-2 py-1.5 text-xs text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/60"
+      className="rounded-lg border border-white/10 bg-white/[0.07] px-2.5 py-1.5 text-xs text-white transition-colors hover:border-white/20 focus:outline-none focus:border-[rgb(var(--accent-glow)/0.5)] focus:ring-2 focus:ring-[rgb(var(--accent-glow)/0.35)]"
     >
       <option value="" disabled>
         {placeholder}
@@ -193,6 +239,14 @@ export function ChatPanel() {
   const capsA = useModelCapabilities(columnA.model);
   const capsB = useModelCapabilities(compareMode ? columnB.model : '');
   const supportsToolsA = hasCapability(capsA, 'tools');
+  const effectiveCtxA = useEffectiveContext(columnA.model);
+  const effectiveCtxB = useEffectiveContext(compareMode ? columnB.model : '');
+  const numCtxA = usePrefsStore((s) =>
+    columnA.model ? s.numCtxByModel[columnA.model] : undefined,
+  );
+  const numCtxB = usePrefsStore((s) =>
+    columnB.model ? s.numCtxByModel[columnB.model] : undefined,
+  );
 
   const contextLengthA = data?.models.find((m) => m.name === columnA.model)?.details
     ?.context_length;
@@ -290,9 +344,13 @@ export function ChatPanel() {
       toolsEnabled,
       searxTemplate,
     };
-    const jobs = [columnA.send(text, { ...opts, think: hasCapability(capsA, 'thinking') })];
+    const jobs = [
+      columnA.send(text, { ...opts, think: hasCapability(capsA, 'thinking'), numCtx: numCtxA }),
+    ];
     if (compareMode && columnB.model) {
-      jobs.push(columnB.send(text, { ...opts, think: hasCapability(capsB, 'thinking') }));
+      jobs.push(
+        columnB.send(text, { ...opts, think: hasCapability(capsB, 'thinking'), numCtx: numCtxB }),
+      );
     }
     await Promise.all(jobs);
   }
@@ -300,6 +358,102 @@ export function ChatPanel() {
   function handleStop() {
     columnA.stop();
     if (compareMode) columnB.stop();
+  }
+
+  const [compacting, setCompacting] = useState(false);
+  const pushToast = useToastStore((s) => s.push);
+  // Keep this many recent messages verbatim when compacting.
+  const KEEP_RECENT = 4;
+
+  async function compactColumn(
+    column: 'A' | 'B',
+    model: string,
+    numCtx?: number,
+  ): Promise<ChatMessage[] | 'too-short' | null> {
+    const msgs = sessionMessages.filter((m) => (m.column ?? 'A') === column);
+    if (msgs.length <= KEEP_RECENT + 2) return 'too-short';
+    const older = msgs.slice(0, -KEEP_RECENT);
+    const recent = msgs.slice(-KEEP_RECENT);
+    const transcript = older
+      .filter((m) => m.content.trim())
+      .map((m) => ({ role: m.role, content: m.content }));
+    if (transcript.length === 0) return 'too-short';
+    const r = await fetch('/api/sessions/compact', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model, messages: transcript, ...(numCtx ? { numCtx } : {}) }),
+    });
+    if (!r.ok) {
+      const j = await r.json().catch(() => ({}));
+      throw new Error(j.error || 'Compaction failed');
+    }
+    const j = await r.json();
+    if (typeof j.summary !== 'string' || !j.summary.trim()) throw new Error('Empty summary');
+    const summaryMessage: ChatMessage = {
+      id: safeUuid(),
+      role: 'system',
+      content: j.summary.trim(),
+      createdAt: older[0]?.createdAt ?? Date.now(),
+      model,
+      sessionId: activeSessionId ?? undefined,
+      ...(column === 'B' ? { column: 'B' as const } : {}),
+    };
+    return [summaryMessage, ...recent];
+  }
+
+  async function handleCompact() {
+    if (!activeSessionId || compacting || anyLoading) return;
+    setCompacting(true);
+    try {
+      const snapshot = sessionMessages;
+      const results: Partial<Record<'A' | 'B', ChatMessage[]>> = {};
+      let tooShort = 0;
+      let attempted = 0;
+      if (columnA.model) {
+        attempted++;
+        const res = await compactColumn('A', columnA.model, numCtxA);
+        if (res === 'too-short') tooShort++;
+        else if (res) results.A = res;
+      }
+      if (compareMode && columnB.model) {
+        attempted++;
+        const res = await compactColumn('B', columnB.model, numCtxB);
+        if (res === 'too-short') tooShort++;
+        else if (res) results.B = res;
+      }
+      if (!attempted) return;
+      if (!results.A && !results.B) {
+        pushToast({
+          type: 'info',
+          title: 'Nothing to compact',
+          message: `The conversation is still short — compaction keeps the last ${KEEP_RECENT} messages and needs some history beyond that.`,
+        });
+        return;
+      }
+      const next = [
+        ...(results.A ?? sessionMessages.filter((m) => (m.column ?? 'A') === 'A')),
+        ...(results.B ?? sessionMessages.filter((m) => (m.column ?? 'A') === 'B')),
+      ];
+      setSessionMessages(activeSessionId, next);
+      persistSessionMessages(activeSessionId, next);
+      setLastSnapshot(snapshot);
+      if (undoTimeoutId) clearTimeout(undoTimeoutId);
+      const id = setTimeout(() => setLastSnapshot(null), 15000);
+      setUndoTimeoutId(id);
+      pushToast({
+        type: 'success',
+        title: 'Context compacted',
+        message: `${snapshot.length} messages → ${next.length}. Older history was replaced by a dense summary${tooShort ? ' (one column was too short and left untouched)' : ''}. Undo is available for 15s.`,
+      });
+    } catch (e) {
+      pushToast({
+        type: 'error',
+        title: 'Compaction failed',
+        message: e instanceof Error ? e.message : 'Unknown error',
+      });
+    } finally {
+      setCompacting(false);
+    }
   }
 
   function onKey(e: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -316,7 +470,7 @@ export function ChatPanel() {
   const hasSub7b = activeModels.some((m) => /(^|[^0-9])([0-6](?:\.[0-9]+)?)b([^0-9]|$)/i.test(m));
 
   return (
-    <div className="flex flex-1 min-h-0 overflow-hidden rounded-xl border border-white/10 bg-white/5">
+    <div className="flex flex-1 min-h-0 overflow-hidden glass-card">
       <div className="flex flex-col flex-1 min-w-0 min-h-0">
         {/* Top bar */}
         <div className="flex items-center gap-2 px-4 py-2.5 border-b border-white/10 flex-wrap">
@@ -326,7 +480,7 @@ export function ChatPanel() {
               onClick={() => setCompareMode(false)}
               className={`px-3 py-1 rounded-full transition ${
                 !compareMode
-                  ? 'bg-indigo-500/20 text-indigo-200'
+                  ? 'bg-[rgb(var(--accent-glow)/0.22)] text-white shadow-[0_0_10px_-2px_rgb(var(--accent-glow)/0.5)]'
                   : 'text-white/40 hover:text-white/70'
               }`}
             >
@@ -337,7 +491,7 @@ export function ChatPanel() {
               onClick={() => setCompareMode(true)}
               className={`px-3 py-1 rounded-full transition ${
                 compareMode
-                  ? 'bg-indigo-500/20 text-indigo-200'
+                  ? 'bg-[rgb(var(--accent-glow)/0.22)] text-white shadow-[0_0_10px_-2px_rgb(var(--accent-glow)/0.5)]'
                   : 'text-white/40 hover:text-white/70'
               }`}
             >
@@ -368,7 +522,12 @@ export function ChatPanel() {
             ))}
           </select>
           <CapabilityBadges capabilities={capsA} />
-          <ContextBadge contextLength={contextLengthA} usedTokens={lastPromptTokensA} />
+          <ContextBadge
+            maxContext={contextLengthA}
+            effectiveContext={effectiveCtxA}
+            usedTokens={lastPromptTokensA}
+          />
+          <NumCtxControl model={columnA.model} maxContext={contextLengthA} />
 
           {compareMode && (
             <>
@@ -380,7 +539,12 @@ export function ChatPanel() {
                 placeholder="Select model B"
               />
               <CapabilityBadges capabilities={capsB} />
-              <ContextBadge contextLength={contextLengthB} usedTokens={lastPromptTokensB} />
+              <ContextBadge
+                maxContext={contextLengthB}
+                effectiveContext={effectiveCtxB}
+                usedTokens={lastPromptTokensB}
+              />
+              <NumCtxControl model={columnB.model} maxContext={contextLengthB} />
             </>
           )}
 
@@ -397,7 +561,15 @@ export function ChatPanel() {
                   : 'Web search + current date available to the model (configured in Settings).'
               }
             >
-              {supportsToolsA === false ? '⚠️ tools unsupported' : '🔎🗓️ tools active'}
+              {supportsToolsA === false ? (
+                <>
+                  <TriangleAlert className="h-3 w-3" /> tools unsupported
+                </>
+              ) : (
+                <>
+                  <Search className="h-3 w-3" /> tools active
+                </>
+              )}
             </span>
           )}
 
@@ -457,16 +629,23 @@ export function ChatPanel() {
         </div>
 
         {/* Composer */}
-        <div className="flex flex-col gap-2 px-4 pb-4 pt-3">
+        <div className="flex flex-col gap-2 px-4 pb-4 pt-3 border-t border-white/[0.06] bg-white/[0.015] mt-3">
           <div className="flex gap-2 flex-wrap">
             <span
               className={`cap-pill ${
                 activePrompt.trim()
-                  ? 'border-indigo-500/25 bg-indigo-500/10 text-indigo-200/80'
+                  ? 'border-[rgb(var(--accent-glow)/0.3)] bg-[rgb(var(--accent-glow)/0.1)] text-white/75'
                   : 'border-white/10 bg-white/5 text-white/30'
               }`}
             >
-              {activePrompt.trim() ? `🧠 ${activeProfile?.name}` : 'no persona'}
+              {activePrompt.trim() ? (
+                <>
+                  <Brain className="h-3 w-3 text-[rgb(var(--accent-glow)/0.9)]" />
+                  {activeProfile?.name}
+                </>
+              ) : (
+                'no persona'
+              )}
             </span>
             <span
               className={`cap-pill ${
@@ -475,7 +654,13 @@ export function ChatPanel() {
                   : 'border-white/10 bg-white/5 text-white/30'
               }`}
             >
-              {toolsEnabled ? '🔎 tools on' : 'tools off'}
+              {toolsEnabled ? (
+                <>
+                  <Search className="h-3 w-3" /> tools on
+                </>
+              ) : (
+                'tools off'
+              )}
             </span>
             <a
               href="/settings"
@@ -489,7 +674,7 @@ export function ChatPanel() {
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={onKey}
             placeholder={columnA.model ? 'Type a message…' : 'Select a model first'}
-            className="min-h-[72px] rounded-md border border-white/15 bg-white/10 px-3 py-2 text-sm text-white placeholder:text-white/30 focus:outline-none focus:ring-2 focus:ring-indigo-500/60"
+            className="min-h-[72px] rounded-xl border border-white/10 bg-black/25 px-3.5 py-2.5 text-sm text-white placeholder:text-white/25 transition-colors focus:outline-none focus:border-[rgb(var(--accent-glow)/0.5)] focus:ring-2 focus:ring-[rgb(var(--accent-glow)/0.3)]"
           />
           <div className="flex gap-2">
             <Button
@@ -498,13 +683,29 @@ export function ChatPanel() {
               disabled={!input.trim() || !columnA.model || anyLoading}
               loading={anyLoading}
             >
-              Send
+              <span className="inline-flex items-center gap-1.5">
+                <Send className="h-3.5 w-3.5" /> Send
+              </span>
             </Button>
             {anyLoading && (
               <Button onClick={handleStop} size="sm" variant="danger">
-                Stop
+                <span className="inline-flex items-center gap-1.5">
+                  <Square className="h-3 w-3 fill-current" /> Stop
+                </span>
               </Button>
             )}
+            <Button
+              onClick={handleCompact}
+              size="sm"
+              variant="outline"
+              disabled={anyLoading || compacting || sessionMessages.length === 0}
+              loading={compacting}
+              title={`Summarize older messages into a compact context note (keeps the last ${KEEP_RECENT} messages verbatim). Shrinks what is sent to the model.`}
+            >
+              <span className="inline-flex items-center gap-1.5">
+                <FoldVertical className="h-3.5 w-3.5" /> Compact
+              </span>
+            </Button>
             {!pendingConfirm && (
               <Button
                 onClick={() => setPendingConfirm(true)}

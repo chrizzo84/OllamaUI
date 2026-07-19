@@ -10,10 +10,13 @@
 /* Force dauerhaft Dark Mode (heller Modus deaktiviert) */
 :root {
   /* Dark palette as baseline (was previously only inside prefers-color-scheme: dark) */
-  --background: #0a0a0a;
-  --foreground: #ededed;
+  --background: #07080f;
+  --foreground: #e8eaf3;
   --accent: #6366f1; /* indigo-500 */
   --accent-glow: 99 102 241; /* rgb triplet for alpha usage */
+  --surface-1: rgba(255, 255, 255, 0.04);
+  --surface-2: rgba(255, 255, 255, 0.07);
+  --border-subtle: rgba(255, 255, 255, 0.08);
   --radius-sm: 4px;
   --radius-md: 8px;
   --radius-lg: 16px;
@@ -21,9 +24,210 @@
 
 /* Background gradients per theme applied to body via attribute selector */
 body {
-  /* default theme gradient (existing) is applied through tailwind classes in layout; fallback only */
-  background: var(--background);
+  /* Default theme: deep space base; themes override via [data-theme] body selectors */
+  background: radial-gradient(120% 90% at 50% -10%, #0e1122 0%, #07080f 52%, #0a0716 100%) fixed;
   color: var(--foreground);
+}
+
+/* ── Ambient layers ──────────────────────────────────────────────
+   Aurora glow driven by the active theme's accent (--accent-glow),
+   plus a faint blueprint grid fading out towards the bottom.
+   Both sit behind all content (z-index: -1) and ignore pointer events. */
+body::before {
+  content: '';
+  position: fixed;
+  inset: -20%;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(42% 40% at 16% 6%, rgb(var(--accent-glow) / 0.14), transparent 62%),
+    radial-gradient(36% 36% at 86% 18%, rgb(var(--accent-glow) / 0.07), transparent 60%),
+    radial-gradient(52% 46% at 58% 104%, rgb(var(--accent-glow) / 0.09), transparent 65%);
+  filter: blur(48px);
+  animation: aurora-drift 32s ease-in-out infinite alternate;
+  will-change: transform;
+}
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.022) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.022) 1px, transparent 1px);
+  background-size: 44px 44px;
+  mask-image: radial-gradient(80% 65% at 50% 0%, black 0%, transparent 100%);
+  -webkit-mask-image: radial-gradient(80% 65% at 50% 0%, black 0%, transparent 100%);
+}
+
+@keyframes aurora-drift {
+  0% {
+    transform: translate3d(0, 0, 0) rotate(0deg) scale(1);
+  }
+  100% {
+    transform: translate3d(3%, -2%, 0) rotate(4deg) scale(1.06);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body::before {
+    animation: none;
+  }
+}
+
+/* ── Glass surfaces ─────────────────────────────────────────────── */
+.glass-panel {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.015));
+  border-color: var(--border-subtle);
+  backdrop-filter: blur(16px) saturate(1.2);
+  -webkit-backdrop-filter: blur(16px) saturate(1.2);
+}
+
+.glass-card {
+  position: relative;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-subtle);
+  background: linear-gradient(160deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.014) 55%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    0 10px 30px -14px rgba(0, 0, 0, 0.6);
+  transition:
+    border-color 0.25s,
+    box-shadow 0.25s,
+    transform 0.25s,
+    background 0.25s;
+}
+.glass-card--hover:hover {
+  transform: translateY(-2px);
+  border-color: rgb(var(--accent-glow) / 0.35);
+  background: linear-gradient(160deg, rgba(255, 255, 255, 0.075), rgba(255, 255, 255, 0.02) 55%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 16px 42px -14px rgba(0, 0, 0, 0.65),
+    0 0 28px -8px rgb(var(--accent-glow) / 0.3);
+}
+
+/* Hero / heading gradient text that follows the theme accent */
+.text-gradient-hero {
+  background: linear-gradient(
+    92deg,
+    #fff 0%,
+    rgba(255, 255, 255, 0.82) 45%,
+    rgb(var(--accent-glow) / 0.95) 100%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* Small mono section label used across pages */
+.section-label {
+  font-family: var(--font-geist-mono, monospace);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: rgba(255, 255, 255, 0.32);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+.section-label .lucide,
+.section-label svg {
+  width: 12px;
+  height: 12px;
+  color: rgb(var(--accent-glow) / 0.75);
+}
+
+/* ── Entrance animation with per-child stagger ─────────────────── */
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.anim-fade-up {
+  animation: fade-up 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.stagger-children > * {
+  animation: fade-up 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.stagger-children > *:nth-child(1) {
+  animation-delay: 0.03s;
+}
+.stagger-children > *:nth-child(2) {
+  animation-delay: 0.09s;
+}
+.stagger-children > *:nth-child(3) {
+  animation-delay: 0.15s;
+}
+.stagger-children > *:nth-child(4) {
+  animation-delay: 0.21s;
+}
+.stagger-children > *:nth-child(5) {
+  animation-delay: 0.27s;
+}
+.stagger-children > *:nth-child(6) {
+  animation-delay: 0.33s;
+}
+@media (prefers-reduced-motion: reduce) {
+  .anim-fade-up,
+  .stagger-children > * {
+    animation: none;
+  }
+}
+
+/* ── Overlay entrances (toasts, modals) ────────────────────────── */
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(-10px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+.anim-toast-in {
+  animation: toast-in 0.3s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes backdrop-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.anim-backdrop-in {
+  animation: backdrop-in 0.2s ease-out both;
+}
+
+@keyframes modal-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.975);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+.anim-modal-in {
+  animation: modal-in 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .anim-toast-in,
+  .anim-backdrop-in,
+  .anim-modal-in {
+    animation: none;
+  }
 }
 
 /* Accent utilities (used by components if they rely on CSS vars) */
@@ -201,11 +405,11 @@ body {
   outline-offset: 2px;
 }
 
-/* Scrollbar styling */
+/* Scrollbar styling (accent-aware via color-mix) */
 /* Firefox */
 * {
   scrollbar-width: thin;
-  scrollbar-color: #3b4258 #0d0f17;
+  scrollbar-color: color-mix(in srgb, rgb(var(--accent-glow)) 30%, #262c3d) transparent;
 }
 /* WebKit */
 *::-webkit-scrollbar {
@@ -213,22 +417,24 @@ body {
   height: 10px;
 }
 *::-webkit-scrollbar-track {
-  background: linear-gradient(180deg, #0d0f17, #141b2d 55%, #1d1329);
+  background: transparent;
 }
 *::-webkit-scrollbar-thumb {
-  background: linear-gradient(180deg, #2a3244, #3b4258 45%, #4c2b5e);
+  background: color-mix(in srgb, rgb(var(--accent-glow)) 28%, #262c3d);
   border-radius: 999px;
-  border: 2px solid #0d0f17; /* creates pill and contrast gap */
+  border: 2px solid transparent; /* creates pill and contrast gap */
+  background-clip: padding-box;
 }
 *::-webkit-scrollbar-thumb:hover {
-  background: linear-gradient(180deg, #354055, #49516a 45%, #5a376d);
+  background: color-mix(in srgb, rgb(var(--accent-glow)) 48%, #2c3347);
+  background-clip: padding-box;
 }
 *::-webkit-scrollbar-corner {
-  background: #0d0f17;
+  background: transparent;
 }
 
 ::selection {
-  background: #6366f1aa;
+  background: rgb(var(--accent-glow) / 0.55);
   color: #fff;
 }
 

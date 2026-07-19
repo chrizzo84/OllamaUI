@@ -56,7 +56,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         </noscript>
       </head>
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased min-h-screen bg-gradient-to-br from-[#0d0f17] via-[#141b2d] to-[#1d1329] text-foreground selection:bg-indigo-500/40 selection:text-white`}
+        className={`${geistSans.variable} ${geistMono.variable} antialiased min-h-screen text-foreground`}
       >
         <AppQueryProvider>
           <div className="flex min-h-screen w-full">

@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { Brain, Search, ChevronDown, ChevronUp, FoldVertical } from 'lucide-react';
 import { ChatMessage, TraceEvent } from '@/store/chat';
 
 interface ChatColumnProps {
@@ -24,16 +25,19 @@ function ThinkingLine({
   onToggle: () => void;
 }) {
   return (
-    <div className="rounded-md border border-amber-500/25 bg-amber-950/30 overflow-hidden">
+    <div className="rounded-lg border border-amber-500/25 bg-amber-950/30 overflow-hidden">
       <button
         type="button"
         onClick={onToggle}
         className="w-full flex items-center gap-2 px-3 py-2 text-[11px] text-amber-200/70 hover:text-amber-200 hover:bg-amber-500/10 transition text-left"
       >
-        <span className="text-amber-400/60 text-[9px]">◆</span>
+        <Brain className="h-3 w-3 text-amber-400/70 shrink-0" />
         <span className="font-medium">Reasoning</span>
         {active && <span className="text-amber-400/70 animate-pulse font-normal">thinking…</span>}
-        <span className="ml-auto opacity-50 text-[10px]">{expanded ? '▲ hide' : '▼ show'}</span>
+        <span className="ml-auto opacity-50 flex items-center gap-1 text-[10px]">
+          {expanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+          {expanded ? 'hide' : 'show'}
+        </span>
       </button>
       {expanded && (
         <div className="px-3 pb-3 max-h-56 overflow-y-auto border-t border-amber-500/15">
@@ -66,19 +70,22 @@ function ToolLine({
       ? String((ev.arguments as { query?: unknown }).query ?? '')
       : '';
   return (
-    <div className="rounded-md border border-cyan-500/25 bg-cyan-950/20 overflow-hidden">
+    <div className="rounded-lg border border-cyan-500/25 bg-cyan-950/20 overflow-hidden">
       <button
         type="button"
         onClick={onToggle}
         className="w-full flex items-center gap-2 px-3 py-2 text-[11px] text-cyan-200/70 hover:text-cyan-200 hover:bg-cyan-500/10 transition text-left"
       >
-        <span className="text-cyan-400/60 text-[9px]">◆</span>
+        <Search className="h-3 w-3 text-cyan-400/70 shrink-0" />
         <span className="font-medium">
-          🔎 {ev.name}
+          {ev.name}
           {query ? `: "${query}"` : ''}
         </span>
         {pending && <span className="text-cyan-400/70 animate-pulse font-normal">running…</span>}
-        <span className="ml-auto opacity-50 text-[10px]">{expanded ? '▲ hide' : '▼ show'}</span>
+        <span className="ml-auto opacity-50 flex items-center gap-1 text-[10px]">
+          {expanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+          {expanded ? 'hide' : 'show'}
+        </span>
       </button>
       {expanded && (
         <div className="px-3 pb-3 max-h-56 overflow-y-auto border-t border-cyan-500/15 pt-2">
@@ -141,7 +148,7 @@ export function ChatColumn({
   return (
     <div
       ref={containerRef}
-      className="flex-1 min-h-0 overflow-auto rounded-md bg-black/30 p-3 text-sm space-y-3"
+      className="flex-1 min-h-0 overflow-auto rounded-xl border border-white/[0.06] bg-black/25 p-3 text-sm space-y-3"
     >
       {coldStart && (
         <div className="flex items-center gap-2 text-[11px] text-white/60 dark-green-model-loaded-indicator">
@@ -161,16 +168,55 @@ export function ChatColumn({
         const trace = m.trace ?? [];
         const lastTrace = trace[trace.length - 1];
         const traceActive = isStreaming && !m.content && !!lastTrace;
+        if (m.role === 'system') {
+          const expanded = expandedIds.has(m.id);
+          return (
+            <div
+              key={m.id}
+              className="rounded-lg border border-[rgb(var(--accent-glow)/0.25)] bg-[rgb(var(--accent-glow)/0.06)] overflow-hidden"
+            >
+              <button
+                type="button"
+                onClick={() => toggle(m.id)}
+                className="w-full flex items-center gap-2 px-3 py-2 text-[11px] text-white/60 hover:text-white/90 hover:bg-[rgb(var(--accent-glow)/0.08)] transition text-left"
+              >
+                <FoldVertical className="h-3 w-3 text-[rgb(var(--accent-glow)/0.8)] shrink-0" />
+                <span className="font-medium">Compacted context</span>
+                <span className="opacity-50">summary of earlier conversation</span>
+                <span className="ml-auto opacity-50 flex items-center gap-1 text-[10px]">
+                  {expanded ? (
+                    <ChevronUp className="h-3 w-3" />
+                  ) : (
+                    <ChevronDown className="h-3 w-3" />
+                  )}
+                  {expanded ? 'hide' : 'show'}
+                </span>
+              </button>
+              {expanded && (
+                <div className="px-3 pb-3 pt-2 border-t border-[rgb(var(--accent-glow)/0.15)] max-h-56 overflow-y-auto">
+                  <div className="text-[11px] text-white/55 whitespace-pre-wrap leading-relaxed">
+                    {m.content}
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        }
         return (
           <div
             key={m.id}
-            className={`rounded-md px-3 py-2 leading-relaxed text-sm border ${
+            className={`rounded-xl px-3.5 py-2.5 leading-relaxed text-sm border ${
               isUser
-                ? 'bg-indigo-500/20 border-indigo-500/30 dark-green-chat-user'
-                : 'bg-white/5 border-white/10'
+                ? 'bg-[rgb(var(--accent-glow)/0.13)] border-[rgb(var(--accent-glow)/0.28)] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] dark-green-chat-user'
+                : 'bg-white/[0.04] border-white/[0.08]'
             }`}
           >
             <div className="text-[10px] uppercase tracking-wide mb-1.5 text-white/40 flex items-center gap-2">
+              <span
+                className={`h-1.5 w-1.5 rounded-full ${
+                  isUser ? 'bg-[rgb(var(--accent-glow))]' : 'bg-white/30'
+                }`}
+              />
               {m.role}
               {isStreaming && !m.content && (
                 <span className="text-amber-400/70 flex items-center gap-1 normal-case">

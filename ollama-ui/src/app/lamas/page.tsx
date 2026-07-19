@@ -67,14 +67,12 @@ export default function LamaAdminPage() {
         <span className="text-[10px] font-mono uppercase tracking-wider text-white/30">
           Session presets
         </span>
-        <h1 className="text-3xl font-bold tracking-tight bg-gradient-to-r from-white via-white/80 to-white/40 bg-clip-text text-transparent">
-          Profiles
-        </h1>
+        <h1 className="text-3xl font-bold tracking-tight text-gradient-hero">Profiles</h1>
         <p className="text-white/50 text-sm mt-1">
           System prompts available in the Chat sidebar, stored as JSON on disk.
         </p>
       </header>
-      <section className="flex flex-col gap-4 p-5 rounded-xl border border-white/10 bg-white/5">
+      <section className="flex flex-col gap-4 p-5 glass-card">
         <span className="text-[10px] font-mono uppercase tracking-wider text-white/30">
           New profile
         </span>
