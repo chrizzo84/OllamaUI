@@ -2,6 +2,10 @@ Chronological list of notable changes to Ollama UI.
 
 ## 2026-07-19
 
+- **Auto-Compact Context**
+  - New "Auto-compact context" toggle in Settings → Context, with a threshold (60/70/80/90%).
+  - Once a reply pushes the real runtime context usage above the threshold, older history is automatically summarized — same mechanism as the manual Compact button, including the 15-second Undo. Off by default; a 30-second cooldown prevents back-to-back auto-compactions.
+
 - **Message Actions — Copy, Regenerate, Delete**
   - Every chat message now shows a small action bar on hover: copy the text to the clipboard, regenerate the last assistant reply (re-runs the same question through the model), or delete a question/answer pair.
   - Regenerate and delete are available per column in Compare mode without touching the other column, and are disabled while a reply is streaming.

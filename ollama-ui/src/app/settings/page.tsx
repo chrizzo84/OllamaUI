@@ -13,6 +13,10 @@ export default function SettingsPage() {
   const setRequireDeleteConfirm = usePrefsStore((s) => s.setRequireDeleteConfirm);
   const autoRefreshModelsSeconds = usePrefsStore((s) => s.autoRefreshModelsSeconds);
   const setAutoRefreshModelsSeconds = usePrefsStore((s) => s.setAutoRefreshModelsSeconds);
+  const autoCompactEnabled = usePrefsStore((s) => s.autoCompactEnabled);
+  const setAutoCompactEnabled = usePrefsStore((s) => s.setAutoCompactEnabled);
+  const autoCompactThresholdPct = usePrefsStore((s) => s.autoCompactThresholdPct);
+  const setAutoCompactThresholdPct = usePrefsStore((s) => s.setAutoCompactThresholdPct);
   const hydrateTools = useToolsStore((s) => s.hydrate);
   const toolsEnabled = useToolsStore((s) => s.toolsEnabled);
   const setToolsEnabled = useToolsStore((s) => s.setToolsEnabled);
@@ -93,6 +97,38 @@ export default function SettingsPage() {
                   />
                 </label>
                 <span className="text-white/30">0 disables</span>
+              </div>
+            </div>
+          </div>
+          <div>
+            <h3 className="text-lg font-semibold text-white/90 mb-1">Context</h3>
+            <div className="flex flex-col gap-3 text-xs text-white/60">
+              <div className="flex items-center gap-3 flex-wrap">
+                <label className="flex items-center gap-2 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    className="accent-indigo-500"
+                    checked={autoCompactEnabled}
+                    onChange={(e) => setAutoCompactEnabled(e.target.checked)}
+                  />
+                  <span>Auto-compact context</span>
+                </label>
+                <select
+                  value={autoCompactThresholdPct}
+                  onChange={(e) => setAutoCompactThresholdPct(Number(e.target.value))}
+                  disabled={!autoCompactEnabled}
+                  className="rounded bg-white/5 border border-white/15 px-2 py-1 text-[11px] text-white disabled:opacity-40 disabled:cursor-not-allowed focus:outline-none"
+                >
+                  {[60, 70, 80, 90].map((pct) => (
+                    <option key={pct} value={pct} className="bg-neutral-900">
+                      at {pct}%
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="text-[11px] text-white/40">
+                When a reply pushes context usage above the threshold, older history is
+                automatically summarized (same as the Compact button in Chat).
               </div>
             </div>
           </div>

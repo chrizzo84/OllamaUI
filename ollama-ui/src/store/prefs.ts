@@ -4,9 +4,13 @@ interface PrefsState {
   requireDeleteConfirm: boolean;
   autoRefreshModelsSeconds: number; // 0 = disabled
   numCtxByModel: Record<string, number>; // per-model num_ctx override; absent = server default
+  autoCompactEnabled: boolean; // auto-trigger context compaction near the context limit
+  autoCompactThresholdPct: number; // 50-95
   setRequireDeleteConfirm(v: boolean): void;
   setAutoRefreshModelsSeconds(v: number): void;
   setNumCtxForModel(model: string, value: number | null): void; // null clears the override
+  setAutoCompactEnabled(v: boolean): void;
+  setAutoCompactThresholdPct(v: number): void;
   hydrate(): void;
 }
 
@@ -14,13 +18,19 @@ const KEY = 'ollama_ui_prefs_v1';
 
 type PersistShape = Pick<
   PrefsState,
-  'requireDeleteConfirm' | 'autoRefreshModelsSeconds' | 'numCtxByModel'
+  | 'requireDeleteConfirm'
+  | 'autoRefreshModelsSeconds'
+  | 'numCtxByModel'
+  | 'autoCompactEnabled'
+  | 'autoCompactThresholdPct'
 >;
 
 export const usePrefsStore = create<PrefsState>((set) => ({
   requireDeleteConfirm: true,
   autoRefreshModelsSeconds: 0,
   numCtxByModel: {},
+  autoCompactEnabled: false,
+  autoCompactThresholdPct: 80,
   setRequireDeleteConfirm: (v) => {
     set({ requireDeleteConfirm: v });
     persist();
@@ -36,6 +46,14 @@ export const usePrefsStore = create<PrefsState>((set) => ({
       else next[model] = value;
       return { numCtxByModel: next };
     });
+    persist();
+  },
+  setAutoCompactEnabled: (v) => {
+    set({ autoCompactEnabled: v });
+    persist();
+  },
+  setAutoCompactThresholdPct: (v) => {
+    set({ autoCompactThresholdPct: v });
     persist();
   },
   hydrate: () => {
@@ -55,6 +73,14 @@ export const usePrefsStore = create<PrefsState>((set) => ({
           }
           set({ numCtxByModel: clean });
         }
+        if (typeof parsed.autoCompactEnabled === 'boolean')
+          set({ autoCompactEnabled: parsed.autoCompactEnabled });
+        if (
+          typeof parsed.autoCompactThresholdPct === 'number' &&
+          parsed.autoCompactThresholdPct >= 50 &&
+          parsed.autoCompactThresholdPct <= 95
+        )
+          set({ autoCompactThresholdPct: parsed.autoCompactThresholdPct });
       }
     } catch {
       /* ignore */
@@ -65,9 +91,20 @@ export const usePrefsStore = create<PrefsState>((set) => ({
 function persist() {
   try {
     if (typeof window === 'undefined') return;
-    const { requireDeleteConfirm, autoRefreshModelsSeconds, numCtxByModel } =
-      usePrefsStore.getState();
-    const data: PersistShape = { requireDeleteConfirm, autoRefreshModelsSeconds, numCtxByModel };
+    const {
+      requireDeleteConfirm,
+      autoRefreshModelsSeconds,
+      numCtxByModel,
+      autoCompactEnabled,
+      autoCompactThresholdPct,
+    } = usePrefsStore.getState();
+    const data: PersistShape = {
+      requireDeleteConfirm,
+      autoRefreshModelsSeconds,
+      numCtxByModel,
+      autoCompactEnabled,
+      autoCompactThresholdPct,
+    };
     localStorage.setItem(KEY, JSON.stringify(data));
   } catch {
     /* ignore */
