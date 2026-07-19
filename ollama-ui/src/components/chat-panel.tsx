@@ -360,8 +360,45 @@ export function ChatPanel() {
     if (compareMode) columnB.stop();
   }
 
-  const [compacting, setCompacting] = useState(false);
   const pushToast = useToastStore((s) => s.push);
+
+  function regenerateColumn(column: 'A' | 'B') {
+    const col = column === 'A' ? columnA : columnB;
+    const numCtx = column === 'A' ? numCtxA : numCtxB;
+    const caps = column === 'A' ? capsA : capsB;
+    if (!activeSessionId || !col.model || col.loading) return;
+    const msgs = col.messages;
+    const last = msgs[msgs.length - 1];
+    const secondLast = msgs[msgs.length - 2];
+    if (!last || last.role !== 'assistant' || !secondLast || secondLast.role !== 'user') return;
+    const lastUserText = secondLast.content;
+    const remaining = sessionMessages.filter((m) => m.id !== last.id && m.id !== secondLast.id);
+    setSessionMessages(activeSessionId, remaining);
+    persistSessionMessages(activeSessionId, remaining);
+    void col.send(lastUserText, {
+      systemPrompt: activePrompt || undefined,
+      toolsEnabled,
+      searxTemplate,
+      think: hasCapability(caps, 'thinking'),
+      numCtx,
+    });
+  }
+
+  function deletePair(column: 'A' | 'B', assistantMessageId: string) {
+    if (!activeSessionId) return;
+    const colMessages = sessionMessages.filter((m) => (m.column ?? 'A') === column);
+    const idx = colMessages.findIndex((m) => m.id === assistantMessageId);
+    if (idx === -1) return;
+    const toRemove = new Set([assistantMessageId]);
+    const prev = colMessages[idx - 1];
+    if (prev && prev.role === 'user') toRemove.add(prev.id);
+    const next = sessionMessages.filter((m) => !toRemove.has(m.id));
+    setSessionMessages(activeSessionId, next);
+    persistSessionMessages(activeSessionId, next);
+    pushToast({ type: 'info', message: 'Message pair deleted' });
+  }
+
+  const [compacting, setCompacting] = useState(false);
   // Keep this many recent messages verbatim when compacting.
   const KEEP_RECENT = 4;
 
@@ -616,6 +653,8 @@ export function ChatPanel() {
             coldStart={columnA.coldStart}
             coldElapsed={columnA.coldElapsed}
             emptyLabel={compareMode ? 'Column A — no messages yet.' : 'No messages yet.'}
+            onRegenerate={() => regenerateColumn('A')}
+            onDeletePair={(id) => deletePair('A', id)}
           />
           {compareMode && (
             <ChatColumn
@@ -624,6 +663,8 @@ export function ChatPanel() {
               coldStart={columnB.coldStart}
               coldElapsed={columnB.coldElapsed}
               emptyLabel="Column B — no messages yet."
+              onRegenerate={() => regenerateColumn('B')}
+              onDeletePair={(id) => deletePair('B', id)}
             />
           )}
         </div>

@@ -2,8 +2,18 @@
 import { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Brain, Search, ChevronDown, ChevronUp, FoldVertical } from 'lucide-react';
+import {
+  Brain,
+  Search,
+  ChevronDown,
+  ChevronUp,
+  FoldVertical,
+  Copy,
+  RefreshCw,
+  Trash2,
+} from 'lucide-react';
 import { ChatMessage, TraceEvent } from '@/store/chat';
+import { useToastStore } from '@/store/toast';
 
 interface ChatColumnProps {
   messages: ChatMessage[];
@@ -11,6 +21,8 @@ interface ChatColumnProps {
   coldStart: boolean;
   coldElapsed: number;
   emptyLabel?: string;
+  onRegenerate?: () => void; // only offered for the last assistant message
+  onDeletePair?: (assistantMessageId: string) => void;
 }
 
 function ThinkingLine({
@@ -127,6 +139,8 @@ export function ChatColumn({
   coldStart,
   coldElapsed,
   emptyLabel,
+  onRegenerate,
+  onDeletePair,
 }: ChatColumnProps) {
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -162,9 +176,10 @@ export function ChatColumn({
       {messages.length === 0 && (
         <div className="text-white/40 text-xs">{emptyLabel ?? 'No messages yet.'}</div>
       )}
-      {messages.map((m) => {
+      {messages.map((m, idx) => {
         const isUser = m.role === 'user';
         const isStreaming = m.id === streamingId;
+        const isLastMessage = idx === messages.length - 1;
         const trace = m.trace ?? [];
         const lastTrace = trace[trace.length - 1];
         const traceActive = isStreaming && !m.content && !!lastTrace;
@@ -205,7 +220,7 @@ export function ChatColumn({
         return (
           <div
             key={m.id}
-            className={`rounded-xl px-3.5 py-2.5 leading-relaxed text-sm border ${
+            className={`group rounded-xl px-3.5 py-2.5 leading-relaxed text-sm border ${
               isUser
                 ? 'bg-[rgb(var(--accent-glow)/0.13)] border-[rgb(var(--accent-glow)/0.28)] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] dark-green-chat-user'
                 : 'bg-white/[0.04] border-white/[0.08]'
@@ -282,6 +297,49 @@ export function ChatColumn({
                       {m.stats.tokensPerSecond != null && `${m.stats.tokensPerSecond} tok/s`}
                     </div>
                   )}
+              </div>
+            )}
+            {!isStreaming && (
+              <div className="mt-1.5 hidden group-hover:flex items-center gap-1">
+                <button
+                  type="button"
+                  title="Copy message"
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(m.content);
+                      useToastStore
+                        .getState()
+                        .push({ type: 'success', message: 'Copied to clipboard' });
+                    } catch {
+                      useToastStore
+                        .getState()
+                        .push({ type: 'error', message: 'Could not copy to clipboard' });
+                    }
+                  }}
+                  className="p-1 rounded text-white/30 hover:text-white/80 hover:bg-white/10 transition"
+                >
+                  <Copy className="h-3 w-3" />
+                </button>
+                {onRegenerate && m.role === 'assistant' && isLastMessage && !streamingId && (
+                  <button
+                    type="button"
+                    title="Regenerate response"
+                    onClick={onRegenerate}
+                    className="p-1 rounded text-white/30 hover:text-white/80 hover:bg-white/10 transition"
+                  >
+                    <RefreshCw className="h-3 w-3" />
+                  </button>
+                )}
+                {onDeletePair && m.role === 'assistant' && !streamingId && (
+                  <button
+                    type="button"
+                    title="Delete this exchange"
+                    onClick={() => onDeletePair(m.id)}
+                    className="p-1 rounded text-white/30 hover:text-red-300 hover:bg-white/10 transition"
+                  >
+                    <Trash2 className="h-3 w-3" />
+                  </button>
+                )}
               </div>
             )}
           </div>
