@@ -5,6 +5,7 @@ import { AppQueryProvider } from '@/components/query-provider';
 import { AppSidebar } from '@/components/app-sidebar';
 import { Toaster } from '@/components/toaster';
 import { SiteFooter } from '@/components/site-footer';
+import { CommandPalette } from '@/components/command-palette';
 
 const geistSans = Geist({
   variable: '--font-geist-sans',
@@ -67,6 +68,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             </div>
           </div>
           <Toaster />
+          <CommandPalette />
         </AppQueryProvider>
       </body>
     </html>

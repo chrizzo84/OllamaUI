@@ -325,6 +325,12 @@ export function AppSidebar() {
       )}
 
       {!onChatRoute && <div className="flex-1" />}
+
+      {!collapsed && (
+        <div className="border-t border-white/[0.07] px-3 py-2 text-[10px] text-white/25 font-mono">
+          ⌘K — command palette
+        </div>
+      )}
     </aside>
   );
 }
