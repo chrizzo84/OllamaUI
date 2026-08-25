@@ -10,7 +10,7 @@ WORKDIR /build
 RUN corepack enable
 
 # Copy only package manifests first for better caching
-COPY ollama-ui/package.json ollama-ui/pnpm-lock.yaml ./ollama-ui/
+COPY ollama-ui/package.json ollama-ui/pnpm-lock.yaml ollama-ui/pnpm-workspace.yaml ./ollama-ui/
 WORKDIR /build/ollama-ui
 
 # Install dependencies (pure JS + node:sqlite built into Node itself — no
@@ -47,9 +47,11 @@ COPY --from=builder /build/ollama-ui/.next/standalone ./
 COPY --from=builder /build/ollama-ui/.next/static ./.next/static
 COPY --from=builder /build/ollama-ui/public ./public
 
-# Copy package.json and pnpm-lock.yaml for dependency management
+# Copy package.json, pnpm-lock.yaml and pnpm-workspace.yaml (has the
+# dependency "overrides") for dependency management
 COPY --from=builder /build/ollama-ui/package.json ./
 COPY --from=builder /build/ollama-ui/pnpm-lock.yaml ./
+COPY --from=builder /build/ollama-ui/pnpm-workspace.yaml ./
 
 # Install production dependencies (pure JS only, no native modules to compile)
 RUN HUSKY=0 pnpm install --prod --frozen-lockfile --ignore-scripts

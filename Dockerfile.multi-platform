@@ -19,7 +19,7 @@ RUN apt-get clean \
 RUN corepack enable
 
 # Copy package files
-COPY ollama-ui/package.json ollama-ui/pnpm-lock.yaml ./ollama-ui/
+COPY ollama-ui/package.json ollama-ui/pnpm-lock.yaml ollama-ui/pnpm-workspace.yaml ./ollama-ui/
 WORKDIR /build/ollama-ui
 
 # Install dependencies
