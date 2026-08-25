@@ -1,5 +1,6 @@
 'use client';
-import { useEffect, useRef, useState } from 'react';
+import { isValidElement, useEffect, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {
@@ -9,12 +10,78 @@ import {
   ChevronUp,
   FoldVertical,
   Copy,
+  Check,
   RefreshCw,
   Trash2,
   AlertTriangle,
+  Wrench,
 } from 'lucide-react';
 import { ChatMessage, TraceEvent } from '@/store/chat';
 import { useToastStore } from '@/store/toast';
+import {
+  looksLikePseudoToolCall,
+  parsePseudoToolCall,
+  renderPseudoToolCallAsMarkdown,
+} from '@/lib/pseudo-tool-call';
+
+// Shown instead of the raw, ugly tag soup while a model streams an
+// unsupported pseudo tool-call (see lib/pseudo-tool-call.ts) — ticks so it's
+// visibly alive instead of looking frozen.
+function PseudoToolCallIndicator() {
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setElapsed((s) => s + 1), 1000);
+    return () => clearInterval(id);
+  }, []);
+  return (
+    <div className="flex items-center gap-1.5 text-cyan-200/70 text-xs">
+      <Wrench className="h-3.5 w-3.5 animate-pulse" />
+      <span>Model is attempting an unsupported tool call — cleaning up… {elapsed}s</span>
+    </div>
+  );
+}
+
+// Best-effort extraction of the raw text inside a <pre><code>...</code></pre>
+// block as rendered by react-markdown, so the copy button copies exactly
+// what's shown regardless of how deeply the text node is nested.
+function extractText(node: ReactNode): string {
+  if (typeof node === 'string' || typeof node === 'number') return String(node);
+  if (Array.isArray(node)) return node.map(extractText).join('');
+  if (isValidElement<{ children?: ReactNode }>(node)) return extractText(node.props.children);
+  return '';
+}
+
+// react-markdown renders fenced code blocks as <pre><code>...</code></pre>;
+// override <pre> to add a hover copy button for the block's raw content.
+function CodeBlockPre(props: React.ComponentPropsWithoutRef<'pre'>) {
+  const [copied, setCopied] = useState(false);
+
+  async function handleCopy() {
+    const text = extractText(props.children).replace(/\n$/, '');
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* clipboard unavailable — silently ignore, matches other copy actions */
+    }
+  }
+
+  return (
+    <div className="group/code relative">
+      <pre {...props} />
+      <button
+        type="button"
+        onClick={handleCopy}
+        title="Copy code"
+        className="absolute right-2 top-2 flex items-center gap-1 rounded-md border border-white/15 bg-black/60 px-2 py-1 text-[10px] text-white/60 opacity-0 backdrop-blur transition hover:border-white/30 hover:text-white group-hover/code:opacity-100"
+      >
+        {copied ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
+        {copied ? 'Copied' : 'Copy'}
+      </button>
+    </div>
+  );
+}
 
 interface ChatColumnProps {
   messages: ChatMessage[];
@@ -278,9 +345,16 @@ export function ChatColumn({
                     <span className="animate-bounce [animation-delay:-0.15s]">🦙</span>
                     <span className="animate-bounce [animation-delay:-0.05s]">🦙</span>
                   </div>
+                ) : m.content && looksLikePseudoToolCall(m.content) && isStreaming ? (
+                  <PseudoToolCallIndicator />
                 ) : m.content ? (
                   <div className="prose prose-invert max-w-none text-white/90 prose-p:my-2 prose-ul:my-2 prose-li:my-1 prose-pre:my-3 prose-code:px-1 prose-code:py-0.5 prose-code:bg-white/10 prose-code:rounded">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content}</ReactMarkdown>
+                    <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ pre: CodeBlockPre }}>
+                      {(() => {
+                        const parsed = parsePseudoToolCall(m.content);
+                        return parsed ? renderPseudoToolCallAsMarkdown(parsed) : m.content;
+                      })()}
+                    </ReactMarkdown>
                   </div>
                 ) : (
                   // Generation finished but produced no real answer — most often the
@@ -315,7 +389,9 @@ export function ChatColumn({
                   title="Copy message"
                   onClick={async () => {
                     try {
-                      await navigator.clipboard.writeText(m.content);
+                      const parsed = parsePseudoToolCall(m.content);
+                      const toCopy = parsed ? renderPseudoToolCallAsMarkdown(parsed) : m.content;
+                      await navigator.clipboard.writeText(toCopy);
                       useToastStore
                         .getState()
                         .push({ type: 'success', message: 'Copied to clipboard' });
