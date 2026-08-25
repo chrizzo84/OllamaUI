@@ -3,8 +3,8 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Gauge, RotateCcw } from 'lucide-react';
 import { usePrefsStore } from '@/store/prefs';
+import { DEFAULT_MIN_NUM_CTX } from '@/lib/utils';
 
-const OLLAMA_DEFAULT_CTX = 4096;
 const MIN_CTX = 2048;
 const STEP = 1024;
 const PRESETS = [4096, 8192, 16384, 32768, 65536, 131072, 262144];
@@ -88,7 +88,10 @@ export function NumCtxControl({
   if (!model || !maxContext || maxContext <= MIN_CTX) return null;
 
   const active = numCtx != null;
-  const sliderValue = numCtx ?? OLLAMA_DEFAULT_CTX;
+  // Mirrors the fallback the app actually sends when there's no override
+  // (see DEFAULT_MIN_NUM_CTX / chat-panel.tsx) — never exceeds the model max.
+  const defaultValue = Math.min(DEFAULT_MIN_NUM_CTX, maxContext);
+  const sliderValue = numCtx ?? defaultValue;
   const presets = PRESETS.filter((p) => p <= maxContext);
   if (presets[presets.length - 1] !== maxContext) presets.push(maxContext);
 
@@ -137,7 +140,7 @@ export function NumCtxControl({
               type="button"
               onClick={() => setNumCtxForModel(model, p)}
               className={`rounded-md border px-2 py-1 text-[10px] font-mono transition ${
-                sliderValue === p && active
+                sliderValue === p
                   ? 'border-[rgb(var(--accent-glow)/0.5)] bg-[rgb(var(--accent-glow)/0.18)] text-white'
                   : 'border-white/10 bg-white/5 text-white/50 hover:text-white/85 hover:border-white/25'
               }`}
@@ -150,7 +153,7 @@ export function NumCtxControl({
             onClick={() => setNumCtxForModel(model, null)}
             disabled={!active}
             className="rounded-md border border-white/10 bg-white/5 px-2 py-1 text-[10px] font-mono text-white/50 hover:text-white/85 hover:border-white/25 transition disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-1"
-            title="Remove the override and use the Ollama server default"
+            title={`Remove the override and use the app default (${formatTokens(defaultValue)})`}
           >
             <RotateCcw className="h-2.5 w-2.5" /> Default
           </button>
@@ -158,7 +161,8 @@ export function NumCtxControl({
 
         <p className="text-[10px] leading-relaxed text-white/35">
           Applies from the next message — Ollama reloads the model with the new window. Larger
-          windows need significantly more (V)RAM.
+          windows need significantly more (V)RAM. Without an override this app defaults to{' '}
+          {formatTokens(defaultValue)} (Ollama&apos;s own server default is often just 4K).
         </p>
       </div>
     ) : null;
@@ -177,11 +181,11 @@ export function NumCtxControl({
         title={
           active
             ? `Context window override for ${model}: ${sliderValue} tokens (sent as num_ctx). Model maximum: ${maxContext}.`
-            : `Set the context window (num_ctx) for ${model}. Without an override the Ollama server default applies (usually 4096). Model maximum: ${maxContext}.`
+            : `Context window (num_ctx) for ${model}: ${defaultValue} tokens (app default — click to override). Model maximum: ${maxContext}.`
         }
       >
         <Gauge className="h-3 w-3" />
-        {active ? `num_ctx ${formatTokens(sliderValue)}` : 'num_ctx auto'}
+        num_ctx {formatTokens(sliderValue)}
       </button>
       {popover && createPortal(popover, document.body)}
     </>

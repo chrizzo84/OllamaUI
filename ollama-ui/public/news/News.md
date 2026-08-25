@@ -1,5 +1,17 @@
 Chronological list of notable changes to Ollama UI.
 
+## 2026-08-25
+
+- **Running Models Page**
+  - New `/running` page — a live `ollama ps` equivalent showing every currently loaded model: CPU/GPU memory split (with a visual bar), effective context window, quantization/parameter-size/family badges, and a live countdown to when Ollama will auto-unload it.
+  - Summary cards at the top total loaded models, VRAM in use and system RAM in use. One-click **Unload** button per model (reuses the existing stop/unload endpoint); the list auto-refreshes every 4 seconds. Reachable from the sidebar and the ⌘K command palette.
+
+- **Chat Reliability Fixes**
+  - Fixed a tool-calling bug where the model could silently lose its final answer: after exhausting the tool-call budget, a model's last tool request was dropped without ever letting it answer in plain text. The final iteration now omits tools entirely, forcing a real answer instead.
+  - Session saves (send / regenerate / delete / compact) are now written in strict order per session — a slow, stale save can no longer land after a newer one and silently revert a chat to an earlier state after reload.
+  - Errors during streaming now keep their real message instead of collapsing into a generic "[Chat error]"; failures are also logged to the console for easier debugging.
+  - Added timeouts to the chat, auto-compact, title-generation and web-search requests, so a hung Ollama host or SearXNG instance can no longer leave a spinner running forever.
+
 ## 2026-07-19
 
 - **Command Palette (⌘K / Ctrl+K)**

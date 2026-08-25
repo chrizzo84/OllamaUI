@@ -50,6 +50,7 @@
 - 🛠️ Tool-calling for capable models (`web_search` via SearXNG, `get_current_date`)
 - 🗜️ Context compaction — summarize older chat history into a dense context note via the model itself (with undo)
 - 📏 Honest context-window badge (real runtime `num_ctx` from `/api/ps`, not the model's theoretical max) + per-model context slider up to the model's maximum
+- 🖥️ Running Models page — live `ollama ps` view with CPU/GPU memory split, context window, auto-unload countdown and one-click unload
 - 🎨 Theme-adaptive glass UI — 5 accent themes driving an ambient aurora background, glass cards, charts and scrollbars
 - 📊 Dashboard with model stats and accessible, colorblind-safe charts
 - 🔔 Toast notifications (success / error / info)

@@ -232,7 +232,9 @@ export function useColumnChat(column: 'A' | 'B', sessionId: string | null): Colu
         if (e instanceof Error && e.name === 'AbortError') {
           // user-initiated stop: keep whatever content already streamed
         } else {
-          update(assistantId, { content: '[Chat error]' });
+          console.error('Chat stream failed', e);
+          const detail = e instanceof Error ? e.message : String(e);
+          update(assistantId, { content: `[Chat error] ${detail}` });
         }
       } finally {
         setLoading(false);

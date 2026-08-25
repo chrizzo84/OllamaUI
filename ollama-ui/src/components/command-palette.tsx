@@ -12,6 +12,7 @@ import {
   Plus,
   Server,
   Palette,
+  Activity,
 } from 'lucide-react';
 import { useSessionsStore } from '@/store/sessions';
 import { useThemeStore, type ThemeName } from '@/store/theme';
@@ -38,6 +39,7 @@ const PAGES: { href: string; label: string; icon: PaletteAction['icon'] }[] = [
   { href: '/', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/chat', label: 'Chat', icon: MessagesSquare },
   { href: '/models', label: 'Models', icon: Package },
+  { href: '/running', label: 'Running', icon: Activity },
   { href: '/lamas', label: 'Profiles', icon: Layers },
   { href: '/settings', label: 'Settings', icon: Settings },
 ];

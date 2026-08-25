@@ -49,6 +49,9 @@ export async function POST(req: NextRequest) {
     const upstream = await fetch(`${base}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      // Without this, a hung Ollama host leaves `compacting` stuck true
+      // forever, blocking the toolbar action and future auto-compact checks.
+      signal: AbortSignal.timeout(90_000),
       body: JSON.stringify({
         model,
         messages: [

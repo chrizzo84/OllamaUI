@@ -11,6 +11,7 @@ import {
   Copy,
   RefreshCw,
   Trash2,
+  AlertTriangle,
 } from 'lucide-react';
 import { ChatMessage, TraceEvent } from '@/store/chat';
 import { useToastStore } from '@/store/toast';
@@ -282,10 +283,18 @@ export function ChatColumn({
                     <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content}</ReactMarkdown>
                   </div>
                 ) : (
-                  <div className="flex items-center gap-1 h-6">
-                    <span className="animate-bounce [animation-delay:-0.25s]">🦙</span>
-                    <span className="animate-bounce [animation-delay:-0.15s]">🦙</span>
-                    <span className="animate-bounce [animation-delay:-0.05s]">🦙</span>
+                  // Generation finished but produced no real answer — most often the
+                  // model spent its whole context window "thinking" (see the trace
+                  // above) and never got to write a reply. Say so instead of looking
+                  // like it's still loading forever.
+                  <div className="flex items-start gap-1.5 text-amber-200/70 text-xs">
+                    <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                    <span>
+                      No answer was produced
+                      {trace.length > 0
+                        ? ' — the model likely ran out of context while reasoning (see above). Try increasing the context window or regenerate.'
+                        : '.'}
+                    </span>
                   </div>
                 )}
                 {!isStreaming &&
