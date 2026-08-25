@@ -41,6 +41,12 @@ export function safeUuid() {
   return 'id-' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 }
 
+// Default floor for a model's context window (num_ctx) when the user hasn't
+// set an explicit per-model override. Ollama's own server default is often
+// just 4096, which reasoning models can burn through mid-thought and never
+// reach an actual answer — never exceeds the model's real maximum.
+export const DEFAULT_MIN_NUM_CTX = 16384;
+
 // Known thinking/reasoning model name patterns
 const THINKING_MODEL_PATTERNS = [/qwen3/i, /deepseek-r\d/i, /phi4-reasoning/i, /marco-o1/i, /qwq/i];
 

@@ -2,6 +2,10 @@
 // from the standalone /api/tools/web-search route and directly (in-process)
 // from the /api/chat tool-calling loop.
 
+// A hung SearXNG backend previously stalled the whole tool call (and the
+// chat turn waiting on it) indefinitely. Bound each page fetch.
+const SEARCH_TIMEOUT_MS = 20_000;
+
 const FALLBACK =
   (
     process.env.SEARXNG_HOST ||
@@ -76,7 +80,11 @@ export async function performWebSearch(opts: WebSearchOptions): Promise<WebSearc
     let t = template;
     if (hasPage) t = t.replace('<page>', String(pageNum));
     const fullUrl = buildUrl(t, q);
-    return fetch(fullUrl, { headers: { Accept: 'application/json' }, cache: 'no-store' })
+    return fetch(fullUrl, {
+      headers: { Accept: 'application/json' },
+      cache: 'no-store',
+      signal: AbortSignal.timeout(SEARCH_TIMEOUT_MS),
+    })
       .then((r) => (r.ok ? r.json() : null))
       .catch(() => null);
   });

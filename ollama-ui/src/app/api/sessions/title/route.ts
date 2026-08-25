@@ -39,6 +39,10 @@ export async function POST(req: NextRequest) {
     const upstream = await fetch(`${base}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      // Without this, a hung Ollama host leaves the session stuck on
+      // titleStatus 'pending' forever — the caller's fallback title only
+      // fires on an actual error/rejection, not on a request that never settles.
+      signal: AbortSignal.timeout(45_000),
       body: JSON.stringify({
         model,
         messages: [{ role: 'user', content: prompt }],

@@ -3,8 +3,9 @@ import { ThemeSwitcher } from '@/components/theme-switcher';
 import { useThemeStore } from '@/store/theme';
 import { usePrefsStore } from '@/store/prefs';
 import { useToolsStore } from '@/store/tools';
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { LocalStorageInfo } from '@/components/local-storage-info';
+import { HostManagerPanel } from '@/components/host-manager-panel';
 
 export default function SettingsPage() {
   const theme = useThemeStore((s) => s.theme);
@@ -22,44 +23,35 @@ export default function SettingsPage() {
   const setToolsEnabled = useToolsStore((s) => s.setToolsEnabled);
   const searxngTemplate = useToolsStore((s) => s.searxngTemplate);
   const setSearxngTemplate = useToolsStore((s) => s.setSearxngTemplate);
-  const [activeHost, setActiveHost] = useState<string | null>(null);
 
   useEffect(() => {
     hydratePrefs();
     hydrateTools();
   }, [hydratePrefs, hydrateTools]);
 
-  useEffect(() => {
-    async function loadHost() {
-      try {
-        const r = await fetch('/api/hosts');
-        if (!r.ok) return;
-        const j = await r.json();
-        type Host = { url: string; active: boolean };
-        const active = Array.isArray(j.hosts) ? (j.hosts as Host[]).find((h) => !!h.active) : null;
-        setActiveHost(active?.url || null);
-      } catch {
-        /* ignore */
-      }
-    }
-    loadHost();
-    function onActive() {
-      loadHost();
-    }
-    window.addEventListener('active-host-changed', onActive as EventListener);
-    return () => window.removeEventListener('active-host-changed', onActive as EventListener);
-  }, []);
   return (
     <div className="p-6 flex flex-col gap-8 max-w-3xl mx-auto items-center">
       <div className="w-full flex flex-col gap-8">
+        <div>
+          <span className="block text-center text-[10px] font-mono uppercase tracking-wider text-white/30 mb-1">
+            Preferences
+          </span>
+          <h2 className="text-3xl font-bold tracking-tight text-gradient-hero text-center mb-4">
+            Settings
+          </h2>
+        </div>
+        <section className="glass-card p-5 flex flex-col gap-4">
+          <div>
+            <h2 className="text-lg font-semibold text-white/90 mb-1">Ollama Host</h2>
+            <p className="text-xs text-white/50 mb-4">
+              Add and activate the Ollama server this app talks to. Nothing else works — models,
+              chat, everything — until a host is added here and marked active (the green dot).
+            </p>
+            <HostManagerPanel />
+          </div>
+        </section>
         <section className="glass-card p-5 flex flex-col gap-8">
           <div>
-            <span className="block text-center text-[10px] font-mono uppercase tracking-wider text-white/30 mb-1">
-              Preferences
-            </span>
-            <h2 className="text-3xl font-bold tracking-tight text-gradient-hero text-center mb-4">
-              Settings
-            </h2>
             <h3 className="text-lg font-semibold text-white/90 mb-1">Theme</h3>
             <p className="text-xs text-white/50 mb-3">
               Select an interface theme. Your current choice (
@@ -180,21 +172,6 @@ export default function SettingsPage() {
         <section className="glass-card p-5 flex flex-col gap-4">
           <div>
             <h2 className="text-lg font-semibold text-white/90 mb-1">Infos</h2>
-          </div>
-          <div>
-            <h3 className="text-base font-semibold text-white/80 mb-1">Host</h3>
-            <p className="text-xs text-white/50 mb-3">
-              Currently active Ollama endpoint used for operations.
-            </p>
-            <span
-              className={`cap-pill ${
-                activeHost
-                  ? 'border-emerald-400/25 bg-emerald-500/10 text-emerald-200/80'
-                  : 'border-white/15 bg-white/5 text-white/40'
-              }`}
-            >
-              {activeHost ? activeHost : 'no host configured'}
-            </span>
           </div>
           <div>
             <h3 className="text-base font-semibold text-white/80 mb-1">LocalStorage (readonly)</h3>

@@ -151,12 +151,32 @@ export async function loadSessionMessages(sessionId: string): Promise<ChatMessag
   }
 }
 
+// The PATCH endpoint overwrites `messages` wholesale (no merge, no version
+// check), and callers (send/regenerate/delete/compact) fire this off without
+// awaiting it. Without ordering, a slow earlier write can land after a later,
+// more complete one and silently clobber it back to a stale snapshot. Chain
+// writes per session so they always reach the server in call order.
+const persistQueues = new Map<string, Promise<void>>();
+
 export function persistSessionMessages(sessionId: string, messages: ChatMessage[]): void {
-  fetch(`/api/sessions/${sessionId}`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ messages }),
-  }).catch(() => {
-    /* ignore */
-  });
+  const prior = persistQueues.get(sessionId) ?? Promise.resolve();
+  const next = prior
+    .catch(() => {
+      /* a previous failure shouldn't block this write */
+    })
+    .then(() =>
+      fetch(`/api/sessions/${sessionId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messages }),
+      }),
+    )
+    .then(() => undefined)
+    .catch((e) => {
+      console.error(`Failed to persist messages for session ${sessionId}:`, e);
+    })
+    .finally(() => {
+      if (persistQueues.get(sessionId) === next) persistQueues.delete(sessionId);
+    });
+  persistQueues.set(sessionId, next);
 }

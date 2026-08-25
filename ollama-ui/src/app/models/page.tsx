@@ -1,6 +1,7 @@
 'use client';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
+import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { usePrefsStore } from '@/store/prefs';
 import { motion } from 'framer-motion';
@@ -325,7 +326,11 @@ export default function ModelsPage() {
       {/* Installed models list section (restored) */}
       {!activeHost && (
         <div className="rounded-md border border-yellow-500/30 bg-yellow-500/10 p-4 text-sm text-yellow-200">
-          No active host configured. Please add a host above and activate it.
+          No active host configured.{' '}
+          <Link href="/settings" className="underline hover:text-yellow-100">
+            Add and activate one under Settings → Ollama Host
+          </Link>
+          .
         </div>
       )}
       {isLoading && activeHost && (

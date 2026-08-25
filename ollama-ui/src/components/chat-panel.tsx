@@ -12,7 +12,7 @@ import { ChatColumn } from './chat-column';
 import { NumCtxControl } from './num-ctx-control';
 import { Brain, Wrench, Search, TriangleAlert, Send, Square, FoldVertical } from 'lucide-react';
 import { Button } from './ui/button';
-import { hasCapability, safeUuid } from '@/lib/utils';
+import { DEFAULT_MIN_NUM_CTX, hasCapability, safeUuid } from '@/lib/utils';
 
 interface ModelTag {
   name: string;
@@ -129,7 +129,7 @@ function ContextBadge({
       titleParts.push(`Model maximum: ${maxContext} tokens`);
   } else {
     titleParts.push(
-      `Model maximum: ${maxContext} tokens — the actual runtime window is set by the Ollama server (default 4096) and is often much smaller. Load the model to see the effective value.`,
+      `Model maximum: ${maxContext} tokens — the app requests at least ${DEFAULT_MIN_NUM_CTX} tokens by default (see the num_ctx control). Load the model to see the actual runtime value.`,
     );
   }
   return (
@@ -241,17 +241,28 @@ export function ChatPanel() {
   const supportsToolsA = hasCapability(capsA, 'tools');
   const effectiveCtxA = useEffectiveContext(columnA.model);
   const effectiveCtxB = useEffectiveContext(compareMode ? columnB.model : '');
-  const numCtxA = usePrefsStore((s) =>
-    columnA.model ? s.numCtxByModel[columnA.model] : undefined,
-  );
-  const numCtxB = usePrefsStore((s) =>
-    columnB.model ? s.numCtxByModel[columnB.model] : undefined,
-  );
 
   const contextLengthA = data?.models.find((m) => m.name === columnA.model)?.details
     ?.context_length;
   const contextLengthB = data?.models.find((m) => m.name === columnB.model)?.details
     ?.context_length;
+
+  const numCtxOverrideA = usePrefsStore((s) =>
+    columnA.model ? s.numCtxByModel[columnA.model] : undefined,
+  );
+  const numCtxOverrideB = usePrefsStore((s) =>
+    columnB.model ? s.numCtxByModel[columnB.model] : undefined,
+  );
+  const numCtxA =
+    numCtxOverrideA ??
+    (columnA.model
+      ? Math.min(DEFAULT_MIN_NUM_CTX, contextLengthA ?? DEFAULT_MIN_NUM_CTX)
+      : undefined);
+  const numCtxB =
+    numCtxOverrideB ??
+    (columnB.model
+      ? Math.min(DEFAULT_MIN_NUM_CTX, contextLengthB ?? DEFAULT_MIN_NUM_CTX)
+      : undefined);
   const lastPromptTokensA = [...columnA.messages]
     .reverse()
     .find((m) => m.role === 'assistant' && m.stats?.promptTokens != null)?.stats?.promptTokens;

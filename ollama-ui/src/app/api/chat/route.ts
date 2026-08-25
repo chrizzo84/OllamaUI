@@ -34,8 +34,39 @@ interface ChatMessageIn {
 export const runtime = 'nodejs';
 
 // Bounds how many times the model may call tools in a single request before
-// we force a final answer, so a confused model can't loop forever.
-const MAX_TOOL_ITERATIONS = 4;
+// we force a final answer, so a confused model can't loop forever. The last
+// iteration always omits `tools` from the upstream request (see below), so
+// the model gets one guaranteed tool-free turn to write its actual answer.
+const MAX_TOOL_ITERATIONS = 6;
+
+// Idle timeout for the upstream Ollama connection (see createIdleAbort). Kept
+// generous since a cold local model load can legitimately take minutes.
+const OLLAMA_IDLE_TIMEOUT_MS = 180_000;
+
+// An AbortController that fires if `kick()` isn't called again within `ms`,
+// instead of firing at a fixed deadline — so it only trips on genuine
+// inactivity (no response, or a body stream that stalls mid-generation).
+function createIdleAbort(ms: number) {
+  const controller = new AbortController();
+  let timedOut = false;
+  let timer: ReturnType<typeof setTimeout>;
+  const arm = () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, ms);
+  };
+  arm();
+  return {
+    signal: controller.signal,
+    kick: arm,
+    clear: () => clearTimeout(timer),
+    get timedOut() {
+      return timedOut;
+    },
+  };
+}
 
 const WEB_SEARCH_TOOL = {
   type: 'function',
@@ -155,27 +186,45 @@ export async function POST(req: NextRequest) {
         }
 
         for (let iter = 0; iter < MAX_TOOL_ITERATIONS; iter++) {
+          const isLastIteration = iter === MAX_TOOL_ITERATIONS - 1;
+          // Idle timeout: aborts if Ollama neither responds nor emits a body
+          // chunk for this long, instead of hanging the request (and the
+          // client's spinner) forever. Reset on every chunk, so a slow but
+          // steady generation (or a long cold model load) is never cut off.
+          const idle = createIdleAbort(OLLAMA_IDLE_TIMEOUT_MS);
           let upstream: Response;
           try {
             upstream = await fetch(`${base}/api/chat`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
+              signal: idle.signal,
               body: JSON.stringify({
                 model,
                 messages,
                 stream: true,
                 think,
                 ...(options ? { options } : {}),
-                ...(toolsEnabled ? { tools: AVAILABLE_TOOLS } : {}),
+                // Omit tools on the final iteration so the model can't get
+                // stuck requesting one more tool call that we'd have to drop;
+                // it's forced to answer in plain text instead.
+                ...(toolsEnabled && !isLastIteration ? { tools: AVAILABLE_TOOLS } : {}),
               }),
             });
           } catch (e) {
-            emit({ error: e instanceof Error ? e.message : 'Failed to reach Ollama host' });
+            idle.clear();
+            emit({
+              error: idle.timedOut
+                ? `Ollama did not respond within ${OLLAMA_IDLE_TIMEOUT_MS / 1000}s (timed out)`
+                : e instanceof Error
+                  ? e.message
+                  : 'Failed to reach Ollama host',
+            });
             controller.close();
             return;
           }
 
           if (!upstream.ok || !upstream.body) {
+            idle.clear();
             const txt = await upstream.text().catch(() => '');
             emit({ error: txt || `Upstream error (${upstream.status})` });
             controller.close();
@@ -225,30 +274,45 @@ export async function POST(req: NextRequest) {
             }
           }
 
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            buffer += decoder.decode(value, { stream: true });
-            let idx;
-            while ((idx = buffer.indexOf('\n')) !== -1) {
-              const line = buffer.slice(0, idx).trim();
-              buffer = buffer.slice(idx + 1);
-              if (!line) continue;
-              try {
-                handleParsed(JSON.parse(line) as UpstreamMessageChunk);
-              } catch {
-                emit({ raw: line });
+          try {
+            while (true) {
+              const { done, value } = await reader.read();
+              idle.kick();
+              if (done) break;
+              buffer += decoder.decode(value, { stream: true });
+              let idx;
+              while ((idx = buffer.indexOf('\n')) !== -1) {
+                const line = buffer.slice(0, idx).trim();
+                buffer = buffer.slice(idx + 1);
+                if (!line) continue;
+                try {
+                  handleParsed(JSON.parse(line) as UpstreamMessageChunk);
+                } catch {
+                  emit({ raw: line });
+                }
+                if (fatalError) break;
               }
               if (fatalError) break;
             }
-            if (fatalError) break;
-          }
-          if (!fatalError && buffer.trim()) {
-            try {
-              handleParsed(JSON.parse(buffer.trim()) as UpstreamMessageChunk);
-            } catch {
-              emit({ raw: buffer.trim() });
+            if (!fatalError && buffer.trim()) {
+              try {
+                handleParsed(JSON.parse(buffer.trim()) as UpstreamMessageChunk);
+              } catch {
+                emit({ raw: buffer.trim() });
+              }
             }
+          } catch (e) {
+            emit({
+              error: idle.timedOut
+                ? `Ollama stopped responding (idle for ${OLLAMA_IDLE_TIMEOUT_MS / 1000}s)`
+                : e instanceof Error
+                  ? e.message
+                  : 'Stream read failed',
+            });
+            controller.close();
+            return;
+          } finally {
+            idle.clear();
           }
 
           if (fatalError) {
@@ -261,7 +325,7 @@ export async function POST(req: NextRequest) {
           if (turnPromptTokens !== undefined) lastPromptTokens = turnPromptTokens;
 
           const validToolCalls = turnToolCalls.filter((c) => c.function?.name);
-          if (validToolCalls.length && toolsEnabled && iter < MAX_TOOL_ITERATIONS - 1) {
+          if (validToolCalls.length && toolsEnabled && !isLastIteration) {
             messages.push({ role: 'assistant', content: turnContent, tool_calls: validToolCalls });
             for (const call of validToolCalls) {
               const name = call.function!.name!;
