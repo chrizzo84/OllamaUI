@@ -13,8 +13,10 @@ RUN apt-get clean \
  && for i in 1 2 3; do apt-get install -y --fix-missing python3 make g++ && break || sleep 5; done \
  && rm -rf /var/lib/apt/lists/*
 
-# Install pnpm
-RUN corepack enable && corepack prepare pnpm@latest --activate
+# Enable corepack; the exact pnpm version comes from package.json's
+# "packageManager" field once it's copied in below (see Dockerfile for why
+# pinning @latest here is wrong).
+RUN corepack enable
 
 # Copy package files
 COPY ollama-ui/package.json ollama-ui/pnpm-lock.yaml ./ollama-ui/
