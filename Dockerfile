@@ -2,8 +2,12 @@
 FROM node:24-bullseye-slim AS builder
 WORKDIR /build
 
-# Install pnpm (preferred) – fallback to npm if desired
-RUN corepack enable && corepack prepare pnpm@latest --activate
+# Enable corepack; the exact pnpm version comes from package.json's
+# "packageManager" field once it's copied in below. Pinning to @latest here
+# instead would drift from the lockfile's pnpm version over time and can
+# make --frozen-lockfile reject an otherwise-valid lockfile (overrides are
+# hashed differently across pnpm majors).
+RUN corepack enable
 
 # Copy only package manifests first for better caching
 COPY ollama-ui/package.json ollama-ui/pnpm-lock.yaml ./ollama-ui/
