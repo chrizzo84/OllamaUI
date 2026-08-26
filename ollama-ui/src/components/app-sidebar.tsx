@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { useSessionsStore } from '@/store/sessions';
 import { HostIndicator } from './header-brand';
+import { BackgroundJobsIndicator } from './background-jobs-indicator';
 
 const COLLAPSE_KEY = 'ollama_ui_sidebar_collapsed';
 
@@ -179,7 +180,10 @@ export function AppSidebar() {
             <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.9)]"></span>
           </span>
         ) : (
-          <HostIndicator />
+          <div className="flex flex-col gap-2">
+            <HostIndicator />
+            <BackgroundJobsIndicator />
+          </div>
         )}
       </div>
 
