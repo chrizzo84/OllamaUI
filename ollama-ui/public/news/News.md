@@ -1,5 +1,25 @@
 Chronological list of notable changes to Ollama UI.
 
+## 2026-08-26
+
+- **Chat Generation Survives Closing the Tab**
+  - Sending a message no longer ties the model's response to your browser connection. Generation now runs as a server-side job — close the tab, and it keeps going and saves normally; reopen it (or open a different tab or device on the network) and it picks the live response back up where it left off, including reasoning and tool-call traces.
+  - **Stop** now actually cancels generation server-side instead of just hiding it in your tab.
+  - A small "N generating" badge in the sidebar (visible on every page, not just Chat) shows what's still running; click it to jump straight to any of them. A toast pops up when a background reply finishes elsewhere, and the browser tab title flashes if you're not currently looking at it — no notification permissions or HTTPS required.
+
+- **Unsupported Tool-Call Cleanup**
+  - Some model fine-tunes emit a plain-text pseudo tool-call syntax for tools this app never declared, which used to stream through as raw, ugly tag soup. It's now detected live (shown as a clean "cleaning up…" indicator while streaming) and rendered as a normal, readable code block once the message finishes.
+  - Every code block in chat now has its own hover **Copy** button, not just a whole-message copy.
+
+- **Chat Composer & Layout Fixes**
+  - A context-usage progress bar now sits right above the message box (in addition to the small badge up top), so you can see at a glance how full the context window is without hunting for it.
+  - Fixed: while a model was still loading into memory, the chat showed the same "🦙 Thinking…" animation as actual reasoning — misleading, since the model hadn't started yet. It now clearly says "Loading model… Ns" until the first real token/thought arrives.
+  - Fixed: the chat page was capped at a fixed max-width instead of filling the browser window, and — separately — message text itself was stuck at a ~65-character column width no matter how wide the window was (the `@tailwindcss/typography` plugin was never actually activated; a hand-rolled CSS fallback silently overrode the app's own `max-w-none`). Both now fill the available width properly.
+  - Fixed: **Compact** could silently replace older chat history with a near-empty, garbage summary if the model returned a degenerate response (seen in practice: a single stray character) — now validated and rejected with a clear error instead of quietly losing context.
+
+- **Dependency Security**
+  - Patched 23 JS dependency advisories (Next.js middleware bypass/SSRF/DoS fixes among them) and an XXE advisory in the Python scraper's `lxml` dependency.
+
 ## 2026-08-25
 
 - **Running Models Page**

@@ -148,6 +148,54 @@ function ContextBadge({
   );
 }
 
+// Same data as ContextBadge, but as a slim progress bar right above the
+// composer — the small pill up in the toolbar is easy to miss; this sits
+// exactly where you're already looking before you type.
+function ContextUsageBar({
+  label,
+  maxContext,
+  effectiveContext,
+  usedTokens,
+}: {
+  label?: string;
+  maxContext: number | undefined;
+  effectiveContext: number | undefined;
+  usedTokens: number | undefined;
+}) {
+  const limit = effectiveContext ?? maxContext;
+  if (!limit) return null;
+  const isRuntime = effectiveContext != null;
+  const pct = usedTokens != null ? Math.min(100, Math.round((usedTokens / limit) * 100)) : 0;
+  const barColor =
+    pct >= 90 ? 'bg-red-500' : pct >= 75 ? 'bg-amber-500' : 'bg-[rgb(var(--accent-glow))]';
+  const titleParts: string[] = [];
+  if (usedTokens != null) titleParts.push(`~${usedTokens} context tokens used (last request)`);
+  titleParts.push(
+    isRuntime
+      ? `Runtime context window (num_ctx): ${effectiveContext} tokens`
+      : `Model maximum: ${maxContext} tokens — load the model to see the real runtime value.`,
+  );
+  return (
+    <div
+      className="flex items-center gap-2 text-[10px] text-white/40"
+      title={titleParts.join(' · ')}
+    >
+      {label && <span className="shrink-0 font-mono uppercase tracking-wide">{label}</span>}
+      <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-white/10">
+        <div
+          className={`h-full rounded-full transition-[width] ${barColor}`}
+          style={{ width: `${usedTokens != null ? pct : 0}%` }}
+        />
+      </div>
+      <span className="shrink-0 font-mono tabular-nums">
+        {usedTokens != null
+          ? `${formatTokenCount(usedTokens)}/${isRuntime ? '' : '≤'}${formatTokenCount(limit)}`
+          : `${isRuntime ? '' : '≤'}${formatTokenCount(limit)} ctx`}
+      </span>
+    </div>
+  );
+}
+
 function ModelSelect({
   value,
   onChange,
@@ -739,6 +787,24 @@ export function ChatPanel() {
               change in Settings
             </a>
           </div>
+          {(contextLengthA || contextLengthB) && (
+            <div className="flex flex-col gap-1">
+              <ContextUsageBar
+                label={compareMode ? 'A' : undefined}
+                maxContext={contextLengthA}
+                effectiveContext={effectiveCtxA}
+                usedTokens={lastPromptTokensA}
+              />
+              {compareMode && (
+                <ContextUsageBar
+                  label="B"
+                  maxContext={contextLengthB}
+                  effectiveContext={effectiveCtxB}
+                  usedTokens={lastPromptTokensB}
+                />
+              )}
+            </div>
+          )}
           <textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
