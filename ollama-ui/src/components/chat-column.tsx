@@ -301,7 +301,12 @@ export function ChatColumn({
                 }`}
               />
               {m.role}
-              {isStreaming && !m.content && (
+              {isStreaming && !m.content && coldStart && (
+                <span className="text-indigo-300/80 flex items-center gap-1 normal-case">
+                  <span className="animate-pulse">●</span> Loading model… {coldElapsed}s
+                </span>
+              )}
+              {isStreaming && !m.content && !coldStart && (
                 <span className="text-amber-400/70 flex items-center gap-1 normal-case">
                   <span className="animate-pulse">●</span> {traceActive ? 'Working…' : 'Thinking…'}
                 </span>
@@ -339,7 +344,19 @@ export function ChatColumn({
                     />
                   );
                 })}
-                {!m.content && isStreaming ? (
+                {!m.content && isStreaming && coldStart ? (
+                  // Distinct from the "thinking" llamas below — the model
+                  // hasn't started reasoning yet, it's still being loaded
+                  // into memory. Conflating the two was misleading: minutes
+                  // of "Thinking…" for a model that hadn't even started.
+                  <div className="flex items-center gap-2 h-6 text-xs text-indigo-300/70">
+                    <span className="relative flex h-2 w-2">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400/60"></span>
+                      <span className="relative inline-flex h-2 w-2 rounded-full bg-indigo-400"></span>
+                    </span>
+                    Loading model into memory… {coldElapsed}s
+                  </div>
+                ) : !m.content && isStreaming ? (
                   <div className="flex items-center gap-1 h-6">
                     <span className="animate-bounce [animation-delay:-0.25s]">🦙</span>
                     <span className="animate-bounce [animation-delay:-0.15s]">🦙</span>

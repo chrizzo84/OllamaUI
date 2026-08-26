@@ -69,10 +69,25 @@ export async function POST(req: NextRequest) {
     }
     const data = await upstream.json();
     const raw = data?.message?.content;
-    if (typeof raw !== 'string' || !raw.trim()) {
-      return new Response(JSON.stringify({ error: 'Empty summary response' }), { status: 502 });
+    const summary = typeof raw === 'string' ? raw.trim() : '';
+    // A real summary of a multi-message conversation is never this short —
+    // this catches degenerate completions (seen in practice: a model
+    // replying with a single stray backtick) that would otherwise silently
+    // replace the older conversation with something useless, which is worse
+    // than just failing: the user loses context and gets no error to explain
+    // why. MIN_SUMMARY_LENGTH is a floor, not a quality bar.
+    const MIN_SUMMARY_LENGTH = 20;
+    if (summary.length < MIN_SUMMARY_LENGTH) {
+      return new Response(
+        JSON.stringify({
+          error: summary
+            ? `Model returned a suspiciously short summary ("${summary}") — refusing to use it`
+            : 'Empty summary response',
+        }),
+        { status: 502 },
+      );
     }
-    return Response.json({ summary: raw.trim() });
+    return Response.json({ summary });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : 'Compaction failed';
     return new Response(JSON.stringify({ error: msg }), { status: 500 });
