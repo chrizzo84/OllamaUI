@@ -18,6 +18,8 @@ import {
   Trash2,
   AlertTriangle,
   Wrench,
+  Pencil,
+  X,
 } from 'lucide-react';
 import { ChatMessage, TraceEvent } from '@/store/chat';
 import { useToastStore } from '@/store/toast';
@@ -100,6 +102,9 @@ interface ChatColumnProps {
   emptyLabel?: string;
   onRegenerate?: () => void; // only offered for the last assistant message
   onDeletePair?: (assistantMessageId: string) => void;
+  // Editing a user message truncates everything after it and resends the
+  // edited text — see editMessage in chat-panel.tsx.
+  onEditMessage?: (userMessageId: string, newText: string) => void;
 }
 
 function ThinkingLine({
@@ -219,9 +224,28 @@ export function ChatColumn({
   emptyLabel,
   onRegenerate,
   onDeletePair,
+  onEditMessage,
 }: ChatColumnProps) {
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingText, setEditingText] = useState('');
   const containerRef = useRef<HTMLDivElement | null>(null);
+
+  function startEdit(m: ChatMessage) {
+    setEditingId(m.id);
+    setEditingText(m.content);
+  }
+
+  function cancelEdit() {
+    setEditingId(null);
+    setEditingText('');
+  }
+
+  function saveEdit(id: string) {
+    const text = editingText.trim();
+    setEditingId(null);
+    if (text) onEditMessage?.(id, text);
+  }
 
   useEffect(() => {
     const el = containerRef.current;
@@ -349,9 +373,61 @@ export function ChatColumn({
               )}
             </div>
             {isUser ? (
-              <div className="whitespace-pre-wrap text-white/90 font-light dark-green-chat-user-text">
-                {m.content}
-              </div>
+              editingId === m.id ? (
+                <div className="flex flex-col gap-2">
+                  <textarea
+                    autoFocus
+                    value={editingText}
+                    onChange={(e) => setEditingText(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        saveEdit(m.id);
+                      }
+                      if (e.key === 'Escape') cancelEdit();
+                    }}
+                    className="min-h-[60px] rounded-lg border border-white/15 bg-black/30 px-2.5 py-2 text-sm text-white focus:outline-none focus:border-[rgb(var(--accent-glow)/0.5)]"
+                  />
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => saveEdit(m.id)}
+                      className="inline-flex items-center gap-1 rounded-md bg-[rgb(var(--accent-glow)/0.2)] px-2 py-1 text-[11px] text-white hover:bg-[rgb(var(--accent-glow)/0.3)] transition"
+                    >
+                      <Check className="h-3 w-3" /> Save & resend
+                    </button>
+                    <button
+                      type="button"
+                      onClick={cancelEdit}
+                      className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-white/50 hover:text-white/80 hover:bg-white/10 transition"
+                    >
+                      <X className="h-3 w-3" /> Cancel
+                    </button>
+                    <span className="text-[10px] text-white/30">
+                      Everything after this message will be removed and regenerated.
+                    </span>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex flex-col gap-2">
+                  {!!m.images?.length && (
+                    <div className="flex flex-wrap gap-2">
+                      {m.images.map((img, idx) => (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          key={idx}
+                          src={`data:image/png;base64,${img}`}
+                          alt=""
+                          className="max-h-40 rounded-lg border border-white/15 object-contain"
+                        />
+                      ))}
+                    </div>
+                  )}
+                  <div className="whitespace-pre-wrap text-white/90 font-light dark-green-chat-user-text">
+                    {m.content}
+                  </div>
+                </div>
+              )
             ) : (
               <div className="space-y-2">
                 {trace.map((ev, idx) => {
@@ -434,8 +510,18 @@ export function ChatColumn({
                   )}
               </div>
             )}
-            {!isStreaming && (
+            {!isStreaming && editingId !== m.id && (
               <div className="mt-1.5 hidden group-hover:flex items-center gap-1">
+                {onEditMessage && isUser && (
+                  <button
+                    type="button"
+                    title="Edit & resend"
+                    onClick={() => startEdit(m)}
+                    className="p-1 rounded text-white/30 hover:text-white/80 hover:bg-white/10 transition"
+                  >
+                    <Pencil className="h-3 w-3" />
+                  </button>
+                )}
                 <button
                   type="button"
                   title="Copy message"

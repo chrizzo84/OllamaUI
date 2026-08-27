@@ -35,6 +35,7 @@ interface ChatMessageIn {
   content: string;
   tool_calls?: OllamaToolCall[];
   name?: string;
+  images?: string[]; // raw base64, no data: prefix — passed straight through to Ollama
 }
 
 export const runtime = 'nodejs';
@@ -182,6 +183,7 @@ async function runGeneration(job: Job, params: GenerationParams): Promise<void> 
     content: m.content,
     ...(m.tool_calls ? { tool_calls: m.tool_calls } : {}),
     ...(m.name ? { name: m.name } : {}),
+    ...(m.images?.length ? { images: m.images } : {}),
   }));
 
   // Heads-up only, checked once at the start — not a promise either way.

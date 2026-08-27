@@ -31,6 +31,10 @@ export interface ChatMessage {
   createdAt: number;
   model?: string;
   sessionId?: string;
+  // Raw base64 image data (no `data:...;base64,` prefix), matching Ollama's
+  // own `images` field on a chat message — attached by the user, vision
+  // models read them directly. Only ever set on user messages.
+  images?: string[];
 }
 
 interface ChatState {

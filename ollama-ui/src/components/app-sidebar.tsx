@@ -101,11 +101,64 @@ export function AppSidebar() {
     hydrate();
   }, [hydrate]);
 
+  interface SearchResult {
+    id: string;
+    snippet: string;
+    matchField: 'title' | 'message';
+  }
+  // Tagged with the query it answers, rather than reset to null whenever the
+  // query changes — so the effect below never needs to call setState
+  // synchronously in its own body (only from the debounced fetch callback,
+  // which is the pattern used elsewhere in this codebase). Stale results
+  // from a previous query are simply ignored below once `search` moves on.
+  const [searchResults, setSearchResults] = useState<{
+    query: string;
+    results: SearchResult[];
+  } | null>(null);
+  useEffect(() => {
+    const q = search.trim();
+    // Search covers message content too — the lightweight session list here
+    // doesn't carry message bodies (see src/store/sessions.ts), so that has
+    // to go through the server.
+    if (!q) return;
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      try {
+        const r = await fetch(`/api/sessions/search?q=${encodeURIComponent(q)}`, {
+          cache: 'no-store',
+        });
+        if (!r.ok || cancelled) return;
+        const j = await r.json();
+        if (!cancelled) {
+          setSearchResults({ query: q, results: Array.isArray(j.results) ? j.results : [] });
+        }
+      } catch {
+        /* keep whatever results we already had */
+      }
+    }, 200);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [search]);
+
   const sorted = [...sessions].sort((a, b) => b.updatedAt - a.updatedAt);
-  const filtered = sorted.filter((s) => {
-    if (!search.trim()) return true;
-    return s.title.toLowerCase().includes(search.toLowerCase());
-  });
+  const currentResults =
+    searchResults && searchResults.query === search.trim() ? searchResults.results : null;
+  const snippetById = new Map((currentResults ?? []).map((r) => [r.id, r]));
+  const filtered = (() => {
+    const q = search.trim();
+    if (!q) return sorted;
+    if (currentResults) {
+      // Server results are authoritative once loaded — cover title AND
+      // message content, ranked by recency same as the default list.
+      const ids = new Set(currentResults.map((r) => r.id));
+      return sorted.filter((s) => ids.has(s.id));
+    }
+    // Debounced request still in flight — instant title-only filtering so
+    // the list doesn't flash empty while typing.
+    return sorted.filter((s) => s.title.toLowerCase().includes(q.toLowerCase()));
+  })();
 
   return (
     <aside
@@ -210,7 +263,7 @@ export function AppSidebar() {
                 <input
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Search…"
+                  placeholder="Search titles & messages…"
                   className="w-full text-xs bg-white/[0.06] border border-white/10 rounded-lg pl-7 pr-2 py-1.5 text-white placeholder:text-white/25 focus:outline-none focus:border-[rgb(var(--accent-glow)/0.5)] focus:bg-white/[0.08] transition-colors"
                 />
               </div>
@@ -270,9 +323,15 @@ export function AppSidebar() {
                         <div className="text-xs truncate flex items-center gap-1.5">
                           <span className="truncate">{sess.title}</span>
                         </div>
-                        <div className="text-[10px] text-white/30 font-mono mt-0.5">
-                          {formatRelative(sess.updatedAt)}
-                        </div>
+                        {snippetById.get(sess.id)?.matchField === 'message' ? (
+                          <div className="text-[10px] text-white/35 mt-0.5 truncate italic">
+                            “{snippetById.get(sess.id)!.snippet}”
+                          </div>
+                        ) : (
+                          <div className="text-[10px] text-white/30 font-mono mt-0.5">
+                            {formatRelative(sess.updatedAt)}
+                          </div>
+                        )}
                       </button>
                       <div className="hidden group-hover:flex items-center gap-0.5 shrink-0">
                         <button

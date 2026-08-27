@@ -10,9 +10,22 @@ import { usePrefsStore } from '@/store/prefs';
 import { useColumnChat } from '@/hooks/use-column-chat';
 import { ChatColumn } from './chat-column';
 import { NumCtxControl } from './num-ctx-control';
-import { Brain, Wrench, Search, TriangleAlert, Send, Square, FoldVertical } from 'lucide-react';
+import {
+  Brain,
+  Wrench,
+  Search,
+  TriangleAlert,
+  Send,
+  Square,
+  FoldVertical,
+  Download,
+  Paperclip,
+  X,
+  Eye,
+} from 'lucide-react';
 import { Button } from './ui/button';
 import { DEFAULT_MIN_NUM_CTX, hasCapability, safeUuid } from '@/lib/utils';
+import { buildSessionMarkdown, downloadTextFile, slugifyFilename } from '@/lib/export-session';
 
 interface ModelTag {
   name: string;
@@ -23,6 +36,21 @@ interface TagsResponse {
 }
 interface ModelShowResponse {
   capabilities?: string[];
+}
+
+// Reads an image file as raw base64 (no `data:...;base64,` prefix) —
+// Ollama's own wire format for a message's `images` field.
+function readImageAsBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result as string;
+      const comma = result.indexOf(',');
+      resolve(comma === -1 ? result : result.slice(comma + 1));
+    };
+    reader.onerror = () => reject(reader.error ?? new Error('Failed to read file'));
+    reader.readAsDataURL(file);
+  });
 }
 
 async function fetchModels(): Promise<TagsResponse> {
@@ -101,6 +129,11 @@ function CapabilityBadges({ capabilities }: { capabilities: string[] | undefined
       {hasCapability(capabilities, 'tools') && (
         <span className="cap-pill border-cyan-500/30 bg-cyan-500/10 text-cyan-300/90">
           <Wrench className="h-3 w-3" /> tools
+        </span>
+      )}
+      {hasCapability(capabilities, 'vision') && (
+        <span className="cap-pill border-emerald-500/30 bg-emerald-500/10 text-emerald-300/90">
+          <Eye className="h-3 w-3" /> vision
         </span>
       )}
     </>
@@ -236,6 +269,10 @@ export function ChatPanel() {
   >(null);
   const [undoTimeoutId, setUndoTimeoutId] = useState<ReturnType<typeof setTimeout> | null>(null);
   const [input, setInput] = useState('');
+  // Attached-but-not-yet-sent images for the next message. base64 is what
+  // actually goes to Ollama; dataUrl is only for the thumbnail preview.
+  const [pendingImages, setPendingImages] = useState<{ base64: string; dataUrl: string }[]>([]);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const sessions = useSessionsStore((s) => s.sessions);
   const activeSessionId = useSessionsStore((s) => s.activeId);
@@ -287,6 +324,12 @@ export function ChatPanel() {
   const capsA = useModelCapabilities(columnA.model);
   const capsB = useModelCapabilities(compareMode ? columnB.model : '');
   const supportsToolsA = hasCapability(capsA, 'tools');
+  const supportsVisionA = hasCapability(capsA, 'vision');
+  const supportsVisionB = hasCapability(capsB, 'vision');
+  // Permissive while capabilities are still loading (undefined) — only
+  // hides the attach action once a model is confirmed not to support
+  // vision, so the button doesn't flicker in/out on every model switch.
+  const canAttachImages = supportsVisionA !== false || (compareMode && supportsVisionB !== false);
   const effectiveCtxA = useEffectiveContext(columnA.model);
   const effectiveCtxB = useEffectiveContext(compareMode ? columnB.model : '');
 
@@ -397,21 +440,63 @@ export function ChatPanel() {
   async function handleSend() {
     if (!input.trim()) return;
     const text = input.trim();
+    const images = pendingImages.map((i) => i.base64);
     setInput('');
+    // Sent images stay in the store as base64 (persisted onto the message
+    // itself); the object URLs were only ever needed for this composer's
+    // thumbnail preview, so release them now instead of leaking.
+    pendingImages.forEach((i) => URL.revokeObjectURL(i.dataUrl));
+    setPendingImages([]);
     const opts = {
       systemPrompt: activePrompt || undefined,
       toolsEnabled,
       searxTemplate,
     };
     const jobs = [
-      columnA.send(text, { ...opts, think: hasCapability(capsA, 'thinking'), numCtx: numCtxA }),
+      columnA.send(
+        text,
+        { ...opts, think: hasCapability(capsA, 'thinking'), numCtx: numCtxA },
+        images,
+      ),
     ];
     if (compareMode && columnB.model) {
       jobs.push(
-        columnB.send(text, { ...opts, think: hasCapability(capsB, 'thinking'), numCtx: numCtxB }),
+        columnB.send(
+          text,
+          { ...opts, think: hasCapability(capsB, 'thinking'), numCtx: numCtxB },
+          images,
+        ),
       );
     }
     await Promise.all(jobs);
+  }
+
+  async function handleAttachFiles(files: FileList | null) {
+    if (!files || files.length === 0) return;
+    const imageFiles = Array.from(files).filter((f) => f.type.startsWith('image/'));
+    if (imageFiles.length === 0) {
+      pushToast({ type: 'error', message: 'Only image files can be attached.' });
+      return;
+    }
+    try {
+      const read = await Promise.all(
+        imageFiles.map(async (file) => ({
+          base64: await readImageAsBase64(file),
+          dataUrl: URL.createObjectURL(file),
+        })),
+      );
+      setPendingImages((prev) => [...prev, ...read]);
+    } catch {
+      pushToast({ type: 'error', message: 'Could not read one or more images.' });
+    }
+  }
+
+  function removePendingImage(index: number) {
+    setPendingImages((prev) => {
+      const removed = prev[index];
+      if (removed) URL.revokeObjectURL(removed.dataUrl);
+      return prev.filter((_, i) => i !== index);
+    });
   }
 
   function handleStop() {
@@ -435,6 +520,40 @@ export function ChatPanel() {
     setSessionMessages(activeSessionId, remaining);
     persistSessionMessages(activeSessionId, remaining);
     void col.send(lastUserText, {
+      systemPrompt: activePrompt || undefined,
+      toolsEnabled,
+      searxTemplate,
+      think: hasCapability(caps, 'thinking'),
+      numCtx,
+    });
+  }
+
+  function handleExport() {
+    if (!activeSessionId || sessionMessages.length === 0) return;
+    const colA = sessionMessages.filter((m) => (m.column ?? 'A') === 'A');
+    const colB = sessionMessages.filter((m) => (m.column ?? 'A') === 'B');
+    const title = activeSession?.title || 'Chat';
+    const md = buildSessionMarkdown(title, colA, colB.length ? colB : undefined);
+    downloadTextFile(`${slugifyFilename(title)}.md`, md, 'text/markdown');
+  }
+
+  // Editing a user message only makes sense as "rewind to here and continue
+  // differently" — so it removes this message and everything after it in
+  // this column (there's no branching/version history), then resends the
+  // edited text exactly like a fresh send().
+  function editMessage(column: 'A' | 'B', userMessageId: string, newText: string) {
+    const col = column === 'A' ? columnA : columnB;
+    const numCtx = column === 'A' ? numCtxA : numCtxB;
+    const caps = column === 'A' ? capsA : capsB;
+    if (!activeSessionId || !col.model || col.loading) return;
+    const colMessages = sessionMessages.filter((m) => (m.column ?? 'A') === column);
+    const idx = colMessages.findIndex((m) => m.id === userMessageId);
+    if (idx === -1 || colMessages[idx].role !== 'user') return;
+    const toRemove = new Set(colMessages.slice(idx).map((m) => m.id));
+    const remaining = sessionMessages.filter((m) => !toRemove.has(m.id));
+    setSessionMessages(activeSessionId, remaining);
+    persistSessionMessages(activeSessionId, remaining);
+    void col.send(newText, {
       systemPrompt: activePrompt || undefined,
       toolsEnabled,
       searxTemplate,
@@ -733,6 +852,7 @@ export function ChatPanel() {
             emptyLabel={compareMode ? 'Column A — no messages yet.' : 'No messages yet.'}
             onRegenerate={() => regenerateColumn('A')}
             onDeletePair={(id) => deletePair('A', id)}
+            onEditMessage={(id, text) => editMessage('A', id, text)}
           />
           {compareMode && (
             <ChatColumn
@@ -744,6 +864,7 @@ export function ChatPanel() {
               emptyLabel="Column B — no messages yet."
               onRegenerate={() => regenerateColumn('B')}
               onDeletePair={(id) => deletePair('B', id)}
+              onEditMessage={(id, text) => editMessage('B', id, text)}
             />
           )}
         </div>
@@ -807,6 +928,46 @@ export function ChatPanel() {
               )}
             </div>
           )}
+          {pendingImages.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {pendingImages.map((img, idx) => (
+                <div key={idx} className="relative group/thumb">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={img.dataUrl}
+                    alt=""
+                    className="h-14 w-14 rounded-lg object-cover border border-white/15"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => removePendingImage(idx)}
+                    title="Remove image"
+                    className="absolute -right-1.5 -top-1.5 h-4 w-4 grid place-items-center rounded-full bg-black/80 border border-white/20 text-white/70 opacity-0 group-hover/thumb:opacity-100 hover:text-white transition"
+                  >
+                    <X className="h-2.5 w-2.5" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          {pendingImages.length > 0 && !canAttachImages && (
+            <div className="text-[11px] text-amber-300/80 flex items-center gap-1.5">
+              <TriangleAlert className="h-3 w-3 shrink-0" />
+              The selected model doesn&apos;t advertise vision support — it may ignore the attached
+              image(s).
+            </div>
+          )}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            className="hidden"
+            onChange={(e) => {
+              void handleAttachFiles(e.target.files);
+              e.target.value = '';
+            }}
+          />
           <textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
@@ -815,6 +976,18 @@ export function ChatPanel() {
             className="min-h-[72px] rounded-xl border border-white/10 bg-black/25 px-3.5 py-2.5 text-sm text-white placeholder:text-white/25 transition-colors focus:outline-none focus:border-[rgb(var(--accent-glow)/0.5)] focus:ring-2 focus:ring-[rgb(var(--accent-glow)/0.3)]"
           />
           <div className="flex gap-2">
+            {canAttachImages && (
+              <Button
+                onClick={() => fileInputRef.current?.click()}
+                size="sm"
+                variant="outline"
+                title="Attach image(s)"
+              >
+                <span className="inline-flex items-center gap-1.5">
+                  <Paperclip className="h-3.5 w-3.5" /> Attach
+                </span>
+              </Button>
+            )}
             <Button
               onClick={handleSend}
               size="sm"
@@ -842,6 +1015,17 @@ export function ChatPanel() {
             >
               <span className="inline-flex items-center gap-1.5">
                 <FoldVertical className="h-3.5 w-3.5" /> Compact
+              </span>
+            </Button>
+            <Button
+              onClick={handleExport}
+              size="sm"
+              variant="outline"
+              disabled={sessionMessages.length === 0}
+              title="Download this conversation as a Markdown file"
+            >
+              <span className="inline-flex items-center gap-1.5">
+                <Download className="h-3.5 w-3.5" /> Export
               </span>
             </Button>
             {!pendingConfirm && (

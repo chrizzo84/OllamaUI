@@ -28,7 +28,9 @@ export interface ColumnChat {
   coldElapsed: number;
   queuedAhead: number | null;
   lastPayload: unknown;
-  send: (text: string, opts: SendOptions) => Promise<void>;
+  // `images`: raw base64 (no data: prefix) attached to this turn's user
+  // message — see ChatMessage.images in src/store/chat.ts.
+  send: (text: string, opts: SendOptions, images?: string[]) => Promise<void>;
   stop: () => void;
 }
 
@@ -311,7 +313,7 @@ export function useColumnChat(column: 'A' | 'B', sessionId: string | null): Colu
   }, [sessionId, key, column, messages.length, attachToJobStream, patchEntry]);
 
   const send = useCallback(
-    async (text: string, opts: SendOptions) => {
+    async (text: string, opts: SendOptions, images?: string[]) => {
       if (!text.trim() || !model || !sessionId) return;
       const genKey = generationKey(sessionId, column);
       // Guards against this exact session+column already generating (the
@@ -327,6 +329,7 @@ export function useColumnChat(column: 'A' | 'B', sessionId: string | null): Colu
         model,
         sessionId,
         column: columnTag,
+        ...(images?.length ? { images } : {}),
       });
       const assistantId = append({
         role: 'assistant',
@@ -382,7 +385,11 @@ export function useColumnChat(column: 'A' | 'B', sessionId: string | null): Colu
             : []),
           ...current
             .filter((m) => m.role !== 'assistant' || m.content)
-            .map((m) => ({ role: m.role as 'user' | 'assistant' | 'system', content: m.content })),
+            .map((m) => ({
+              role: m.role as 'user' | 'assistant' | 'system',
+              content: m.content,
+              ...(m.images?.length ? { images: m.images } : {}),
+            })),
         ];
         const payload = {
           model,
