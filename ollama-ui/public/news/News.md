@@ -13,6 +13,19 @@ Chronological list of notable changes to Ollama UI.
 - **Math Formulas Now Render Properly**
   - Chat replies containing LaTeX math (`$$...$$` block or `$...$` inline — common when a model explains a formula) used to come through as raw, unreadable text. Now rendered properly via KaTeX, matching the current theme.
 
+- **Edit & Resend**
+  - Hover a message you sent to edit it in place. Saving removes that message and everything after it in that column, then resends the edited text — the same "rewind and continue differently" model as Regenerate, just with your own wording changed instead of asking the model to try again.
+
+- **Search Now Covers Message Content, Not Just Titles**
+  - The sidebar search already existed for session titles; it now also searches inside the messages themselves (new `GET /api/sessions/search`), showing a short snippet of the matching text when the hit isn't in the title.
+
+- **Export a Conversation**
+  - New **Export** button next to Compact — downloads the current session as a readable Markdown file. In Compare mode, both columns are included under their own headings.
+
+- **Image Attachments for Vision Models**
+  - An **Attach** button in the composer lets you add one or more images to a message for vision-capable models (e.g. `minicpm-v`, `gemma4`, `ornith-1.5`) — shown only once the selected model (or, in Compare mode, either model) actually advertises vision support, so it doesn't show up as a dead button for text-only models. Attached images preview as thumbnails (removable before sending) and render inline in the conversation afterwards.
+  - Model capability badges up top (next to "thinking"/"tools") now also show a **vision** badge when the selected model supports it.
+
 ## 2026-08-26
 
 - **Chat Generation Survives Closing the Tab**
