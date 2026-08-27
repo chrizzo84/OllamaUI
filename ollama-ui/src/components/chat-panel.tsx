@@ -729,6 +729,7 @@ export function ChatPanel() {
             streamingId={columnA.streamingId}
             coldStart={columnA.coldStart}
             coldElapsed={columnA.coldElapsed}
+            queuedAhead={columnA.queuedAhead}
             emptyLabel={compareMode ? 'Column A — no messages yet.' : 'No messages yet.'}
             onRegenerate={() => regenerateColumn('A')}
             onDeletePair={(id) => deletePair('A', id)}
@@ -739,6 +740,7 @@ export function ChatPanel() {
               streamingId={columnB.streamingId}
               coldStart={columnB.coldStart}
               coldElapsed={columnB.coldElapsed}
+              queuedAhead={columnB.queuedAhead}
               emptyLabel="Column B — no messages yet."
               onRegenerate={() => regenerateColumn('B')}
               onDeletePair={(id) => deletePair('B', id)}

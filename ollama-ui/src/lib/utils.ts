@@ -64,3 +64,22 @@ export function hasCapability(
 ): boolean | undefined {
   return capabilities ? capabilities.includes(cap) : undefined;
 }
+
+const SESSION_TITLE_MAX_LEN = 60;
+
+// A session's sidebar title, derived directly from the user's first message
+// — no extra model call. Previously this ran a separate, non-streaming
+// Ollama request just to summarize the first exchange into a title, which
+// meant a session's title could fail to appear (or take a long time) for
+// reasons entirely unrelated to the chat itself — most commonly, that
+// request queuing behind another parallel chat using the same model. A
+// plain truncation is instant, never fails, and needs nothing from Ollama.
+export function deriveSessionTitle(firstUserMessage: string): string {
+  let t = firstUserMessage.trim().replace(/\s+/g, ' ');
+  t = t.replace(/^["'“”‘’]+|["'“”‘’]+$/g, '');
+  if (!t) return 'New chat';
+  if (t.length > SESSION_TITLE_MAX_LEN) {
+    t = t.slice(0, SESSION_TITLE_MAX_LEN).trimEnd() + '…';
+  }
+  return t;
+}

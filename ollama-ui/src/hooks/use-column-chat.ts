@@ -3,7 +3,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useChatStore, ChatMessage, TraceEvent } from '@/store/chat';
 import { useSessionsStore, persistSessionMessages } from '@/store/sessions';
 import { consumeChatStream, readErrorMessage } from '@/lib/chat-stream';
-import { isThinkingModel, safeUuid } from '@/lib/utils';
+import { deriveSessionTitle, isThinkingModel, safeUuid } from '@/lib/utils';
+import { useGenerationStore, getGenerationEntry, generationKey } from '@/store/generation';
 
 export interface SendOptions {
   systemPrompt?: string;
@@ -25,6 +26,7 @@ export interface ColumnChat {
   streamingId: string | null;
   coldStart: boolean;
   coldElapsed: number;
+  queuedAhead: number | null;
   lastPayload: unknown;
   send: (text: string, opts: SendOptions) => Promise<void>;
   stop: () => void;
@@ -48,24 +50,15 @@ async function isModelLoaded(target: string): Promise<boolean> {
 // session title generation.
 export function useColumnChat(column: 'A' | 'B', sessionId: string | null): ColumnChat {
   const [model, setModel] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [streamingId, setStreamingId] = useState<string | null>(null);
-  const [coldStart, setColdStart] = useState(false);
-  const [coldStartSince, setColdStartSince] = useState<number | null>(null);
   const [coldElapsed, setColdElapsed] = useState(0);
   const [lastPayload, setLastPayload] = useState<unknown>(null);
-  const abortControllerRef = useRef<AbortController | null>(null);
-  // The current job id (== the streaming assistant message's id), so stop()
-  // can tell the server to actually cancel generation — aborting the local
-  // fetch alone only detaches this tab's view, the job keeps running
-  // server-side otherwise (that's the whole point of the job model).
-  const jobIdRef = useRef<string | null>(null);
   // Message ids this hook has already dealt with — either send() is actively
   // streaming it itself, or a reconnect attempt already happened for it
   // (successful or not). Prevents the reconnect effect below from racing
   // send()'s own placeholder (there's a real gap between appending it and
-  // setStreamingId actually being set, since isModelLoaded is awaited first)
-  // and from retrying a 404 on every unrelated store update.
+  // the entry actually being marked loading, since isModelLoaded is awaited
+  // first) and from retrying a 404 on every unrelated store update. Keyed by
+  // message id (globally unique), so it doesn't need to be session-scoped.
   const handledIdsRef = useRef<Set<string>>(new Set());
 
   const allMessages = useChatStore((s) => s.messages);
@@ -76,6 +69,23 @@ export function useColumnChat(column: 'A' | 'B', sessionId: string | null): Colu
     (m) => m.sessionId === sessionId && (m.column ?? 'A') === column,
   );
 
+  // In-flight generation state lives in a store keyed by session+column
+  // (see src/store/generation.ts), NOT in local component state — this hook
+  // instance is shared across every session the user visits (ChatPanel never
+  // unmounts it), so local state would leak between sessions: switching away
+  // from a session mid-generation and sending a message in a different one
+  // would otherwise show the wrong loading indicator and let Stop abort the
+  // wrong job. Keying by session+column lets unrelated sessions (and, within
+  // one session, columns A/B) generate fully in parallel.
+  const key = sessionId ? generationKey(sessionId, column) : null;
+  const genEntry = useGenerationStore((s) => (key ? (s.entries[key] ?? null) : null));
+  const loading = genEntry?.loading ?? false;
+  const streamingId = genEntry?.streamingId ?? null;
+  const coldStart = genEntry?.coldStart ?? false;
+  const coldStartSince = genEntry?.coldStartSince ?? null;
+  const queuedAhead = genEntry?.queuedAhead ?? null;
+  const patchEntry = useGenerationStore((s) => s.patch);
+
   useEffect(() => {
     if (!coldStart || !coldStartSince) return;
     const id = setInterval(() => {
@@ -84,25 +94,58 @@ export function useColumnChat(column: 'A' | 'B', sessionId: string | null): Colu
     return () => clearInterval(id);
   }, [coldStart, coldStartSince]);
 
+  // "Loading model…" is only accurate for as long as the model actually
+  // isn't loaded yet. If two parallel chats hit the same model, the second
+  // one's own weights may finish loading (or were already loaded all along
+  // — Ollama loading is shared, not per-request) while it's still sitting
+  // with zero output because Ollama is serializing generation for that model
+  // behind the first request. Re-checking periodically clears the stale
+  // "loading" label once that's confirmed, so it falls back to the generic
+  // "waiting" indicator instead of claiming the model is still loading.
+  useEffect(() => {
+    if (!coldStart || !key) return;
+    let cancelled = false;
+    const id = setInterval(async () => {
+      const stillLoading = getGenerationEntry(key).coldStart;
+      if (cancelled || !stillLoading) return;
+      const loaded = await isModelLoaded(model);
+      if (!cancelled && loaded) patchEntry(key, { coldStart: false });
+    }, 3000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [coldStart, key, model, patchEntry]);
+
   const stop = useCallback(() => {
-    abortControllerRef.current?.abort();
-    const jobId = jobIdRef.current;
+    if (!key) return;
+    const current = getGenerationEntry(key);
+    current.abortController?.abort();
+    const jobId = current.jobId;
     if (jobId) {
       fetch(`/api/chat/jobs/${jobId}`, { method: 'DELETE' }).catch(() => {
         /* best-effort — the job will also just finish and persist normally */
       });
     }
-  }, []);
+  }, [key]);
 
   // Wires a job's NDJSON body (from either the initial POST /api/chat or a
   // GET /api/chat/jobs/[id] reconnect — same wire format, see chat-stream.ts)
   // to the given message's live state. Shared so send() and the reconnect
   // effect below don't duplicate this handler wiring.
   const attachToJobStream = useCallback(
-    async (assistantId: string, body: ReadableStream<Uint8Array>, signal: AbortSignal) => {
+    async (
+      genKey: string,
+      assistantId: string,
+      body: ReadableStream<Uint8Array>,
+      signal: AbortSignal,
+    ) => {
       let responseRaw = '';
       const trace: TraceEvent[] = [];
       let openThinkingId: string | null = null;
+      // Any real output means this job is no longer just "loading" or
+      // "queued behind another one" — it's actively producing.
+      const clearWaitIndicators = () => patchEntry(genKey, { coldStart: false, queuedAhead: null });
 
       await consumeChatStream(
         body,
@@ -121,8 +164,11 @@ export function useColumnChat(column: 'A' | 'B', sessionId: string | null): Colu
             openThinkingId = last && last.type === 'thinking' ? last.id : null;
             update(assistantId, { content: responseRaw, trace: [...trace] });
           },
+          onQueued: ({ aheadCount }) => {
+            patchEntry(genKey, { queuedAhead: aheadCount });
+          },
           onThinking: (delta) => {
-            setColdStart(false);
+            clearWaitIndicators();
             if (openThinkingId) {
               const entry = trace.find((t) => t.id === openThinkingId);
               if (entry && entry.type === 'thinking') entry.text += delta;
@@ -134,12 +180,12 @@ export function useColumnChat(column: 'A' | 'B', sessionId: string | null): Colu
             update(assistantId, { trace: [...trace] });
           },
           onToken: (delta) => {
-            setColdStart(false);
+            clearWaitIndicators();
             responseRaw += delta;
             update(assistantId, { content: responseRaw });
           },
           onToolCall: (call) => {
-            setColdStart(false);
+            clearWaitIndicators();
             openThinkingId = null;
             trace.push({
               type: 'tool',
@@ -159,25 +205,38 @@ export function useColumnChat(column: 'A' | 'B', sessionId: string | null): Colu
             }
             update(assistantId, { trace: [...trace] });
           },
+          // The assistant's answer is fully done here — clear the
+          // "responding" UI state immediately rather than waiting for the
+          // stream to physically close. The server keeps that connection
+          // open a bit longer in the background to attempt title generation
+          // (see finishDone in route.ts), which runs against the same model
+          // and can itself take a while if another parallel chat is still
+          // using it; none of that should make the chat look like it's still
+          // generating once the actual answer is already in.
           onDone: (final) => {
             responseRaw = final.content;
             update(assistantId, { content: responseRaw, stats: final.stats });
+            patchEntry(genKey, {
+              loading: false,
+              coldStart: false,
+              streamingId: null,
+              queuedAhead: null,
+            });
           },
           onError: (message) => {
             update(assistantId, { content: '[Error] ' + message });
-          },
-          // Title generation runs server-side (src/lib/chat-persistence.ts)
-          // once the job finishes, so it survives the tab closing too — this
-          // just keeps the sidebar live for a tab that's still open, since
-          // the DB is already updated by the time this event arrives.
-          onTitleGenerated: ({ sessionId: sid, title }) => {
-            useSessionsStore.getState().rename(sid, title);
+            patchEntry(genKey, {
+              loading: false,
+              coldStart: false,
+              streamingId: null,
+              queuedAhead: null,
+            });
           },
         },
         signal,
       );
     },
-    [update],
+    [update, patchEntry],
   );
 
   // Reconnect: if the last message in this column is an empty assistant
@@ -186,7 +245,8 @@ export function useColumnChat(column: 'A' | 'B', sessionId: string | null): Colu
   // stream instead of leaving it looking stuck. No-ops (via a 404) if
   // there's genuinely nothing left to reconnect to.
   useEffect(() => {
-    if (!sessionId) return;
+    if (!sessionId || !key) return;
+    const genKey = key;
     const last = messages[messages.length - 1];
     if (!last || last.role !== 'assistant' || last.content) return;
     if (handledIdsRef.current.has(last.id)) return;
@@ -203,23 +263,28 @@ export function useColumnChat(column: 'A' | 'B', sessionId: string | null): Colu
         return; // network error — leave the message as-is
       }
       if (cancelled || !res.ok || !res.body) return; // 404 = nothing running, DB content stands
-      jobIdRef.current = last.id;
-      abortControllerRef.current = abortController;
-      setStreamingId(last.id);
-      setLoading(true);
+      patchEntry(genKey, {
+        jobId: last.id,
+        abortController,
+        streamingId: last.id,
+        loading: true,
+      });
       try {
-        await attachToJobStream(last.id, res.body, abortController.signal);
+        await attachToJobStream(genKey, last.id, res.body, abortController.signal);
       } catch (e) {
         if (!(e instanceof Error && e.name === 'AbortError')) {
           console.error('Reconnect stream failed', e);
         }
       } finally {
         if (!cancelled) {
-          setLoading(false);
-          setColdStart(false);
-          setStreamingId(null);
-          abortControllerRef.current = null;
-          jobIdRef.current = null;
+          patchEntry(genKey, {
+            loading: false,
+            coldStart: false,
+            streamingId: null,
+            abortController: null,
+            jobId: null,
+            queuedAhead: null,
+          });
           const sessionMessages = useChatStore
             .getState()
             .messages.filter((m) => m.sessionId === sessionId);
@@ -243,11 +308,18 @@ export function useColumnChat(column: 'A' | 'B', sessionId: string | null): Colu
     // is actually added (session switch finished loading, a new send()),
     // which is exactly when re-checking is warranted.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId, column, messages.length, attachToJobStream]);
+  }, [sessionId, key, column, messages.length, attachToJobStream, patchEntry]);
 
   const send = useCallback(
     async (text: string, opts: SendOptions) => {
       if (!text.trim() || !model || !sessionId) return;
+      const genKey = generationKey(sessionId, column);
+      // Guards against this exact session+column already generating (the
+      // composer's Send button already prevents this for the session the
+      // user is currently looking at — this is a second line of defense for
+      // any other caller, e.g. regenerate). Does NOT block other
+      // sessions/columns, which is the whole point: those run independently.
+      if (getGenerationEntry(genKey).loading) return;
       const columnTag = column === 'A' ? undefined : column;
       const userId = append({
         role: 'user',
@@ -263,7 +335,19 @@ export function useColumnChat(column: 'A' | 'B', sessionId: string | null): Colu
         sessionId,
         column: columnTag,
       });
-      jobIdRef.current = assistantId;
+      // Title derivation only needs the user's own message, not the
+      // assistant's reply — so it happens immediately, right here, instead
+      // of waiting on (and depending on the success of) generation. Gated on
+      // titleStatus still being 'pending', which is only ever true before a
+      // session's first message — see deriveSessionTitle's doc comment for
+      // why this replaced an actual model call.
+      if (column === 'A') {
+        const session = useSessionsStore.getState().sessions.find((s) => s.id === sessionId);
+        if (session?.titleStatus === 'pending') {
+          useSessionsStore.getState().rename(sessionId, deriveSessionTitle(text));
+        }
+      }
+      patchEntry(genKey, { jobId: assistantId });
       // Mark it handled synchronously, before any await below — otherwise
       // there's a real gap (isModelLoaded is awaited next) where the
       // reconnect effect could see this exact placeholder and race it with
@@ -282,14 +366,11 @@ export function useColumnChat(column: 'A' | 'B', sessionId: string | null): Colu
 
       const loaded = await isModelLoaded(model);
       if (!loaded) {
-        setColdStart(true);
-        setColdStartSince(Date.now());
+        patchEntry(genKey, { coldStart: true, coldStartSince: Date.now() });
         setColdElapsed(0);
       }
-      setStreamingId(assistantId);
-      setLoading(true);
       const abortController = new AbortController();
-      abortControllerRef.current = abortController;
+      patchEntry(genKey, { streamingId: assistantId, loading: true, abortController });
 
       try {
         const current = useChatStore
@@ -332,7 +413,7 @@ export function useColumnChat(column: 'A' | 'B', sessionId: string | null): Colu
         }
         if (!res.body) throw new Error('No body');
 
-        await attachToJobStream(assistantId, res.body, abortController.signal);
+        await attachToJobStream(genKey, assistantId, res.body, abortController.signal);
       } catch (e) {
         if (e instanceof Error && e.name === 'AbortError') {
           // user-initiated stop: keep whatever content already streamed
@@ -342,11 +423,14 @@ export function useColumnChat(column: 'A' | 'B', sessionId: string | null): Colu
           update(assistantId, { content: `[Chat error] ${detail}` });
         }
       } finally {
-        setLoading(false);
-        setColdStart(false);
-        setStreamingId(null);
-        abortControllerRef.current = null;
-        jobIdRef.current = null;
+        patchEntry(genKey, {
+          loading: false,
+          coldStart: false,
+          streamingId: null,
+          abortController: null,
+          jobId: null,
+          queuedAhead: null,
+        });
 
         const sessionMessages = useChatStore
           .getState()
@@ -354,7 +438,7 @@ export function useColumnChat(column: 'A' | 'B', sessionId: string | null): Colu
         persistSessionMessages(sessionId, sessionMessages);
       }
     },
-    [model, column, sessionId, append, update, attachToJobStream],
+    [model, column, sessionId, append, update, attachToJobStream, patchEntry],
   );
 
   return {
@@ -365,6 +449,7 @@ export function useColumnChat(column: 'A' | 'B', sessionId: string | null): Colu
     streamingId,
     coldStart,
     coldElapsed,
+    queuedAhead,
     lastPayload,
     send,
     stop,
