@@ -3,6 +3,9 @@ import { isValidElement, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import remarkMath from 'remark-math';
+import rehypeKatex from 'rehype-katex';
+import 'katex/dist/katex.min.css';
 import {
   Brain,
   Search,
@@ -88,6 +91,12 @@ interface ChatColumnProps {
   streamingId: string | null;
   coldStart: boolean;
   coldElapsed: number;
+  // Heads-up only (see the `queued` wire event) — N other job(s) were
+  // already running against the same model when this one started. Not a
+  // guarantee this one is actually waiting on them; just an honest reason to
+  // show instead of leaving a silent "Thinking…" during what might be a long
+  // wait for Ollama to get to this request.
+  queuedAhead?: number | null;
   emptyLabel?: string;
   onRegenerate?: () => void; // only offered for the last assistant message
   onDeletePair?: (assistantMessageId: string) => void;
@@ -206,6 +215,7 @@ export function ChatColumn({
   streamingId,
   coldStart,
   coldElapsed,
+  queuedAhead,
   emptyLabel,
   onRegenerate,
   onDeletePair,
@@ -239,6 +249,21 @@ export function ChatColumn({
             <span className="relative inline-flex h-2 w-2 rounded-full bg-indigo-400 dark-green-pill"></span>
           </span>
           <span>Loading model… {coldElapsed}s</span>
+        </div>
+      )}
+      {!coldStart && !!queuedAhead && (
+        <div
+          className="flex items-center gap-2 text-[11px] text-amber-300/70"
+          title="Another request to this same model was already running when this one started. Whether it actually runs alongside it depends on the Ollama server (OLLAMA_NUM_PARALLEL and available VRAM) — this app can't control that."
+        >
+          <span className="relative flex h-2 w-2">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400/60"></span>
+            <span className="relative inline-flex h-2 w-2 rounded-full bg-amber-400"></span>
+          </span>
+          <span>
+            Waiting on Ollama — {queuedAhead} other request{queuedAhead === 1 ? '' : 's'} already
+            running for this model
+          </span>
         </div>
       )}
       {messages.length === 0 && (
@@ -306,7 +331,13 @@ export function ChatColumn({
                   <span className="animate-pulse">●</span> Loading model… {coldElapsed}s
                 </span>
               )}
-              {isStreaming && !m.content && !coldStart && (
+              {isStreaming && !m.content && !coldStart && !!queuedAhead && (
+                <span className="text-amber-300/70 flex items-center gap-1 normal-case">
+                  <span className="animate-pulse">●</span> Waiting on Ollama ({queuedAhead} other
+                  request{queuedAhead === 1 ? '' : 's'})…
+                </span>
+              )}
+              {isStreaming && !m.content && !coldStart && !queuedAhead && (
                 <span className="text-amber-400/70 flex items-center gap-1 normal-case">
                   <span className="animate-pulse">●</span> {traceActive ? 'Working…' : 'Thinking…'}
                 </span>
@@ -366,7 +397,11 @@ export function ChatColumn({
                   <PseudoToolCallIndicator />
                 ) : m.content ? (
                   <div className="prose prose-invert max-w-none text-white/90 prose-p:my-2 prose-ul:my-2 prose-li:my-1 prose-pre:my-3 prose-code:px-1 prose-code:py-0.5 prose-code:bg-white/10 prose-code:rounded">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ pre: CodeBlockPre }}>
+                    <ReactMarkdown
+                      remarkPlugins={[remarkGfm, remarkMath]}
+                      rehypePlugins={[rehypeKatex]}
+                      components={{ pre: CodeBlockPre }}
+                    >
                       {(() => {
                         const parsed = parsePseudoToolCall(m.content);
                         return parsed ? renderPseudoToolCallAsMarkdown(parsed) : m.content;

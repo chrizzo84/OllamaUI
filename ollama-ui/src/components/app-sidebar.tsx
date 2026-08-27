@@ -268,13 +268,7 @@ export function AppSidebar() {
                         className="flex-1 min-w-0 text-left"
                       >
                         <div className="text-xs truncate flex items-center gap-1.5">
-                          {sess.titleStatus === 'pending' ? (
-                            <span className="text-white/40 italic animate-pulse">
-                              Generating title…
-                            </span>
-                          ) : (
-                            <span className="truncate">{sess.title}</span>
-                          )}
+                          <span className="truncate">{sess.title}</span>
                         </div>
                         <div className="text-[10px] text-white/30 font-mono mt-0.5">
                           {formatRelative(sess.updatedAt)}

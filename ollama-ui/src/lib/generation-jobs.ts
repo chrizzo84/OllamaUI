@@ -57,6 +57,20 @@ export function getJob(id: string): Job | undefined {
   return jobs.get(id);
 }
 
+// How many OTHER jobs are currently running against the same model. Ollama
+// itself decides how many of those it actually runs concurrently
+// (OLLAMA_NUM_PARALLEL plus whatever fits in VRAM for that specific model) —
+// this app has no visibility into that decision, so this is only ever a
+// heads-up ("something else is already using this model, you may have to
+// wait"), never a promise that this job will or won't run in parallel.
+export function countOtherRunningForModel(model: string, excludeId: string): number {
+  let n = 0;
+  for (const j of jobs.values()) {
+    if (j.status === 'running' && j.model === model && j.id !== excludeId) n++;
+  }
+  return n;
+}
+
 export interface JobSummary {
   id: string;
   sessionId: string;

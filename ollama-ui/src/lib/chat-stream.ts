@@ -9,7 +9,10 @@
 //   { toolCall: { id, name, arguments } }     -- model requested a tool call
 //   { toolResult: { id, name, result? , error? } } -- tool call resolved
 //   { done: true, model, content, thinking? } -- final, AUTHORITATIVE full values (not deltas)
-//   { titleGenerated: { sessionId, title } }  -- background title generation finished
+//   { queued: { aheadCount } }               -- heads-up, sent once at job start: N other job(s)
+//                                                already running against the same model. Not a
+//                                                guarantee either way — Ollama decides whether it
+//                                                actually runs them concurrently.
 //   { error: string }                        -- fatal error
 //   { streamEnd: true }                      -- control-only: safe to stop reading, no handler needed
 //
@@ -53,13 +56,12 @@ export interface ChatStreamHandlers {
   onToolResult?: (result: ToolResultEvent) => void;
   onDone?: (final: { content: string; thinking?: string; stats?: ChatStats }) => void;
   onError?: (message: string) => void;
-  // Published server-side once background title generation finishes (see
-  // src/lib/chat-persistence.ts) — the DB is already updated by the time
-  // this arrives, this just lets an open tab update its sidebar live.
-  onTitleGenerated?: (data: { sessionId: string; title: string }) => void;
   // Reconnect catch-up — see StreamSnapshot above. Only ever the first event
   // on a stream, if present at all.
   onSnapshot?: (snapshot: StreamSnapshot) => void;
+  // Heads-up, sent once near the start if another job is already running
+  // against the same model — see the wire-format comment above.
+  onQueued?: (info: { aheadCount: number }) => void;
 }
 
 interface StreamLine {
@@ -71,8 +73,8 @@ interface StreamLine {
   content?: string;
   stats?: ChatStats;
   error?: string;
-  titleGenerated?: { sessionId: string; title: string };
   snapshot?: StreamSnapshot;
+  queued?: { aheadCount: number };
   streamEnd?: boolean;
   [key: string]: unknown;
 }
@@ -157,8 +159,8 @@ function processLine(line: string, handlers: ChatStreamHandlers) {
     handlers.onToolResult?.(obj.toolResult);
     return;
   }
-  if (obj.titleGenerated) {
-    handlers.onTitleGenerated?.(obj.titleGenerated);
+  if (obj.queued) {
+    handlers.onQueued?.(obj.queued);
     return;
   }
   if (typeof obj.thinking === 'string') {

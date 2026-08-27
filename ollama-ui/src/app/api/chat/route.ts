@@ -8,13 +8,10 @@ import {
   settleJob,
   updateSnapshot,
   createJobEventStream,
+  countOtherRunningForModel,
   type Job,
 } from '@/lib/generation-jobs';
-import {
-  upsertMessages,
-  persistFinalAssistantMessage,
-  maybeGenerateAndPersistTitle,
-} from '@/lib/chat-persistence';
+import { upsertMessages, persistFinalAssistantMessage } from '@/lib/chat-persistence';
 import type { ChatMessage, TraceEvent } from '@/store/chat';
 import type { ChatStats } from '@/lib/chat-stream';
 
@@ -48,29 +45,45 @@ export const runtime = 'nodejs';
 // the model gets one guaranteed tool-free turn to write its actual answer.
 const MAX_TOOL_ITERATIONS = 6;
 
-// Idle timeout for the upstream Ollama connection (see createIdleAbort). Kept
-// generous since a cold local model load can legitimately take minutes.
-const OLLAMA_IDLE_TIMEOUT_MS = 180_000;
+// Idle timeout applied ONLY once Ollama has already sent at least one chunk
+// for the current turn — catches a generation that genuinely freezes
+// mid-stream. Deliberately NOT applied to the wait for that first chunk (see
+// createIdleAbort below): that wait can legitimately take a long time for
+// reasons that are not a failure at all — a cold local model load, or a
+// second parallel chat queued behind another request Ollama is already
+// serving for the same model (Ollama itself decides how many it runs
+// concurrently per model via OLLAMA_NUM_PARALLEL plus whatever fits in VRAM,
+// not something this app controls; by default that's often 1). A generation
+// job runs decoupled from the browser tab specifically so it can outlive
+// that kind of wait — timing it out here would turn perfectly normal
+// queueing into a hard, user-visible failure, which must never happen.
+const OLLAMA_IDLE_TIMEOUT_MS = 20 * 60_000;
 
-// An AbortController that fires if `kick()` isn't called again within `ms`,
-// instead of firing at a fixed deadline — so it only trips on genuine
-// inactivity (no response, or a body stream that stalls mid-generation).
+// An AbortController that fires if `kick()` isn't called again within `ms`
+// of the PREVIOUS `kick()` — instead of firing at a fixed deadline — so it
+// only trips on genuine inactivity between chunks. Crucially, the timer is
+// not armed until `kick()` is called for the first time: the wait for that
+// very first chunk (fetch() resolving, then the first successful body read)
+// is left completely unbounded by this mechanism. A real connection failure
+// during that wait still surfaces on its own, via fetch()/read() throwing —
+// this only guards against silent stalls once data has started flowing.
 function createIdleAbort(ms: number) {
   const controller = new AbortController();
   let timedOut = false;
-  let timer: ReturnType<typeof setTimeout>;
+  let timer: ReturnType<typeof setTimeout> | null = null;
   const arm = () => {
-    clearTimeout(timer);
+    if (timer) clearTimeout(timer);
     timer = setTimeout(() => {
       timedOut = true;
       controller.abort();
     }, ms);
   };
-  arm();
   return {
     signal: controller.signal,
     kick: arm,
-    clear: () => clearTimeout(timer),
+    clear: () => {
+      if (timer) clearTimeout(timer);
+    },
     get timedOut() {
       return timedOut;
     },
@@ -171,6 +184,17 @@ async function runGeneration(job: Job, params: GenerationParams): Promise<void> 
     ...(m.name ? { name: m.name } : {}),
   }));
 
+  // Heads-up only, checked once at the start — not a promise either way.
+  // Whether this job actually runs alongside the other one is entirely up to
+  // Ollama (OLLAMA_NUM_PARALLEL plus whether the model's KV cache fits
+  // multiple parallel slots in VRAM); we have no visibility into that. This
+  // just tells the client "something else is already using this model right
+  // now", so a long silent wait reads as expected instead of looking stuck.
+  const aheadCount = countOtherRunningForModel(model, job.id);
+  if (aheadCount > 0) {
+    publish(job.id, { queued: { aheadCount } });
+  }
+
   let contentAggregated = '';
   let thinkingAggregated = '';
   let completionTokensTotal = 0;
@@ -219,14 +243,8 @@ async function runGeneration(job: Job, params: GenerationParams): Promise<void> 
       trace,
       stats,
     });
-    if (status === 'done') {
-      const title = await maybeGenerateAndPersistTitle(base, job.sessionId, job.column, model);
-      if (title) publish(job.id, { titleGenerated: { sessionId: job.sessionId, title } });
-    }
     // Always last: tells an attached response stream it's safe to close now
-    // (see the POST handler's subscriber). Published after the optional
-    // title step above so a still-open tab gets titleGenerated before the
-    // connection closes, instead of racing it.
+    // (see the POST handler's subscriber).
     publish(job.id, { streamEnd: true });
   }
 
@@ -275,18 +293,16 @@ async function runGeneration(job: Job, params: GenerationParams): Promise<void> 
         }),
       });
     } catch (e) {
+      // Can't be an idle timeout — that timer isn't armed until after the
+      // first successful body read (see createIdleAbort), which is later
+      // than this fetch() call. A genuine connection failure (host down,
+      // DNS, network) surfaces here on its own.
       idle.clear();
       if (job.abortController.signal.aborted) {
         await finishDone('aborted');
         return;
       }
-      finishError(
-        idle.timedOut
-          ? `Ollama did not respond within ${OLLAMA_IDLE_TIMEOUT_MS / 1000}s (timed out)`
-          : e instanceof Error
-            ? e.message
-            : 'Failed to reach Ollama host',
-      );
+      finishError(e instanceof Error ? e.message : 'Failed to reach Ollama host');
       return;
     }
 

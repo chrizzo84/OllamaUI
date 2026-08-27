@@ -1,5 +1,18 @@
 Chronological list of notable changes to Ollama UI.
 
+## 2026-08-27
+
+- **True Parallel Chats**
+  - Sending a message in one chat no longer blocks sending in another. Previously, starting a reply in one session and then switching to a different session left the composer thinking it was still busy — generation state (loading/streaming indicators, Stop) was tracked once for the whole app instead of per session, so a reply running in the background in session A made session B look stuck too. The server already ran generation jobs fully independently; the client just couldn't keep up. Now each session (and each Compare column) tracks its own state, so switching sessions and firing off another chat while one is still generating works as expected.
+  - Added a heads-up "Waiting on Ollama — N other request(s) already running for this model" indicator for the case where a second parallel chat has to wait its turn, instead of a stale "Loading model…" or an unexplained silent pause. Whether it actually runs alongside the other one depends on the Ollama server's own `OLLAMA_NUM_PARALLEL` setting and available VRAM — this app has no control over that, the indicator is just an honest "something else is using this model right now".
+  - Fixed a hard failure ("Ollama did not respond within 180s (timed out)") that could hit a perfectly healthy chat simply because it was queued behind another parallel request to the same model — completely normal under Ollama's own concurrency limits, previously misreported as an error. The connection timeout now only starts counting once a reply has actually begun streaming; the wait for that first response is no longer time-limited at all.
+
+- **Session Titles No Longer Depend on the Model**
+  - A session's title is now derived directly from your first message (trimmed/truncated, no extra model call) instead of a separate background request asking the model to summarize the exchange. It appears instantly instead of after the reply finishes, and can no longer fail, hang, or show a stuck "Generating title…" because Ollama was busy with something else.
+
+- **Math Formulas Now Render Properly**
+  - Chat replies containing LaTeX math (`$$...$$` block or `$...$` inline — common when a model explains a formula) used to come through as raw, unreadable text. Now rendered properly via KaTeX, matching the current theme.
+
 ## 2026-08-26
 
 - **Chat Generation Survives Closing the Tab**
