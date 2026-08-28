@@ -7,7 +7,7 @@
 import { performWebSearch } from '@/lib/web-search';
 import { getWeather } from '@/lib/weather';
 import { evaluateExpression } from '@/lib/calculator';
-import { safeUuid } from '@/lib/utils';
+import { safeUuid, deriveSessionTitle } from '@/lib/utils';
 import {
   publish,
   settleJob,
@@ -16,7 +16,13 @@ import {
   type Job,
 } from '@/lib/generation-jobs';
 import { persistFinalAssistantMessage } from '@/lib/chat-persistence';
-import { createMemory, listMemories, recordBenchmarkRun, type MemoryRow } from '@/lib/db';
+import {
+  createMemory,
+  listMemories,
+  recordBenchmarkRun,
+  createScheduledTask,
+  type MemoryRow,
+} from '@/lib/db';
 import type { TraceEvent } from '@/store/chat';
 import type { ChatStats } from '@/lib/chat-stream';
 
@@ -166,6 +172,31 @@ const CALCULATOR_TOOL = {
   },
 };
 
+const CREATE_REMINDER_TOOL = {
+  type: 'function',
+  function: {
+    name: 'create_reminder',
+    description:
+      'Schedule a one-time reminder that fires at a specific future date/time, even if this chat is closed by then — it runs as a new chat message at that time, exactly like a normal reply, and can use tools if needed. Call get_current_date first if you need to work out a relative time like "tomorrow" or "in 2 hours". Only for a single future moment — for anything recurring (daily/weekly), tell the user to set it up on the Scheduled page instead.',
+    parameters: {
+      type: 'object',
+      properties: {
+        message: {
+          type: 'string',
+          description:
+            'What to do/say when the reminder fires, phrased as an instruction to yourself, e.g. "Remind the user to call the dentist."',
+        },
+        whenISO: {
+          type: 'string',
+          description:
+            'The exact future date and time to fire, as an ISO 8601 datetime string, e.g. "2026-08-29T09:00:00".',
+        },
+      },
+      required: ['message', 'whenISO'],
+    },
+  },
+};
+
 const REMEMBER_FACT_TOOL = {
   type: 'function',
   function: {
@@ -188,7 +219,13 @@ const REMEMBER_FACT_TOOL = {
 function buildTools(toolsEnabled: boolean, memoryEnabled: boolean) {
   return [
     ...(toolsEnabled
-      ? [WEB_SEARCH_TOOL, CURRENT_DATE_TOOL, GET_WEATHER_TOOL, CALCULATOR_TOOL]
+      ? [
+          WEB_SEARCH_TOOL,
+          CURRENT_DATE_TOOL,
+          GET_WEATHER_TOOL,
+          CALCULATOR_TOOL,
+          CREATE_REMINDER_TOOL,
+        ]
       : []),
     ...(memoryEnabled ? [REMEMBER_FACT_TOOL] : []),
   ];
@@ -199,6 +236,7 @@ async function executeTool(
   args: unknown,
   searxngTemplate: string | null,
   sessionId: string,
+  model: string,
 ): Promise<{ result?: unknown; error?: string }> {
   if (name === 'get_current_date') {
     const now = new Date();
@@ -218,6 +256,42 @@ async function executeTool(
     }
     createMemory({ content: a.fact.trim(), sourceSessionId: sessionId });
     return { result: { saved: true } };
+  }
+  if (name === 'create_reminder') {
+    const a = (args && typeof args === 'object' ? args : {}) as {
+      message?: unknown;
+      whenISO?: unknown;
+    };
+    if (typeof a.message !== 'string' || !a.message.trim()) {
+      return { error: 'Missing required "message" argument' };
+    }
+    if (typeof a.whenISO !== 'string' || !a.whenISO.trim()) {
+      return { error: 'Missing required "whenISO" argument' };
+    }
+    const when = new Date(a.whenISO);
+    if (Number.isNaN(when.getTime())) {
+      return { error: 'Invalid "whenISO" — must be a valid ISO 8601 datetime' };
+    }
+    if (when.getTime() <= Date.now()) {
+      return { error: '"whenISO" must be in the future' };
+    }
+    const message = a.message.trim();
+    // timeOfDay/daysOfWeek are unused for a one-off reminder (recurring:
+    // false) — nextRunAt is the exact target moment instead. See
+    // ScheduledTaskRow's doc comment in db.ts and the tick()/
+    // runScheduledTask() handling in scheduler.ts.
+    createScheduledTask({
+      name: deriveSessionTitle(message),
+      prompt: message,
+      model,
+      timeOfDay: '00:00',
+      daysOfWeek: [],
+      recurring: false,
+      toolsEnabled: true,
+      memoryEnabled: true,
+      nextRunAt: when.getTime(),
+    });
+    return { result: { scheduled: true, when: when.toISOString() } };
   }
   if (name === 'get_weather') {
     const a = (args && typeof args === 'object' ? args : {}) as {
@@ -570,7 +644,13 @@ export async function runGeneration(job: Job, params: GenerationParams): Promise
         trace.push({ type: 'tool', id, name, arguments: args });
         publish(job.id, { toolCall: { id, name, arguments: args } });
         syncSnapshot();
-        const { result, error } = await executeTool(name, args, searxngTemplate, job.sessionId);
+        const { result, error } = await executeTool(
+          name,
+          args,
+          searxngTemplate,
+          job.sessionId,
+          model,
+        );
         const traceIdx = trace.findIndex((t) => t.id === id);
         if (traceIdx !== -1) {
           const existing = trace[traceIdx];

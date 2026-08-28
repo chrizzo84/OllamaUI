@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { ServerClock } from './server-clock';
 
 function GithubIcon({ className }: { className?: string }) {
   return (
@@ -23,6 +24,8 @@ export function SiteFooter() {
       <span className="whitespace-nowrap">© {year} chrizzo84</span>
       <span className="hidden sm:inline text-white/30">•</span>
       <span className="font-mono text-white/40">v{appVersion}</span>
+      <span className="hidden sm:inline text-white/30">•</span>
+      <ServerClock />
       <Link
         href="https://github.com/chrizzo84"
         target="_blank"

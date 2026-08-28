@@ -21,6 +21,7 @@ function toApiShape(r: ReturnType<typeof createScheduledTask>) {
     model: r.model,
     timeOfDay: r.timeOfDay,
     daysOfWeek: r.daysOfWeek,
+    recurring: r.recurring,
     toolsEnabled: r.toolsEnabled,
     memoryEnabled: r.memoryEnabled,
     enabled: r.enabled,
@@ -46,6 +47,7 @@ export async function POST(req: NextRequest) {
     model: parsed.data.model,
     timeOfDay: parsed.data.timeOfDay,
     daysOfWeek: parsed.data.daysOfWeek,
+    recurring: true, // this form only ever creates recurring tasks — one-offs come from create_reminder
     toolsEnabled: parsed.data.toolsEnabled ?? true,
     memoryEnabled: parsed.data.memoryEnabled ?? true,
     nextRunAt,
