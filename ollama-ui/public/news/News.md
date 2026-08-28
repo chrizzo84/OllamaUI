@@ -2,6 +2,12 @@ Chronological list of notable changes to Ollama UI.
 
 ## 2026-08-28
 
+- **Persistent Memory**
+  - The assistant can now save short, durable facts about you during a chat (a `remember_fact` tool — "remember that I prefer concise answers", "remember I'm working on X") and automatically recalls them in future, separate conversations — no more re-explaining preferences or ongoing projects every time. On by default; manage what's stored (view/delete/add facts manually) under Settings → Memory.
+  - A 🧠 pill next to the composer shows whether memory is active and lets you turn it off for just the current chat, without touching the global setting — useful for a one-off conversation you don't want influencing future replies.
+  - When the assistant saves something, it shows up inline in the chat trace ("Saved to memory: ...") instead of happening silently.
+- **Model Benchmark History**
+  - New **Benchmarks** page: every real chat reply now logs its speed (tokens/sec) automatically, building a trend history per model over time. A **Run benchmark now** button additionally sends the same fixed prompt to every installed model, one at a time, for a direct, apples-to-apples comparison — shown alongside the organic chat data, kept clearly labeled apart from it.
 - **Chat Stayed Smooth in Long Conversations**
   - Fixed the chat UI getting progressively sluggish the longer a conversation ran and the longer a reply got. While a reply streamed in, every single token was re-rendering every other message in the conversation (not just the one actually changing) and re-parsing the entire accumulated reply text from scratch on every token — both costs scaled with how much was already in the chat. Message rendering is now properly isolated per message, and markdown parsing is decoupled from the raw token rate, so streaming stays smooth regardless of how long the conversation or the reply already is. No behavior changes — same streaming, reasoning traces, tool calls, editing, and Compare mode as before.
 

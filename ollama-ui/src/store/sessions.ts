@@ -9,6 +9,9 @@ export interface SessionMeta {
   modelA: string;
   modelB: string;
   compareMode: boolean;
+  // Per-session override for the global memory setting — null = inherit the
+  // global default (see src/store/memory.ts). See db.ts's SessionRow.
+  memoryEnabled: boolean | null;
   updatedAt: number;
 }
 
@@ -20,11 +23,15 @@ interface RawSessionMeta {
   modelA?: string;
   modelB?: string;
   compareMode?: boolean;
+  memoryEnabled?: boolean | null;
   updatedAt?: number;
 }
 
 type PatchableFields = Partial<
-  Pick<SessionMeta, 'title' | 'titleStatus' | 'profileId' | 'modelA' | 'modelB' | 'compareMode'>
+  Pick<
+    SessionMeta,
+    'title' | 'titleStatus' | 'profileId' | 'modelA' | 'modelB' | 'compareMode' | 'memoryEnabled'
+  >
 >;
 
 function normalize(o: RawSessionMeta): SessionMeta {
@@ -36,6 +43,7 @@ function normalize(o: RawSessionMeta): SessionMeta {
     modelA: o.modelA || '',
     modelB: o.modelB || '',
     compareMode: !!o.compareMode,
+    memoryEnabled: o.memoryEnabled ?? null,
     updatedAt: typeof o.updatedAt === 'number' ? o.updatedAt : Date.now(),
   };
 }

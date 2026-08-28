@@ -9,6 +9,7 @@ const patchSchema = z.object({
   modelA: z.string().optional(),
   modelB: z.string().optional(),
   compareMode: z.boolean().optional(),
+  memoryEnabled: z.boolean().nullable().optional(),
   messages: z.array(z.record(z.string(), z.unknown())).optional(),
 });
 
@@ -24,6 +25,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     modelA: row.modelA,
     modelB: row.modelB,
     compareMode: row.compareMode,
+    memoryEnabled: row.memoryEnabled,
     messages: row.messages,
     updatedAt: row.updated_at,
   });
@@ -44,6 +46,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     modelA: row.modelA,
     modelB: row.modelB,
     compareMode: row.compareMode,
+    memoryEnabled: row.memoryEnabled,
     updatedAt: row.updated_at,
   });
 }

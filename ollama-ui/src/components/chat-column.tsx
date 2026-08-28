@@ -171,6 +171,23 @@ function ToolLine({
     ev.arguments && typeof ev.arguments === 'object' && 'query' in ev.arguments
       ? String((ev.arguments as { query?: unknown }).query ?? '')
       : '';
+  // remember_fact is a background utility call, not something the user needs
+  // to expand/collapse to understand — show what got saved directly, per the
+  // "give a hint when memory is active" requirement.
+  if (ev.name === 'remember_fact') {
+    const fact =
+      ev.arguments && typeof ev.arguments === 'object' && 'fact' in ev.arguments
+        ? String((ev.arguments as { fact?: unknown }).fact ?? '')
+        : '';
+    return (
+      <div className="flex items-center gap-2 rounded-lg border border-violet-500/25 bg-violet-950/20 px-3 py-2 text-[11px] text-violet-200/80">
+        <Brain className="h-3 w-3 text-violet-400/70 shrink-0" />
+        <span>
+          {ev.error ? `Couldn't save to memory: ${ev.error}` : `Saved to memory: "${fact}"`}
+        </span>
+      </div>
+    );
+  }
   return (
     <div className="rounded-lg border border-cyan-500/25 bg-cyan-950/20 overflow-hidden">
       <button

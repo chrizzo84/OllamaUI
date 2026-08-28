@@ -15,8 +15,10 @@ import {
 ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend, ArcElement);
 
 /* Categorical palette validated for dark surfaces (CVD-safe adjacent pairs,
-   >=3:1 contrast). Fixed slot order — never cycled or generated. */
-const CATEGORICAL = [
+   >=3:1 contrast). Fixed slot order — never cycled or generated. Exported
+   for reuse by other charts (see benchmark-charts.tsx) so model/category
+   colors stay visually consistent app-wide. */
+export const CATEGORICAL = [
   '#3987e5', // blue
   '#008300', // green
   '#d55181', // magenta

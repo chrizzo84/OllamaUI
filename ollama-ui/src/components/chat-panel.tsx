@@ -5,6 +5,7 @@ import { useChatStore, type ChatMessage } from '@/store/chat';
 import { useToastStore } from '@/store/toast';
 import { useSystemPromptStore } from '@/store/system-prompt';
 import { useToolsStore } from '@/store/tools';
+import { useMemoryStore } from '@/store/memory';
 import { useSessionsStore, loadSessionMessages, persistSessionMessages } from '@/store/sessions';
 import { usePrefsStore } from '@/store/prefs';
 import { useColumnChat } from '@/hooks/use-column-chat';
@@ -326,6 +327,16 @@ export function ChatPanel() {
   useEffect(() => {
     hydrateTools();
   }, [hydrateTools]);
+
+  const globalMemoryEnabled = useMemoryStore((s) => s.memoryEnabled);
+  const hydrateMemory = useMemoryStore((s) => s.hydrate);
+  useEffect(() => {
+    hydrateMemory();
+  }, [hydrateMemory]);
+  // null = this session has no override, follows the global setting above —
+  // see SessionMeta.memoryEnabled in store/sessions.ts.
+  const sessionMemoryOverride = activeSession?.memoryEnabled ?? null;
+  const effectiveMemoryEnabled = sessionMemoryOverride ?? globalMemoryEnabled;
 
   // Always instantiate both columns (rules of hooks) — column B is simply
   // unused/unmounted in single mode.
@@ -919,6 +930,31 @@ export function ChatPanel() {
                 'tools off'
               )}
             </span>
+            <button
+              type="button"
+              onClick={() =>
+                activeSessionId &&
+                patchSession(activeSessionId, { memoryEnabled: !effectiveMemoryEnabled })
+              }
+              title={
+                effectiveMemoryEnabled
+                  ? sessionMemoryOverride === true
+                    ? 'Memory is on for this chat (override). Click to turn off just for this chat.'
+                    : 'Memory is on (global default). Click to turn off just for this chat.'
+                  : sessionMemoryOverride === false
+                    ? 'Memory is off for this chat (override). Click to turn on just for this chat.'
+                    : 'Memory is off (global default). Click to turn on just for this chat.'
+              }
+              className={`cap-pill transition ${
+                effectiveMemoryEnabled
+                  ? 'border-violet-500/25 bg-violet-500/10 text-violet-200/80 hover:bg-violet-500/20'
+                  : 'border-white/10 bg-white/5 text-white/30 hover:bg-white/10'
+              }`}
+            >
+              <Brain className="h-3 w-3" />
+              {effectiveMemoryEnabled ? 'memory on' : 'memory off'}
+              {sessionMemoryOverride !== null ? ' (this chat)' : ''}
+            </button>
             <a
               href="/settings"
               className="text-[10px] text-white/30 hover:text-white/60 self-center underline"

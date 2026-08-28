@@ -3,9 +3,11 @@ import { ThemeSwitcher } from '@/components/theme-switcher';
 import { useThemeStore } from '@/store/theme';
 import { usePrefsStore } from '@/store/prefs';
 import { useToolsStore } from '@/store/tools';
+import { useMemoryStore } from '@/store/memory';
 import { useEffect } from 'react';
 import { LocalStorageInfo } from '@/components/local-storage-info';
 import { HostManagerPanel } from '@/components/host-manager-panel';
+import { MemoryPanel } from '@/components/memory-panel';
 
 export default function SettingsPage() {
   const theme = useThemeStore((s) => s.theme);
@@ -23,11 +25,15 @@ export default function SettingsPage() {
   const setToolsEnabled = useToolsStore((s) => s.setToolsEnabled);
   const searxngTemplate = useToolsStore((s) => s.searxngTemplate);
   const setSearxngTemplate = useToolsStore((s) => s.setSearxngTemplate);
+  const hydrateMemory = useMemoryStore((s) => s.hydrate);
+  const memoryEnabled = useMemoryStore((s) => s.memoryEnabled);
+  const setMemoryEnabled = useMemoryStore((s) => s.setMemoryEnabled);
 
   useEffect(() => {
     hydratePrefs();
     hydrateTools();
-  }, [hydratePrefs, hydrateTools]);
+    hydrateMemory();
+  }, [hydratePrefs, hydrateTools, hydrateMemory]);
 
   return (
     <div className="p-6 flex flex-col gap-8 max-w-3xl mx-auto items-center">
@@ -167,6 +173,28 @@ export default function SettingsPage() {
                 </span>
               </div>
             )}
+          </div>
+        </section>
+        <section className="glass-card p-5 flex flex-col gap-4">
+          <div>
+            <h2 className="text-lg font-semibold text-white/90 mb-1">Memory</h2>
+            <p className="text-xs text-white/50 mb-3">
+              Lets the assistant save short, durable facts about you during a chat (via the{' '}
+              <code className="text-white/70">remember_fact</code> tool) and recalls them
+              automatically in future conversations — no need to re-explain preferences or ongoing
+              projects every time. On by default; a specific chat can still turn it off via the
+              memory pill next to the composer.
+            </p>
+            <label className="flex items-center gap-2 cursor-pointer select-none mb-4">
+              <input
+                type="checkbox"
+                className="accent-violet-500"
+                checked={memoryEnabled}
+                onChange={(e) => setMemoryEnabled(e.target.checked)}
+              />
+              <span className="text-xs text-white/70">Enable memory globally</span>
+            </label>
+            <MemoryPanel />
           </div>
         </section>
         <section className="glass-card p-5 flex flex-col gap-4">
