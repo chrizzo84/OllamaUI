@@ -1,5 +1,10 @@
 Chronological list of notable changes to Ollama UI.
 
+## 2026-08-28
+
+- **Chat Stayed Smooth in Long Conversations**
+  - Fixed the chat UI getting progressively sluggish the longer a conversation ran and the longer a reply got. While a reply streamed in, every single token was re-rendering every other message in the conversation (not just the one actually changing) and re-parsing the entire accumulated reply text from scratch on every token — both costs scaled with how much was already in the chat. Message rendering is now properly isolated per message, and markdown parsing is decoupled from the raw token rate, so streaming stays smooth regardless of how long the conversation or the reply already is. No behavior changes — same streaming, reasoning traces, tool calls, editing, and Compare mode as before.
+
 ## 2026-08-27
 
 - **True Parallel Chats**

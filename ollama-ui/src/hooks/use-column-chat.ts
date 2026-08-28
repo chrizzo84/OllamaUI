@@ -1,5 +1,5 @@
 'use client';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useChatStore, ChatMessage, TraceEvent } from '@/store/chat';
 import { useSessionsStore, persistSessionMessages } from '@/store/sessions';
 import { consumeChatStream, readErrorMessage } from '@/lib/chat-stream';
@@ -67,8 +67,9 @@ export function useColumnChat(column: 'A' | 'B', sessionId: string | null): Colu
   const append = useChatStore((s) => s.append);
   const update = useChatStore((s) => s.update);
 
-  const messages = allMessages.filter(
-    (m) => m.sessionId === sessionId && (m.column ?? 'A') === column,
+  const messages = useMemo(
+    () => allMessages.filter((m) => m.sessionId === sessionId && (m.column ?? 'A') === column),
+    [allMessages, sessionId, column],
   );
 
   // In-flight generation state lives in a store keyed by session+column
