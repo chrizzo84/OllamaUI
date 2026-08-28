@@ -12,6 +12,14 @@ import {
   type Job,
 } from '@/lib/generation-jobs';
 import { upsertMessages, persistFinalAssistantMessage } from '@/lib/chat-persistence';
+import {
+  getSession,
+  getSetting,
+  createMemory,
+  listMemories,
+  recordBenchmarkRun,
+  type MemoryRow,
+} from '@/lib/db';
 import type { ChatMessage, TraceEvent } from '@/store/chat';
 import type { ChatStats } from '@/lib/chat-stream';
 
@@ -121,12 +129,37 @@ const CURRENT_DATE_TOOL = {
   },
 };
 
-const AVAILABLE_TOOLS = [WEB_SEARCH_TOOL, CURRENT_DATE_TOOL];
+const REMEMBER_FACT_TOOL = {
+  type: 'function',
+  function: {
+    name: 'remember_fact',
+    description:
+      'Save a short, durable fact about the user (a preference, an ongoing project, something they told you) so you can recall it in future, separate conversations. Only use this for things worth remembering long-term — not transient chat content. One fact per call.',
+    parameters: {
+      type: 'object',
+      properties: {
+        fact: { type: 'string', description: 'The fact to remember, one sentence.' },
+      },
+      required: ['fact'],
+    },
+  },
+};
+
+// remember_fact is gated by its own `memoryEnabled` flag, independent of
+// `toolsEnabled` (web_search/get_current_date) — a user who wants memory but
+// not web search, or vice versa, shouldn't have to enable both together.
+function buildTools(toolsEnabled: boolean, memoryEnabled: boolean) {
+  return [
+    ...(toolsEnabled ? [WEB_SEARCH_TOOL, CURRENT_DATE_TOOL] : []),
+    ...(memoryEnabled ? [REMEMBER_FACT_TOOL] : []),
+  ];
+}
 
 async function executeTool(
   name: string,
   args: unknown,
   searxngTemplate: string | null,
+  sessionId: string,
 ): Promise<{ result?: unknown; error?: string }> {
   if (name === 'get_current_date') {
     const now = new Date();
@@ -138,6 +171,14 @@ async function executeTool(
         time: now.toLocaleTimeString('en-GB'),
       },
     };
+  }
+  if (name === 'remember_fact') {
+    const a = (args && typeof args === 'object' ? args : {}) as { fact?: unknown };
+    if (typeof a.fact !== 'string' || !a.fact.trim()) {
+      return { error: 'Missing required "fact" argument' };
+    }
+    createMemory({ content: a.fact.trim(), sourceSessionId: sessionId });
+    return { result: { saved: true } };
   }
   if (name !== 'web_search') return { error: `Unknown tool: ${name}` };
   const a = (args && typeof args === 'object' ? args : {}) as {
@@ -166,6 +207,7 @@ interface GenerationParams {
   think: boolean;
   options: unknown;
   toolsEnabled: boolean;
+  memoryEnabled: boolean;
   searxngTemplate: string | null;
 }
 
@@ -177,7 +219,7 @@ interface GenerationParams {
 // still listening. Never throws past its own catch-alls; every exit path
 // settles the job and persists something.
 async function runGeneration(job: Job, params: GenerationParams): Promise<void> {
-  const { base, model, think, options, toolsEnabled, searxngTemplate } = params;
+  const { base, model, think, options, toolsEnabled, memoryEnabled, searxngTemplate } = params;
   const messages: ChatMessageIn[] = params.messages.map((m) => ({
     role: m.role,
     content: m.content,
@@ -239,6 +281,19 @@ async function runGeneration(job: Job, params: GenerationParams): Promise<void> 
     if (!contentAggregated && !thinkingAggregated && status === 'done') {
       publish(job.id, { info: 'empty response', model });
     }
+    // Passive benchmark logging — every real completion becomes a data point
+    // for the /benchmarks history, no extra requests needed. Only real,
+    // non-empty generations count (aborted/empty ones have no meaningful
+    // speed to record).
+    if (status === 'done' && stats.completionTokens && stats.tokensPerSecond) {
+      recordBenchmarkRun({
+        model,
+        source: 'chat',
+        promptTokens: stats.promptTokens,
+        completionTokens: stats.completionTokens,
+        tokensPerSecond: stats.tokensPerSecond,
+      });
+    }
     settleJob(job.id, status);
     persistFinalAssistantMessage(job.sessionId, job.id, {
       content: contentAggregated,
@@ -291,7 +346,9 @@ async function runGeneration(job: Job, params: GenerationParams): Promise<void> 
           // Omit tools on the final iteration so the model can't get stuck
           // requesting one more tool call that we'd have to drop; it's
           // forced to answer in plain text instead.
-          ...(toolsEnabled && !isLastIteration ? { tools: AVAILABLE_TOOLS } : {}),
+          ...((toolsEnabled || memoryEnabled) && !isLastIteration
+            ? { tools: buildTools(toolsEnabled, memoryEnabled) }
+            : {}),
         }),
       });
     } catch (e) {
@@ -427,7 +484,7 @@ async function runGeneration(job: Job, params: GenerationParams): Promise<void> 
     }
 
     const validToolCalls = turnToolCalls.filter((c) => c.function?.name);
-    if (validToolCalls.length && toolsEnabled && !isLastIteration) {
+    if (validToolCalls.length && (toolsEnabled || memoryEnabled) && !isLastIteration) {
       messages.push({ role: 'assistant', content: turnContent, tool_calls: validToolCalls });
       openThinkingId = null;
       for (const call of validToolCalls) {
@@ -437,7 +494,7 @@ async function runGeneration(job: Job, params: GenerationParams): Promise<void> 
         trace.push({ type: 'tool', id, name, arguments: args });
         publish(job.id, { toolCall: { id, name, arguments: args } });
         syncSnapshot();
-        const { result, error } = await executeTool(name, args, searxngTemplate);
+        const { result, error } = await executeTool(name, args, searxngTemplate, job.sessionId);
         const traceIdx = trace.findIndex((t) => t.id === id);
         if (traceIdx !== -1) {
           const existing = trace[traceIdx];
@@ -463,6 +520,31 @@ async function runGeneration(job: Job, params: GenerationParams): Promise<void> 
 
   // Safety net: model kept calling tools past the iteration cap.
   await finishDone('done');
+}
+
+// Recall doesn't depend on the model choosing to call a tool (unreliable
+// across models) — stored facts are injected as context automatically
+// whenever memory is effectively on for this session. Capped at the 50 most
+// recent facts (listMemories() already orders newest-first) to bound token
+// cost regardless of how many accumulate; the user prunes the full list from
+// Settings. Merges into an existing system message (persona prompt) rather
+// than adding a second one, for template compatibility across models.
+function buildMemorySystemBlock(facts: MemoryRow[]): string {
+  const lines = facts.map((f) => `- ${f.content}`).join('\n');
+  return `Facts you remember about this user from previous conversations:\n${lines}\nUse these naturally when relevant; don't recite them unprompted. Don't call remember_fact again for something already listed here — only for genuinely new information.`;
+}
+
+function injectMemories(messages: ChatMessageIn[]): ChatMessageIn[] {
+  const facts = listMemories().slice(0, 50);
+  if (facts.length === 0) return messages;
+  const block = buildMemorySystemBlock(facts);
+  if (messages[0]?.role === 'system') {
+    return [
+      { ...messages[0], content: `${block}\n\n${messages[0].content}` },
+      ...messages.slice(1),
+    ];
+  }
+  return [{ role: 'system', content: block }, ...messages];
 }
 
 /*
@@ -502,6 +584,19 @@ export async function POST(req: NextRequest) {
         status: 400,
       });
     }
+    // Effective memory setting is resolved here, server-side, from the DB —
+    // never trusted from the client — so a session's explicit override
+    // (SessionRow.memoryEnabled: true/false) wins over the global default,
+    // and an unset session (null) falls back to it. See db.ts's SessionRow
+    // and api/settings/memory/route.ts.
+    const sessionForMemory = getSession(sessionId);
+    if (!sessionForMemory) {
+      return new Response(JSON.stringify({ error: 'Session not found' }), { status: 404 });
+    }
+    const memoryEnabled =
+      sessionForMemory.memoryEnabled ??
+      getSetting<{ memoryEnabled: boolean }>('memory')?.memoryEnabled ??
+      true;
     const base = resolveOllamaHostServer(req);
     if (!base) {
       return new Response(JSON.stringify({ error: 'No host configured', code: 'NO_HOST' }), {
@@ -537,10 +632,11 @@ export async function POST(req: NextRequest) {
     void runGeneration(job, {
       base,
       model,
-      messages: clientMessages,
+      messages: memoryEnabled ? injectMemories(clientMessages) : clientMessages,
       think,
       options,
       toolsEnabled,
+      memoryEnabled,
       searxngTemplate,
     }).catch((err) => {
       const message = err instanceof Error ? err.message : String(err);

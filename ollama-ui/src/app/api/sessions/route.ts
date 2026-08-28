@@ -15,6 +15,7 @@ export async function GET() {
     modelA: r.modelA,
     modelB: r.modelB,
     compareMode: r.compareMode,
+    memoryEnabled: r.memoryEnabled,
     messageCount: r.messages.length,
     updatedAt: r.updated_at,
   }));
@@ -34,6 +35,7 @@ export async function POST(req: NextRequest) {
     modelA: row.modelA,
     modelB: row.modelB,
     compareMode: row.compareMode,
+    memoryEnabled: row.memoryEnabled,
     messages: row.messages,
     updatedAt: row.updated_at,
   });

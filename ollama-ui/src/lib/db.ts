@@ -95,8 +95,35 @@ function initDb(): DatabaseSync {
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS memories (
+      id TEXT PRIMARY KEY,
+      content TEXT NOT NULL,
+      source_session_id TEXT,
+      created_at INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS benchmark_runs (
+      id TEXT PRIMARY KEY,
+      model TEXT NOT NULL,
+      source TEXT NOT NULL DEFAULT 'chat',
+      prompt_tokens INTEGER,
+      completion_tokens INTEGER,
+      tokens_per_second REAL,
+      created_at INTEGER NOT NULL
+    );
   `);
+  // `sessions` predates the per-session memory override — a plain `CREATE
+  // TABLE IF NOT EXISTS` above won't add a column to an already-existing
+  // table, so existing databases need an explicit migration. NULL = inherit
+  // the global memory setting (see src/app/api/settings/memory/route.ts),
+  // same nullable-override semantics as profile_id.
+  ensureColumn(instance, 'sessions', 'memory_enabled', 'INTEGER');
   return instance;
+}
+
+function ensureColumn(instance: DatabaseSync, table: string, column: string, ddl: string): void {
+  const cols = instance.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+  if (cols.some((c) => c.name === column)) return;
+  instance.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`);
 }
 
 // Lazily initializes on first real property access (e.g. the first
@@ -367,8 +394,7 @@ export function deleteHost(id: string): void {
   db.prepare('DELETE FROM hosts WHERE id = ?').run(id);
   if (target.active) {
     const next = db.prepare('SELECT * FROM hosts ORDER BY last_used_at DESC LIMIT 1').get() as
-      | HostRow
-      | undefined;
+      HostRow | undefined;
     if (next) {
       db.prepare('UPDATE hosts SET active = 1, last_used_at = ? WHERE id = ?').run(
         Date.now(),
@@ -404,6 +430,10 @@ export interface SessionRow {
   modelA: string;
   modelB: string;
   compareMode: boolean;
+  // Per-session override for the global memory setting. null = inherit the
+  // global default (see src/app/api/settings/memory/route.ts); an explicit
+  // true/false wins regardless of the global value.
+  memoryEnabled: boolean | null;
   messages: ChatMessage[];
   created_at: number;
   updated_at: number;
@@ -417,6 +447,7 @@ interface SessionDbRow {
   model_a: string;
   model_b: string;
   compare_mode: number;
+  memory_enabled: number | null;
   messages: string;
   created_at: number;
   updated_at: number;
@@ -431,6 +462,7 @@ function rowToSession(r: SessionDbRow): SessionRow {
     modelA: r.model_a,
     modelB: r.model_b,
     compareMode: !!r.compare_mode,
+    memoryEnabled: r.memory_enabled === null ? null : !!r.memory_enabled,
     messages: JSON.parse(r.messages),
     created_at: r.created_at,
     updated_at: r.updated_at,
@@ -457,12 +489,13 @@ export function createSession(data: { profileId?: string | null }): SessionRow {
     modelA: '',
     modelB: '',
     compareMode: false,
+    memoryEnabled: null,
     messages: [],
     created_at: now,
     updated_at: now,
   };
   db.prepare(
-    'INSERT INTO sessions (id, title, title_status, profile_id, model_a, model_b, compare_mode, messages, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    'INSERT INTO sessions (id, title, title_status, profile_id, model_a, model_b, compare_mode, memory_enabled, messages, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
   ).run(
     row.id,
     row.title,
@@ -471,6 +504,7 @@ export function createSession(data: { profileId?: string | null }): SessionRow {
     row.modelA,
     row.modelB,
     row.compareMode ? 1 : 0,
+    row.memoryEnabled === null ? null : row.memoryEnabled ? 1 : 0,
     JSON.stringify(row.messages),
     row.created_at,
     row.updated_at,
@@ -483,7 +517,14 @@ export function updateSession(
   patch: Partial<
     Pick<
       SessionRow,
-      'title' | 'titleStatus' | 'profileId' | 'modelA' | 'modelB' | 'compareMode' | 'messages'
+      | 'title'
+      | 'titleStatus'
+      | 'profileId'
+      | 'modelA'
+      | 'modelB'
+      | 'compareMode'
+      | 'memoryEnabled'
+      | 'messages'
     >
   >,
 ): SessionRow | undefined {
@@ -491,7 +532,7 @@ export function updateSession(
   if (!existing) return undefined;
   const updated: SessionRow = { ...existing, ...patch, updated_at: Date.now() };
   db.prepare(
-    'UPDATE sessions SET title=?, title_status=?, profile_id=?, model_a=?, model_b=?, compare_mode=?, messages=?, updated_at=? WHERE id=?',
+    'UPDATE sessions SET title=?, title_status=?, profile_id=?, model_a=?, model_b=?, compare_mode=?, memory_enabled=?, messages=?, updated_at=? WHERE id=?',
   ).run(
     updated.title,
     updated.titleStatus,
@@ -499,6 +540,7 @@ export function updateSession(
     updated.modelA,
     updated.modelB,
     updated.compareMode ? 1 : 0,
+    updated.memoryEnabled === null ? null : updated.memoryEnabled ? 1 : 0,
     JSON.stringify(updated.messages),
     updated.updated_at,
     id,
@@ -514,8 +556,7 @@ export function deleteSession(id: string): void {
 
 export function getSetting<T>(key: string): T | undefined {
   const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key) as
-    | { value: string }
-    | undefined;
+    { value: string } | undefined;
   if (!row) return undefined;
   try {
     return JSON.parse(row.value) as T;
@@ -528,4 +569,116 @@ export function setSetting(key: string, value: unknown): void {
   db.prepare(
     'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
   ).run(key, JSON.stringify(value));
+}
+
+// --- Memories (persistent "the assistant remembers you" facts) ---
+
+export interface MemoryRow {
+  id: string;
+  content: string;
+  sourceSessionId: string | null;
+  created_at: number;
+}
+
+interface MemoryDbRow {
+  id: string;
+  content: string;
+  source_session_id: string | null;
+  created_at: number;
+}
+
+function rowToMemory(r: MemoryDbRow): MemoryRow {
+  return {
+    id: r.id,
+    content: r.content,
+    sourceSessionId: r.source_session_id,
+    created_at: r.created_at,
+  };
+}
+
+export function listMemories(): MemoryRow[] {
+  const rows = db.prepare('SELECT * FROM memories ORDER BY created_at DESC').all();
+  return (rows as unknown as MemoryDbRow[]).map(rowToMemory);
+}
+
+export function createMemory(data: {
+  content: string;
+  sourceSessionId?: string | null;
+}): MemoryRow {
+  const row: MemoryRow = {
+    id: safeUuid(),
+    content: data.content.trim(),
+    sourceSessionId: data.sourceSessionId ?? null,
+    created_at: Date.now(),
+  };
+  db.prepare(
+    'INSERT INTO memories (id, content, source_session_id, created_at) VALUES (?, ?, ?, ?)',
+  ).run(row.id, row.content, row.sourceSessionId, row.created_at);
+  return row;
+}
+
+export function deleteMemory(id: string): void {
+  db.prepare('DELETE FROM memories WHERE id = ?').run(id);
+}
+
+// --- Benchmark runs (per-model speed history, for the /benchmarks page) ---
+
+export interface BenchmarkRunRow {
+  id: string;
+  model: string;
+  source: 'chat' | 'manual';
+  promptTokens: number | null;
+  completionTokens: number | null;
+  tokensPerSecond: number | null;
+  created_at: number;
+}
+
+interface BenchmarkRunDbRow {
+  id: string;
+  model: string;
+  source: string;
+  prompt_tokens: number | null;
+  completion_tokens: number | null;
+  tokens_per_second: number | null;
+  created_at: number;
+}
+
+function rowToBenchmarkRun(r: BenchmarkRunDbRow): BenchmarkRunRow {
+  return {
+    id: r.id,
+    model: r.model,
+    source: r.source === 'manual' ? 'manual' : 'chat',
+    promptTokens: r.prompt_tokens,
+    completionTokens: r.completion_tokens,
+    tokensPerSecond: r.tokens_per_second,
+    created_at: r.created_at,
+  };
+}
+
+export function recordBenchmarkRun(data: {
+  model: string;
+  source: 'chat' | 'manual';
+  promptTokens?: number;
+  completionTokens?: number;
+  tokensPerSecond?: number;
+}): void {
+  db.prepare(
+    'INSERT INTO benchmark_runs (id, model, source, prompt_tokens, completion_tokens, tokens_per_second, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+  ).run(
+    safeUuid(),
+    data.model,
+    data.source,
+    data.promptTokens ?? null,
+    data.completionTokens ?? null,
+    data.tokensPerSecond ?? null,
+    Date.now(),
+  );
+}
+
+export function listBenchmarkRuns(opts: { limit?: number } = {}): BenchmarkRunRow[] {
+  const limit = opts.limit ?? 500;
+  const rows = db
+    .prepare('SELECT * FROM benchmark_runs ORDER BY created_at DESC LIMIT ?')
+    .all(limit);
+  return (rows as unknown as BenchmarkRunDbRow[]).map(rowToBenchmarkRun);
 }
