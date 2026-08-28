@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useChatStore, type ChatMessage } from '@/store/chat';
 import { useToastStore } from '@/store/toast';
@@ -57,6 +57,17 @@ async function fetchModels(): Promise<TagsResponse> {
   const r = await fetch('/api/models', { cache: 'no-store' });
   if (!r.ok) throw new Error('Model Load failed');
   return r.json();
+}
+
+// Reverse-free scan for the most recent assistant reply with known prompt-token
+// usage — avoids an array copy + reverse on every render (this is recomputed
+// on every streamed token while a reply is in flight).
+function findLastPromptTokens(messages: ChatMessage[]): number | undefined {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m.role === 'assistant' && m.stats?.promptTokens != null) return m.stats.promptTokens;
+  }
+  return undefined;
 }
 
 function formatTokenCount(n: number): string {
@@ -354,12 +365,14 @@ export function ChatPanel() {
     (columnB.model
       ? Math.min(DEFAULT_MIN_NUM_CTX, contextLengthB ?? DEFAULT_MIN_NUM_CTX)
       : undefined);
-  const lastPromptTokensA = [...columnA.messages]
-    .reverse()
-    .find((m) => m.role === 'assistant' && m.stats?.promptTokens != null)?.stats?.promptTokens;
-  const lastPromptTokensB = [...columnB.messages]
-    .reverse()
-    .find((m) => m.role === 'assistant' && m.stats?.promptTokens != null)?.stats?.promptTokens;
+  const lastPromptTokensA = useMemo(
+    () => findLastPromptTokens(columnA.messages),
+    [columnA.messages],
+  );
+  const lastPromptTokensB = useMemo(
+    () => findLastPromptTokens(columnB.messages),
+    [columnB.messages],
+  );
 
   // On session switch: load its persisted history, restore which models &
   // compare-mode it used. Column A falls back to the last model used on
@@ -433,7 +446,10 @@ export function ChatPanel() {
   const allMessages = useChatStore((s) => s.messages);
   const clear = useChatStore((s) => s.clear);
   const restore = useChatStore((s) => s.restore);
-  const sessionMessages = allMessages.filter((m) => m.sessionId === activeSessionId);
+  const sessionMessages = useMemo(
+    () => allMessages.filter((m) => m.sessionId === activeSessionId),
+    [allMessages, activeSessionId],
+  );
 
   const containerRef = useRef<HTMLDivElement | null>(null);
 

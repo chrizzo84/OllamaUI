@@ -55,7 +55,7 @@
 - 🎨 Theme-adaptive glass UI — 5 accent themes driving an ambient aurora background, glass cards, charts and scrollbars
 - 📊 Dashboard with model stats and accessible, colorblind-safe charts
 - 🔔 Toast notifications (success / error / info)
-- ⚡️ Lightweight state management with Zustand & React Query caching
+- ⚡️ Lightweight state management with Zustand & React Query caching, with per-message memoization and deferred markdown parsing so streaming stays smooth in long conversations
 - 🐍 Python scraper (separate directory) to periodically refresh the catalog JSON
 
 ---
