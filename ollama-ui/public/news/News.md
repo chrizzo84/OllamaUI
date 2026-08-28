@@ -2,6 +2,9 @@ Chronological list of notable changes to Ollama UI.
 
 ## 2026-08-28
 
+- **Weather & Calculator Tools**
+  - New `get_weather` tool: real, structured multi-day forecasts (temperature, precipitation, conditions) via Open-Meteo — no API key needed. Replaces relying on `web_search` for weather questions, which could return vague search snippets instead of an actual forecast, or the model announcing it would search and never following through.
+  - New `calculator` tool: evaluates arithmetic expressions (`+ - * / % ^`, parentheses) reliably instead of the model doing math in its head. Both tools use the existing "Tools" toggle in Settings — no new switch to find.
 - **Persistent Memory**
   - The assistant can now save short, durable facts about you during a chat (a `remember_fact` tool — "remember that I prefer concise answers", "remember I'm working on X") and automatically recalls them in future, separate conversations — no more re-explaining preferences or ongoing projects every time. On by default; manage what's stored (view/delete/add facts manually) under Settings → Memory.
   - A 🧠 pill next to the composer shows whether memory is active and lets you turn it off for just the current chat, without touching the global setting — useful for a one-off conversation you don't want influencing future replies.
