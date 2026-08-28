@@ -2,6 +2,9 @@ Chronological list of notable changes to Ollama UI.
 
 ## 2026-08-28
 
+- **Scheduled Tasks**
+  - New **Scheduled** page: set up recurring prompts ("check the weather every morning at 8", "summarize the news every weekday evening") that run automatically at a set time and days of the week — no browser tab needs to be open, no external cron required. Each run creates a new chat session with the model's real reply (tools and memory both available, on by default), and the existing "N generating" badge/toast picks it up like any other background reply, so you're notified the same way.
+  - Runs entirely server-side via a background scheduler started once when the app boots; a task survives app restarts (missed runs simply catch up on the next check) and multiple tasks firing at the same time run safely alongside each other.
 - **Weather & Calculator Tools**
   - New `get_weather` tool: real, structured multi-day forecasts (temperature, precipitation, conditions) via Open-Meteo — no API key needed. Replaces relying on `web_search` for weather questions, which could return vague search snippets instead of an actual forecast, or the model announcing it would search and never following through.
   - New `calculator` tool: evaluates arithmetic expressions (`+ - * / % ^`, parentheses) reliably instead of the model doing math in its head. Both tools use the existing "Tools" toggle in Settings — no new switch to find.
