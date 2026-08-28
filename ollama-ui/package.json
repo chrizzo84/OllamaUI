@@ -1,6 +1,6 @@
 {
   "name": "ollama-ui",
-  "version": "0.1.20260828-3",
+  "version": "0.1.20260828-4",
   "packageManager": "pnpm@10.14.0",
   "private": true,
   "engines": {

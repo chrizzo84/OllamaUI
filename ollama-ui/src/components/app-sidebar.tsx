@@ -16,6 +16,7 @@ import {
   PanelLeftOpen,
   Activity,
   Gauge,
+  CalendarClock,
 } from 'lucide-react';
 import { useSessionsStore } from '@/store/sessions';
 import { HostIndicator } from './header-brand';
@@ -51,6 +52,12 @@ const NAV_ITEMS: NavItem[] = [
     label: 'Benchmarks',
     icon: Gauge,
     match: (p) => p.startsWith('/benchmarks'),
+  },
+  {
+    href: '/schedule',
+    label: 'Scheduled',
+    icon: CalendarClock,
+    match: (p) => p.startsWith('/schedule'),
   },
   { href: '/settings', label: 'Settings', icon: Settings, match: (p) => p.startsWith('/settings') },
 ];

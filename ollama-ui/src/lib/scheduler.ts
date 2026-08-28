@@ -1,0 +1,139 @@
+// Drives recurring prompts ("every morning at 8, check the weather") without
+// any browser tab ever needing to be open. Started once from
+// instrumentation.ts when the server process boots — this file has no
+// knowledge of HTTP at all, it just ticks a timer and, when a task is due,
+// runs the exact same generation engine a real chat message uses
+// (src/lib/generation-runner.ts) via the same job registry
+// (src/lib/generation-jobs.ts) a real chat POST uses. That's what makes a
+// scheduled run show up in the existing "N generating" badge/toast — it's
+// not a special case, it's just another job.
+import {
+  listScheduledTasks,
+  updateScheduledTask,
+  createSession,
+  updateSession,
+  getSession,
+  getSetting,
+  type ScheduledTaskRow,
+} from '@/lib/db';
+import { upsertMessages } from '@/lib/chat-persistence';
+import { createJob } from '@/lib/generation-jobs';
+import { runGeneration, injectMemories } from '@/lib/generation-runner';
+import { resolveOllamaHostServer } from '@/lib/host-resolve-server';
+import { safeUuid } from '@/lib/utils';
+import type { ChatMessage } from '@/store/chat';
+
+const TICK_INTERVAL_MS = 60_000;
+
+// Finds the next moment (strictly after `from`) that matches `timeOfDay`
+// ('HH:MM', server-local) and one of `daysOfWeek` (JS Date.getDay()
+// convention: 0 = Sunday). Scans up to 7 days ahead, which always finds a
+// match as long as daysOfWeek is non-empty (enforced by the create/update
+// API route).
+export function computeNextRunAt(timeOfDay: string, daysOfWeek: number[], from: Date): number {
+  const [hh, mm] = timeOfDay.split(':').map(Number);
+  for (let addDays = 0; addDays <= 7; addDays++) {
+    const candidate = new Date(from);
+    candidate.setDate(candidate.getDate() + addDays);
+    candidate.setHours(hh, mm, 0, 0);
+    if (candidate.getTime() <= from.getTime()) continue; // strictly future
+    if (daysOfWeek.includes(candidate.getDay())) return candidate.getTime();
+  }
+  // Unreachable in practice (daysOfWeek is never empty), but keep the
+  // scheduler alive rather than throwing if it somehow happens.
+  return from.getTime() + 24 * 60 * 60 * 1000;
+}
+
+function formatRunTitle(taskName: string, at: Date): string {
+  return `${taskName} — ${at.toLocaleDateString('de-DE')} ${at.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })}`;
+}
+
+async function runScheduledTask(task: ScheduledTaskRow): Promise<void> {
+  const base = resolveOllamaHostServer(); // no req — falls through to the active DB host
+  if (!base) {
+    console.error(`Scheduled task "${task.name}" skipped: no Ollama host configured`);
+    return;
+  }
+
+  const session = createSession({ profileId: null });
+  updateSession(session.id, { title: formatRunTitle(task.name, new Date()), titleStatus: 'ready' });
+
+  const userMessage: ChatMessage = {
+    id: safeUuid(),
+    role: 'user',
+    content: task.prompt,
+    model: task.model,
+    sessionId: session.id,
+    createdAt: Date.now(),
+  };
+  const assistantMessage: ChatMessage = {
+    id: safeUuid(),
+    role: 'assistant',
+    content: '',
+    model: task.model,
+    sessionId: session.id,
+    createdAt: Date.now(),
+  };
+  upsertMessages(session.id, [userMessage, assistantMessage]);
+
+  // Same effective-memory resolution as the POST /api/chat handler: a
+  // session-level override (none possible here, this session is brand new)
+  // falls back to the global setting.
+  const memoryEnabled =
+    getSession(session.id)?.memoryEnabled ??
+    getSetting<{ memoryEnabled: boolean }>('memory')?.memoryEnabled ??
+    true;
+
+  const job = createJob(assistantMessage.id, {
+    sessionId: session.id,
+    column: 'A',
+    model: task.model,
+  });
+  await runGeneration(job, {
+    base,
+    model: task.model,
+    messages: memoryEnabled
+      ? injectMemories([{ role: 'user', content: task.prompt }])
+      : [{ role: 'user', content: task.prompt }],
+    think: false,
+    options: undefined,
+    toolsEnabled: task.toolsEnabled,
+    memoryEnabled,
+    searxngTemplate: null, // server-side default (SEARXNG_HOST env), no per-request header here
+  });
+
+  updateScheduledTask(task.id, { lastRunAt: Date.now(), lastRunSessionId: session.id });
+}
+
+function tick(): void {
+  const now = Date.now();
+  for (const task of listScheduledTasks()) {
+    if (!task.enabled || !task.nextRunAt || task.nextRunAt > now) continue;
+    // Advance next_run_at BEFORE the async run starts. This happens
+    // synchronously (no await between the listScheduledTasks() read above
+    // and this write), so a task can't be double-fired even if tick() were
+    // somehow re-entered before the run finishes — by the time any other
+    // code could observe this task again, next_run_at is already in the
+    // future.
+    updateScheduledTask(task.id, {
+      nextRunAt: computeNextRunAt(task.timeOfDay, task.daysOfWeek, new Date(now)),
+    });
+    void runScheduledTask(task).catch((e) => {
+      console.error(`Scheduled task "${task.name}" (${task.id}) failed:`, e);
+    });
+  }
+}
+
+// Guards against starting a second interval on Next.js dev's hot-reload
+// (this module gets re-evaluated on every edit during `next dev`, but the
+// server process itself — and this global — persists across reloads).
+declare global {
+  var __ollamaUiSchedulerStarted: boolean | undefined;
+}
+
+export function startScheduler(): void {
+  if (globalThis.__ollamaUiSchedulerStarted) return;
+  globalThis.__ollamaUiSchedulerStarted = true;
+  tick(); // catch up immediately (e.g. a task's time already passed while the server was down)
+  setInterval(tick, TICK_INTERVAL_MS);
+}
