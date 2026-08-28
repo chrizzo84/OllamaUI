@@ -11,6 +11,7 @@ interface ScheduledTask {
   model: string;
   timeOfDay: string;
   daysOfWeek: number[];
+  recurring: boolean;
   toolsEnabled: boolean;
   memoryEnabled: boolean;
   enabled: boolean;
@@ -295,7 +296,15 @@ export function SchedulePanel() {
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
                     <h3 className="text-sm font-semibold text-white/90 truncate">{task.name}</h3>
-                    {!task.enabled && (
+                    {!task.recurring && (
+                      <span
+                        className="cap-pill border-violet-500/25 bg-violet-500/10 text-violet-200/80 !text-[10px]"
+                        title="Created via the create_reminder tool during a chat — fires once, then disappears."
+                      >
+                        reminder
+                      </span>
+                    )}
+                    {!task.enabled && task.recurring && (
                       <span className="cap-pill border-white/15 bg-white/5 text-white/40 !text-[10px]">
                         paused
                       </span>
@@ -304,30 +313,34 @@ export function SchedulePanel() {
                   <p className="text-[11px] text-white/45 mt-0.5 line-clamp-2">{task.prompt}</p>
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => handleToggleEnabled(task)}
-                    title={task.enabled ? 'Pause' : 'Resume'}
-                    className="p-1.5 rounded text-white/40 hover:text-white/80 hover:bg-white/10 transition"
-                  >
-                    {task.enabled ? (
-                      <span className="text-[10px] font-mono">⏸</span>
-                    ) : (
-                      <span className="text-[10px] font-mono">▶</span>
-                    )}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => startEdit(task)}
-                    title="Edit"
-                    className="p-1.5 rounded text-white/40 hover:text-white/80 hover:bg-white/10 transition"
-                  >
-                    <Pencil className="h-3.5 w-3.5" />
-                  </button>
+                  {task.recurring && (
+                    <button
+                      type="button"
+                      onClick={() => handleToggleEnabled(task)}
+                      title={task.enabled ? 'Pause' : 'Resume'}
+                      className="p-1.5 rounded text-white/40 hover:text-white/80 hover:bg-white/10 transition"
+                    >
+                      {task.enabled ? (
+                        <span className="text-[10px] font-mono">⏸</span>
+                      ) : (
+                        <span className="text-[10px] font-mono">▶</span>
+                      )}
+                    </button>
+                  )}
+                  {task.recurring && (
+                    <button
+                      type="button"
+                      onClick={() => startEdit(task)}
+                      title="Edit"
+                      className="p-1.5 rounded text-white/40 hover:text-white/80 hover:bg-white/10 transition"
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => handleDelete(task.id)}
-                    title="Delete"
+                    title={task.recurring ? 'Delete' : 'Cancel reminder'}
                     className="p-1.5 rounded text-white/40 hover:text-red-300 hover:bg-white/10 transition"
                   >
                     <Trash2 className="h-3.5 w-3.5" />
@@ -338,17 +351,25 @@ export function SchedulePanel() {
                 <span className="cap-pill border-white/15 bg-white/5 text-white/50 !text-[10px] font-mono">
                   {task.model}
                 </span>
-                <span className="cap-pill border-white/15 bg-white/5 text-white/50 !text-[10px] font-mono">
-                  {task.timeOfDay}
-                </span>
-                <span className="cap-pill border-white/15 bg-white/5 text-white/50 !text-[10px]">
-                  {task.daysOfWeek.length === 7
-                    ? 'daily'
-                    : task.daysOfWeek.map((d) => DAY_LABELS[d]).join(' ')}
-                </span>
+                {task.recurring ? (
+                  <>
+                    <span className="cap-pill border-white/15 bg-white/5 text-white/50 !text-[10px] font-mono">
+                      {task.timeOfDay}
+                    </span>
+                    <span className="cap-pill border-white/15 bg-white/5 text-white/50 !text-[10px]">
+                      {task.daysOfWeek.length === 7
+                        ? 'daily'
+                        : task.daysOfWeek.map((d) => DAY_LABELS[d]).join(' ')}
+                    </span>
+                  </>
+                ) : (
+                  <span className="cap-pill border-white/15 bg-white/5 text-white/50 !text-[10px]">
+                    once — {formatWhen(task.nextRunAt)}
+                  </span>
+                )}
               </div>
               <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-white/40">
-                <span>Next: {formatWhen(task.nextRunAt)}</span>
+                {task.recurring && <span>Next: {formatWhen(task.nextRunAt)}</span>}
                 <span>
                   Last: {formatWhen(task.lastRunAt)}
                   {task.lastRunSessionId && (

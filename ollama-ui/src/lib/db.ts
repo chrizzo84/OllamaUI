@@ -117,6 +117,7 @@ function initDb(): DatabaseSync {
       model TEXT NOT NULL,
       time_of_day TEXT NOT NULL,
       days_of_week TEXT NOT NULL DEFAULT '[0,1,2,3,4,5,6]',
+      recurring INTEGER NOT NULL DEFAULT 1,
       tools_enabled INTEGER NOT NULL DEFAULT 1,
       memory_enabled INTEGER NOT NULL DEFAULT 1,
       enabled INTEGER NOT NULL DEFAULT 1,
@@ -133,6 +134,11 @@ function initDb(): DatabaseSync {
   // the global memory setting (see src/app/api/settings/memory/route.ts),
   // same nullable-override semantics as profile_id.
   ensureColumn(instance, 'sessions', 'memory_enabled', 'INTEGER');
+  // `scheduled_tasks` predates one-off reminders (the create_reminder tool,
+  // see generation-runner.ts) — existing recurring tasks default to
+  // recurring=1 via DEFAULT 1 in ALTER TABLE, so they keep behaving exactly
+  // as before this column existed.
+  ensureColumn(instance, 'scheduled_tasks', 'recurring', 'INTEGER NOT NULL DEFAULT 1');
   return instance;
 }
 
@@ -706,8 +712,12 @@ export interface ScheduledTaskRow {
   name: string;
   prompt: string;
   model: string;
-  timeOfDay: string; // 'HH:MM', server-local time
-  daysOfWeek: number[]; // JS Date.getDay() convention, 0 = Sunday
+  timeOfDay: string; // 'HH:MM', server-local time — unused when recurring is false
+  daysOfWeek: number[]; // JS Date.getDay() convention, 0 = Sunday — unused when recurring is false
+  // false = one-off reminder (create_reminder tool, see generation-runner.ts):
+  // fires once at nextRunAt, then the row is deleted rather than getting a
+  // new nextRunAt. true = the normal recurring task created via /schedule.
+  recurring: boolean;
   toolsEnabled: boolean;
   memoryEnabled: boolean;
   enabled: boolean;
@@ -725,6 +735,7 @@ interface ScheduledTaskDbRow {
   model: string;
   time_of_day: string;
   days_of_week: string;
+  recurring: number;
   tools_enabled: number;
   memory_enabled: number;
   enabled: number;
@@ -749,6 +760,7 @@ function rowToScheduledTask(r: ScheduledTaskDbRow): ScheduledTaskRow {
     model: r.model,
     timeOfDay: r.time_of_day,
     daysOfWeek,
+    recurring: !!r.recurring,
     toolsEnabled: !!r.tools_enabled,
     memoryEnabled: !!r.memory_enabled,
     enabled: !!r.enabled,
@@ -777,6 +789,7 @@ export function createScheduledTask(data: {
   model: string;
   timeOfDay: string;
   daysOfWeek: number[];
+  recurring?: boolean; // defaults true — the manual /schedule form only ever creates recurring tasks
   toolsEnabled: boolean;
   memoryEnabled: boolean;
   nextRunAt: number;
@@ -789,6 +802,7 @@ export function createScheduledTask(data: {
     model: data.model,
     timeOfDay: data.timeOfDay,
     daysOfWeek: data.daysOfWeek,
+    recurring: data.recurring ?? true,
     toolsEnabled: data.toolsEnabled,
     memoryEnabled: data.memoryEnabled,
     enabled: true,
@@ -800,8 +814,8 @@ export function createScheduledTask(data: {
   };
   db.prepare(
     `INSERT INTO scheduled_tasks
-      (id, name, prompt, model, time_of_day, days_of_week, tools_enabled, memory_enabled, enabled, next_run_at, last_run_at, last_run_session_id, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      (id, name, prompt, model, time_of_day, days_of_week, recurring, tools_enabled, memory_enabled, enabled, next_run_at, last_run_at, last_run_session_id, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     row.id,
     row.name,
@@ -809,6 +823,7 @@ export function createScheduledTask(data: {
     row.model,
     row.timeOfDay,
     JSON.stringify(row.daysOfWeek),
+    row.recurring ? 1 : 0,
     row.toolsEnabled ? 1 : 0,
     row.memoryEnabled ? 1 : 0,
     row.enabled ? 1 : 0,
@@ -831,6 +846,7 @@ export function updateScheduledTask(
       | 'model'
       | 'timeOfDay'
       | 'daysOfWeek'
+      | 'recurring'
       | 'toolsEnabled'
       | 'memoryEnabled'
       | 'enabled'
@@ -845,7 +861,7 @@ export function updateScheduledTask(
   const updated: ScheduledTaskRow = { ...existing, ...patch, updated_at: Date.now() };
   db.prepare(
     `UPDATE scheduled_tasks SET
-      name=?, prompt=?, model=?, time_of_day=?, days_of_week=?, tools_enabled=?, memory_enabled=?,
+      name=?, prompt=?, model=?, time_of_day=?, days_of_week=?, recurring=?, tools_enabled=?, memory_enabled=?,
       enabled=?, next_run_at=?, last_run_at=?, last_run_session_id=?, updated_at=?
       WHERE id=?`,
   ).run(
@@ -854,6 +870,7 @@ export function updateScheduledTask(
     updated.model,
     updated.timeOfDay,
     JSON.stringify(updated.daysOfWeek),
+    updated.recurring ? 1 : 0,
     updated.toolsEnabled ? 1 : 0,
     updated.memoryEnabled ? 1 : 0,
     updated.enabled ? 1 : 0,

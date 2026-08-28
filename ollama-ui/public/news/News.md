@@ -2,6 +2,9 @@ Chronological list of notable changes to Ollama UI.
 
 ## 2026-08-28
 
+- **Reminders From Chat, Server Clock in the Footer**
+  - New `create_reminder` tool: ask for something like "remind me tomorrow at 9 to call the dentist" and the model schedules it itself, right from the conversation — no need to open the Scheduled page. It fires once at the exact time, delivers the reminder as a new chat message, and then quietly removes itself; the Scheduled list shows it with a "reminder" badge in the meantime so you can still see or cancel it.
+  - The footer now shows a small live server clock. Scheduled Tasks and reminders both use the _server's_ local time, which can quietly differ from your browser's — this makes that explicit instead of leaving it to guesswork.
 - **Scheduled Tasks**
   - New **Scheduled** page: set up recurring prompts ("check the weather every morning at 8", "summarize the news every weekday evening") that run automatically at a set time and days of the week — no browser tab needs to be open, no external cron required. Each run creates a new chat session with the model's real reply (tools and memory both available, on by default), and the existing "N generating" badge/toast picks it up like any other background reply, so you're notified the same way.
   - Runs entirely server-side via a background scheduler started once when the app boots; a task survives app restarts (missed runs simply catch up on the next check) and multiple tasks firing at the same time run safely alongside each other.

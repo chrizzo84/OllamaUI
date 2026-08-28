@@ -25,6 +25,7 @@ function toApiShape(r: NonNullable<ReturnType<typeof getScheduledTask>>) {
     model: r.model,
     timeOfDay: r.timeOfDay,
     daysOfWeek: r.daysOfWeek,
+    recurring: r.recurring,
     toolsEnabled: r.toolsEnabled,
     memoryEnabled: r.memoryEnabled,
     enabled: r.enabled,

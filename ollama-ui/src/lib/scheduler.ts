@@ -10,6 +10,7 @@
 import {
   listScheduledTasks,
   updateScheduledTask,
+  deleteScheduledTask,
   createSession,
   updateSession,
   getSession,
@@ -84,6 +85,19 @@ async function runScheduledTask(task: ScheduledTaskRow): Promise<void> {
     getSetting<{ memoryEnabled: boolean }>('memory')?.memoryEnabled ??
     true;
 
+  // A one-off reminder's prompt is phrased as an instruction the model wrote
+  // to itself (see CREATE_REMINDER_TOOL's description in
+  // generation-runner.ts), delivered here with no other context — without
+  // framing, a model that also sees the create_reminder tool available can
+  // mistake it for a fresh request to schedule *another* reminder instead of
+  // recognizing "this is the reminder, firing now" (observed live in
+  // testing). Only wraps what's SENT to the model — the persisted/displayed
+  // user message stays the clean original text, same split already used for
+  // memory injection (injectMemories) below.
+  const promptForModel = task.recurring
+    ? task.prompt
+    : `[System: it is now the exact moment a reminder you set is due to be delivered. This is not a request to schedule anything, and the timing is correct — do not comment on dates or timing at all.]\n\nDeliver this reminder to the user now, as your entire reply, in your own words: "${task.prompt}"`;
+
   const job = createJob(assistantMessage.id, {
     sessionId: session.id,
     column: 'A',
@@ -93,8 +107,8 @@ async function runScheduledTask(task: ScheduledTaskRow): Promise<void> {
     base,
     model: task.model,
     messages: memoryEnabled
-      ? injectMemories([{ role: 'user', content: task.prompt }])
-      : [{ role: 'user', content: task.prompt }],
+      ? injectMemories([{ role: 'user', content: promptForModel }])
+      : [{ role: 'user', content: promptForModel }],
     think: false,
     options: undefined,
     toolsEnabled: task.toolsEnabled,
@@ -102,22 +116,36 @@ async function runScheduledTask(task: ScheduledTaskRow): Promise<void> {
     searxngTemplate: null, // server-side default (SEARXNG_HOST env), no per-request header here
   });
 
-  updateScheduledTask(task.id, { lastRunAt: Date.now(), lastRunSessionId: session.id });
+  if (task.recurring) {
+    updateScheduledTask(task.id, { lastRunAt: Date.now(), lastRunSessionId: session.id });
+  } else {
+    // One-off reminder (create_reminder tool) — it already did its one job,
+    // nothing to keep around. No lastRunAt bookkeeping needed on a row
+    // that's about to disappear.
+    deleteScheduledTask(task.id);
+  }
 }
 
 function tick(): void {
   const now = Date.now();
   for (const task of listScheduledTasks()) {
     if (!task.enabled || !task.nextRunAt || task.nextRunAt > now) continue;
-    // Advance next_run_at BEFORE the async run starts. This happens
-    // synchronously (no await between the listScheduledTasks() read above
-    // and this write), so a task can't be double-fired even if tick() were
-    // somehow re-entered before the run finishes — by the time any other
-    // code could observe this task again, next_run_at is already in the
-    // future.
-    updateScheduledTask(task.id, {
-      nextRunAt: computeNextRunAt(task.timeOfDay, task.daysOfWeek, new Date(now)),
-    });
+    if (task.recurring) {
+      // Advance next_run_at BEFORE the async run starts. This happens
+      // synchronously (no await between the listScheduledTasks() read above
+      // and this write), so a task can't be double-fired even if tick() were
+      // somehow re-entered before the run finishes — by the time any other
+      // code could observe this task again, next_run_at is already in the
+      // future.
+      updateScheduledTask(task.id, {
+        nextRunAt: computeNextRunAt(task.timeOfDay, task.daysOfWeek, new Date(now)),
+      });
+    } else {
+      // One-off reminder: disable synchronously right away for the same
+      // double-fire-prevention reason — the row itself gets deleted once
+      // the run actually completes (see runScheduledTask).
+      updateScheduledTask(task.id, { enabled: false });
+    }
     void runScheduledTask(task).catch((e) => {
       console.error(`Scheduled task "${task.name}" (${task.id}) failed:`, e);
     });
