@@ -171,6 +171,11 @@ function ToolLine({
     ev.arguments && typeof ev.arguments === 'object' && 'query' in ev.arguments
       ? String((ev.arguments as { query?: unknown }).query ?? '')
       : '';
+  // These render their own result shape below (not the generic search-result
+  // list), so the "No results." fallback (meant for an empty web_search)
+  // must not fire for them.
+  const hasCustomResultRenderer =
+    ev.name === 'get_current_date' || ev.name === 'get_weather' || ev.name === 'calculator';
   // remember_fact is a background utility call, not something the user needs
   // to expand/collapse to understand — show what got saved directly, per the
   // "give a hint when memory is active" requirement.
@@ -209,12 +214,51 @@ function ToolLine({
       {expanded && (
         <div className="px-3 pb-3 max-h-56 overflow-y-auto border-t border-cyan-500/15 pt-2">
           {ev.error && <div className="text-[11px] text-red-300/80">{ev.error}</div>}
-          {!ev.error && searchResults.length === 0 && !pending && (
+          {!ev.error && !hasCustomResultRenderer && searchResults.length === 0 && !pending && (
             <div className="text-[11px] text-cyan-100/50">No results.</div>
           )}
           {!ev.error && ev.name === 'get_current_date' && ev.result != null && (
             <div className="text-[11px] text-cyan-100/70 font-mono">
               {JSON.stringify(ev.result)}
+            </div>
+          )}
+          {!ev.error && ev.name === 'calculator' && ev.result != null && (
+            <div className="text-[11px] text-cyan-100/80 font-mono">
+              {(ev.result as { expression?: string; value?: number }).expression} ={' '}
+              {(ev.result as { expression?: string; value?: number }).value}
+            </div>
+          )}
+          {!ev.error && ev.name === 'get_weather' && ev.result != null && (
+            <div className="text-[11px] text-cyan-100/80 flex flex-col gap-1">
+              {(() => {
+                const w = ev.result as {
+                  location?: string;
+                  current?: { temperatureC?: number; condition?: string };
+                  daily?: Array<{
+                    date?: string;
+                    condition?: string;
+                    tempMinC?: number;
+                    tempMaxC?: number;
+                    precipitationMm?: number;
+                  }>;
+                };
+                return (
+                  <>
+                    <div className="font-medium text-cyan-100/90">{w.location}</div>
+                    {w.current && (
+                      <div className="text-cyan-100/60">
+                        Now: {w.current.temperatureC}°C, {w.current.condition}
+                      </div>
+                    )}
+                    {(w.daily ?? []).map((d, idx) => (
+                      <div key={idx} className="text-cyan-100/60">
+                        {d.date}: {d.condition}, {d.tempMinC}° – {d.tempMaxC}°C
+                        {d.precipitationMm ? `, ${d.precipitationMm}mm precip.` : ''}
+                      </div>
+                    ))}
+                  </>
+                );
+              })()}
             </div>
           )}
           {searchResults.length > 0 && (

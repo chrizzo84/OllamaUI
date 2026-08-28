@@ -1,6 +1,8 @@
 import { NextRequest } from 'next/server';
 import { resolveOllamaHostServer } from '@/lib/host-resolve-server';
 import { performWebSearch } from '@/lib/web-search';
+import { getWeather } from '@/lib/weather';
+import { evaluateExpression } from '@/lib/calculator';
 import { safeUuid } from '@/lib/utils';
 import {
   createJob,
@@ -129,6 +131,48 @@ const CURRENT_DATE_TOOL = {
   },
 };
 
+const GET_WEATHER_TOOL = {
+  type: 'function',
+  function: {
+    name: 'get_weather',
+    description:
+      'Get the current weather and a multi-day forecast for a location. Prefer this over web_search for weather questions — it returns structured, reliable forecast data (temperature, precipitation, conditions) instead of search snippets you would have to interpret yourself.',
+    parameters: {
+      type: 'object',
+      properties: {
+        location: {
+          type: 'string',
+          description: 'City name (optionally with country), e.g. "Paris" or "Tokyo, Japan".',
+        },
+        days: {
+          type: 'integer',
+          description: 'Number of forecast days, 1-7 (default 3).',
+        },
+      },
+      required: ['location'],
+    },
+  },
+};
+
+const CALCULATOR_TOOL = {
+  type: 'function',
+  function: {
+    name: 'calculator',
+    description:
+      'Evaluate a basic arithmetic expression (+, -, *, /, %, ^, parentheses). Use this for any nontrivial calculation instead of computing it yourself, to avoid arithmetic mistakes.',
+    parameters: {
+      type: 'object',
+      properties: {
+        expression: {
+          type: 'string',
+          description: 'The arithmetic expression to evaluate, e.g. "(12 + 5) * 3 / 2".',
+        },
+      },
+      required: ['expression'],
+    },
+  },
+};
+
 const REMEMBER_FACT_TOOL = {
   type: 'function',
   function: {
@@ -150,7 +194,9 @@ const REMEMBER_FACT_TOOL = {
 // not web search, or vice versa, shouldn't have to enable both together.
 function buildTools(toolsEnabled: boolean, memoryEnabled: boolean) {
   return [
-    ...(toolsEnabled ? [WEB_SEARCH_TOOL, CURRENT_DATE_TOOL] : []),
+    ...(toolsEnabled
+      ? [WEB_SEARCH_TOOL, CURRENT_DATE_TOOL, GET_WEATHER_TOOL, CALCULATOR_TOOL]
+      : []),
     ...(memoryEnabled ? [REMEMBER_FACT_TOOL] : []),
   ];
 }
@@ -179,6 +225,43 @@ async function executeTool(
     }
     createMemory({ content: a.fact.trim(), sourceSessionId: sessionId });
     return { result: { saved: true } };
+  }
+  if (name === 'get_weather') {
+    const a = (args && typeof args === 'object' ? args : {}) as {
+      location?: unknown;
+      days?: unknown;
+    };
+    if (typeof a.location !== 'string' || !a.location.trim()) {
+      return { error: 'Missing required "location" argument' };
+    }
+    // Models frequently send integer-typed args as strings (observed live
+    // with llama3.1:8b sending {"days":"3"} despite the schema saying
+    // integer) — coerce rather than silently falling back to the default.
+    const daysRaw = typeof a.days === 'string' ? Number(a.days) : a.days;
+    const days = Math.min(
+      Math.max(
+        typeof daysRaw === 'number' && Number.isFinite(daysRaw) ? Math.round(daysRaw) : 3,
+        1,
+      ),
+      7,
+    );
+    try {
+      const result = await getWeather(a.location.trim(), days);
+      return { result };
+    } catch (e: unknown) {
+      return { error: e instanceof Error ? e.message : 'get_weather failed' };
+    }
+  }
+  if (name === 'calculator') {
+    const a = (args && typeof args === 'object' ? args : {}) as { expression?: unknown };
+    if (typeof a.expression !== 'string' || !a.expression.trim()) {
+      return { error: 'Missing required "expression" argument' };
+    }
+    try {
+      return { result: { expression: a.expression, value: evaluateExpression(a.expression) } };
+    } catch (e: unknown) {
+      return { error: e instanceof Error ? e.message : 'calculator failed' };
+    }
   }
   if (name !== 'web_search') return { error: `Unknown tool: ${name}` };
   const a = (args && typeof args === 'object' ? args : {}) as {

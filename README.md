@@ -48,7 +48,7 @@
 - 🏠 Host configuration (cookie + header + env fallback resolution)
 - 💬 Chat console with persisted sessions, personas, reasoning/tool-call traces, and a Compare mode to run two models side by side
 - 🔌 Chat generation survives closing the tab — runs as a server-side job, reconnect from any tab/device to pick a live reply back up; a global "N generating" badge, toast and tab-title flash tell you when a background reply finishes
-- 🛠️ Tool-calling for capable models (`web_search` via SearXNG, `get_current_date`, `remember_fact`)
+- 🛠️ Tool-calling for capable models (`web_search` via SearXNG, `get_current_date`, `get_weather` via Open-Meteo, `calculator`, `remember_fact`)
 - 🧠 Persistent memory — the assistant saves durable facts about you and recalls them automatically in future chats; on by default, toggle globally or per-chat
 - 📈 Model benchmark history — every real chat logs its speed automatically, plus an on-demand fixed-prompt benchmark across all installed models, with a trend chart
 - 🗜️ Context compaction — summarize older chat history into a dense context note via the model itself (with undo)
