@@ -16,6 +16,7 @@ export async function GET() {
     modelB: r.modelB,
     compareMode: r.compareMode,
     memoryEnabled: r.memoryEnabled,
+    isTelegram: r.isTelegram,
     messageCount: r.messages.length,
     updatedAt: r.updated_at,
   }));
@@ -36,6 +37,7 @@ export async function POST(req: NextRequest) {
     modelB: row.modelB,
     compareMode: row.compareMode,
     memoryEnabled: row.memoryEnabled,
+    isTelegram: row.isTelegram,
     messages: row.messages,
     updatedAt: row.updated_at,
   });
