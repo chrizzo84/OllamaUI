@@ -800,14 +800,45 @@ async function handleMessage(
 // outage shouldn't turn into a request every few seconds forever.
 const MAX_GETUPDATES_BACKOFF_MS = 60_000;
 
+// Live health snapshot, read by GET /api/status (see src/app/api/status/
+// route.ts) for the Settings page's status panel — this is what actually
+// answers "is the bridge working right now", as opposed to just "are the
+// env vars set" (getConfig() only knows that much). A stale token (e.g. one
+// rotated in Telegram but not updated in this container's env — the exact
+// failure mode this was built for) shows up here as a growing
+// consecutiveFailures count with no lastSuccessAt movement, silently
+// forever, with nothing else surfacing it.
+//
+// On globalThis, not a plain module-level const — Next.js dev (and
+// apparently some prod route-handler bundling too) can load this file into
+// more than one separate module instance (the instrumentation.ts-invoked
+// one that actually polls, and the one a route handler like
+// api/status/route.ts imports), which don't share ordinary module state.
+// This file already works around the same issue for
+// __ollamaUiTelegramBridgeStarted below — confirmed live: a plain const
+// here showed started:false/lastSuccessAt:null from GET /api/status even
+// while the console log showed updates actively arriving.
+interface BridgeStatus {
+  started: boolean;
+  lastSuccessAt: number | null;
+  lastErrorAt: number | null;
+  lastError: string | null;
+  consecutiveFailures: number;
+}
+declare global {
+  var __ollamaUiTelegramBridgeStatus: BridgeStatus | undefined;
+}
+const bridgeStatus: BridgeStatus = (globalThis.__ollamaUiTelegramBridgeStatus ??= {
+  started: false,
+  lastSuccessAt: null,
+  lastErrorAt: null,
+  lastError: null,
+  consecutiveFailures: 0,
+});
+
 async function pollLoop(config: BridgeConfig): Promise<void> {
   const { token, allowedUserId, model, visionModel, whisperHost } = config;
   let offset = 0;
-  // Tracks getUpdates failures in a row — drives both the backoff below and
-  // a one-time "back online" notice once it recovers, so an outage while
-  // you're away doesn't go unnoticed (you'd otherwise only find out the
-  // bridge was down by trying to message it and getting silence).
-  let consecutiveFailures = 0;
 
   for (;;) {
     let updates: TelegramUpdate[];
@@ -818,26 +849,32 @@ async function pollLoop(config: BridgeConfig): Promise<void> {
         allowed_updates: ['message', 'callback_query'],
       });
     } catch (e) {
-      consecutiveFailures++;
-      const backoffMs = Math.min(5000 * 2 ** (consecutiveFailures - 1), MAX_GETUPDATES_BACKOFF_MS);
+      bridgeStatus.consecutiveFailures++;
+      bridgeStatus.lastErrorAt = Date.now();
+      bridgeStatus.lastError = e instanceof Error ? e.message : String(e);
+      const backoffMs = Math.min(
+        5000 * 2 ** (bridgeStatus.consecutiveFailures - 1),
+        MAX_GETUPDATES_BACKOFF_MS,
+      );
       console.error(
-        `[telegram-bridge] getUpdates failed (attempt ${consecutiveFailures}), retrying in ${Math.round(backoffMs / 1000)}s:`,
+        `[telegram-bridge] getUpdates failed (attempt ${bridgeStatus.consecutiveFailures}), retrying in ${Math.round(backoffMs / 1000)}s:`,
         e,
       );
       await new Promise((r) => setTimeout(r, backoffMs));
       continue;
     }
-    if (consecutiveFailures >= 3) {
+    if (bridgeStatus.consecutiveFailures >= 3) {
       const chatId = Number(allowedUserId);
       if (Number.isFinite(chatId)) {
         await sendMessage(
           token,
           chatId,
-          `✅ Reconnected to Telegram after ${consecutiveFailures} failed attempt(s).`,
+          `✅ Reconnected to Telegram after ${bridgeStatus.consecutiveFailures} failed attempt(s).`,
         ).catch(() => {});
       }
     }
-    consecutiveFailures = 0;
+    bridgeStatus.lastSuccessAt = Date.now();
+    bridgeStatus.consecutiveFailures = 0;
 
     for (const update of updates) {
       offset = update.update_id + 1;
@@ -1070,6 +1107,7 @@ export function startTelegramBridge(): void {
     return;
   }
   globalThis.__ollamaUiTelegramBridgeStarted = true;
+  bridgeStatus.started = true;
   console.log('[telegram-bridge] started, polling for updates.');
   // Fire-and-forget — purely cosmetic (autocomplete in the Telegram client),
   // the commands work when typed either way.
@@ -1077,4 +1115,49 @@ export function startTelegramBridge(): void {
     console.error('[telegram-bridge] setMyCommands failed:', e),
   );
   void runForever(config);
+}
+
+// Full picture for the Settings page's status panel (GET /api/status) —
+// which env vars are actually present, whether the token Telegram currently
+// accepts (a `getMe` call, same as any of this file's other Telegram API
+// calls — catches a token that was rotated in @BotFather but never updated
+// in this container's env, which otherwise fails silently forever), and the
+// live poll loop's health. Deliberately re-checks the token live rather than
+// trusting bridgeStatus alone — a container that's been up for days with a
+// long-since-revoked token could otherwise still show a stale "last success"
+// from before the rotation.
+export async function getTelegramDiagnostics(): Promise<{
+  tokenPresent: boolean;
+  allowedUserIdPresent: boolean;
+  modelPresent: boolean;
+  tokenValid: boolean | null;
+  botUsername: string | null;
+  tokenError: string | null;
+  bridge: BridgeStatus;
+}> {
+  const token = process.env.TELEGRAM_BOT_TOKEN?.trim();
+  const allowedUserId = process.env.TELEGRAM_ALLOWED_USER_ID?.trim();
+  const model = process.env.TELEGRAM_MODEL?.trim();
+  let tokenValid: boolean | null = null;
+  let botUsername: string | null = null;
+  let tokenError: string | null = null;
+  if (token) {
+    try {
+      const me = await callTelegram<{ username?: string }>(token, 'getMe', {});
+      tokenValid = true;
+      botUsername = me.username ?? null;
+    } catch (e) {
+      tokenValid = false;
+      tokenError = e instanceof Error ? e.message : String(e);
+    }
+  }
+  return {
+    tokenPresent: !!token,
+    allowedUserIdPresent: !!allowedUserId,
+    modelPresent: !!model,
+    tokenValid,
+    botUsername,
+    tokenError,
+    bridge: { ...bridgeStatus },
+  };
 }
