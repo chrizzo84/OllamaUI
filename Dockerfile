@@ -43,8 +43,20 @@ RUN git clone --branch v1.9.2 --depth 1 https://github.com/ggml-org/whisper.cpp.
 # intrinsics ggml's CPU backend uses on some GCC/aarch64 combinations inside
 # Docker (seen live: "target specific option mismatch" on vfmaq_f16),
 # because native detection reads the *build* machine's features, not a
-# fixed target — this pins a safe baseline instead.
+# fixed target. That alone still left AVX2/FMA/F16C compiled in on x86_64
+# (ggml's own defaults, independent of NATIVE), which ghcr.io's arbitrary
+# CI/self-hosted pull targets aren't guaranteed to have — disabled
+# explicitly so the binary only requires baseline x86-64 (SSE2). (A
+# same-machine x86_64-under-QEMU run of the AVX2 build hit "Illegal
+# instruction" and, even after this change, still crashed in a way ptrace
+# itself couldn't diagnose inside that nested emulation — inconclusive on
+# its own, but this flag set is the strictly-more-portable choice either
+# way, so kept regardless of the ambiguous local result. Confirm via the
+# actual docker-publish.yml CI run, which builds linux/amd64 on real
+# hardware.) Not the hot path (occasional voice-message transcription), so
+# the portability is worth more than the SIMD speedup.
 RUN cmake -B build -DCMAKE_BUILD_TYPE=Release -DWHISPER_SDL2=OFF -DGGML_NATIVE=OFF \
+      -DGGML_AVX=OFF -DGGML_AVX2=OFF -DGGML_FMA=OFF -DGGML_F16C=OFF \
  && cmake --build build --config Release -j --target whisper-server
 
 # ---------- Runtime stage: base Ollama image + UI ----------
