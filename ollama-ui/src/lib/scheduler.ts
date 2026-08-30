@@ -21,6 +21,7 @@ import { upsertMessages } from '@/lib/chat-persistence';
 import { createJob } from '@/lib/generation-jobs';
 import { runGeneration, injectMemories } from '@/lib/generation-runner';
 import { resolveOllamaHostServer } from '@/lib/host-resolve-server';
+import { notifyTelegram } from '@/lib/telegram-bridge';
 import { safeUuid } from '@/lib/utils';
 import type { ChatMessage } from '@/store/chat';
 
@@ -133,6 +134,22 @@ async function runScheduledTask(task: ScheduledTaskRow): Promise<void> {
     // nothing to keep around. No lastRunAt bookkeeping needed on a row
     // that's about to disappear.
     deleteScheduledTask(task.id);
+  }
+
+  // Otherwise a scheduled run's only trace is a new session nobody's told
+  // about until they happen to open the app — the entire point of a
+  // reminder set from Telegram is to still reach you if the browser was
+  // never open. No-ops silently if the Telegram bridge isn't configured.
+  const finalContent = getSession(session.id)?.messages.find(
+    (m) => m.id === assistantMessage.id,
+  )?.content;
+  if (finalContent) {
+    // task.name for a one-off reminder is just a truncated echo of the
+    // reminder text itself (see create_reminder's handler in
+    // generation-runner.ts) — a fixed "Reminder" label reads better than
+    // repeating that right above the reminder's own delivered content.
+    const prefix = task.recurring ? `🔁 *${task.name}*` : '⏰ *Reminder*';
+    void notifyTelegram(`${prefix}\n\n${finalContent}`);
   }
 }
 

@@ -63,6 +63,7 @@ interface TelegramUpdate {
     chat: { id: number };
     text?: string;
     caption?: string;
+    date?: number; // Unix seconds — when Telegram received the message
     // Telegram sends one entry per available resolution, smallest first —
     // the last one is the largest/highest-quality available.
     photo?: { file_id: string }[];
@@ -125,6 +126,16 @@ async function modelSupportsVision(base: string, model: string): Promise<boolean
   // Unknown (lookup failed) is treated as unsupported — safer than silently
   // sending an image to a model that might not be able to use it.
   return (await fetchModelCapabilities(base, model))?.includes('vision') ?? false;
+}
+
+// Local (server-timezone) date-time with no "Z"/offset suffix — the exact
+// format create_reminder's whenISO expects (see its tool description in
+// generation-runner.ts) and what get_current_date's own `date`/`time`
+// fields already represent, so the model reasons in one consistent
+// timezone instead of mixing this with a UTC timestamp.
+function toLocalIsoLike(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
 function chunkText(text: string): string[] {
@@ -379,11 +390,77 @@ async function maybeCompact(
   }
 }
 
+// Requires an actual success (no `error` on the trace entry), not just an
+// attempt — a model can call create_reminder repeatedly and have every
+// single attempt fail validation (observed live: whenISO landing in the
+// past from a timezone mix-up) while still telling the user it's done.
+function hasSuccessfulToolCall(trace: ChatMessage['trace'], toolName: string): boolean {
+  return !!trace?.some((t) => t.type === 'tool' && t.name === toolName && !t.error);
+}
+
+// Runs one generation turn end-to-end (job + status-message wiring +
+// runGeneration + reading the settled result back from the DB) and returns
+// the resulting message. Factored out so handleMessage can call it a second
+// time for a corrective retry (see the reminder-verification check there)
+// without duplicating the job/subscription plumbing — the typing indicator
+// and status message are owned by the caller and span every attempt.
+async function runTurn(
+  base: string,
+  model: string,
+  sessionId: string,
+  assistantMessageId: string,
+  messages: ChatMessageIn[],
+  memoryEnabled: boolean,
+  token: string,
+  chatId: number,
+  statusMessageId: number | null,
+): Promise<ChatMessage | undefined> {
+  const job = createJob(assistantMessageId, { sessionId, column: 'A', model });
+  const unsubscribe = subscribe(job.id, (event) => {
+    if (statusMessageId == null) return;
+    const e = event as {
+      toolCall?: { name: string; arguments: unknown };
+      queued?: { aheadCount: number };
+    };
+    if (e.toolCall) {
+      editStatusMessage(
+        token,
+        chatId,
+        statusMessageId,
+        summarizeToolCall(e.toolCall.name, e.toolCall.arguments),
+      );
+    } else if (e.queued) {
+      editStatusMessage(
+        token,
+        chatId,
+        statusMessageId,
+        `⏳ Waiting — ${e.queued.aheadCount} other request(s) already running for this model…`,
+      );
+    }
+  });
+  try {
+    await runGeneration(job, {
+      base,
+      model,
+      messages,
+      think: false,
+      options: undefined,
+      toolsEnabled: true,
+      memoryEnabled,
+      searxngTemplate: null, // server-side default (SEARXNG_HOST env)
+    });
+  } finally {
+    unsubscribe();
+  }
+  return getSession(sessionId)?.messages.find((m) => m.id === assistantMessageId);
+}
+
 async function handleMessage(
   token: string,
   model: string,
   chatId: number,
   text: string,
+  sentAt: Date,
   images?: string[],
 ): Promise<void> {
   const base = resolveOllamaHostServer(); // no req — falls through to the active DB host
@@ -422,6 +499,25 @@ async function handleMessage(
     getSetting<{ memoryEnabled: boolean }>('memory')?.memoryEnabled ??
     true;
 
+  // Wraps only what's SENT to the model, not the persisted/displayed
+  // message — same split scheduler.ts uses for a fired reminder's prompt.
+  // Without a stated reference time, the model has to call get_current_date
+  // to work out something like "in 2 minutes", which reflects whenever that
+  // tool call actually runs — after Ollama finishes loading the model on a
+  // cold start, this can be tens of seconds to over a minute later than
+  // when the message was actually sent, silently shifting any relative time
+  // the model computes from it (observed live: asked about here after a
+  // slow-feeling reminder).
+  //
+  // Given in LOCAL time (server timezone), not UTC — create_reminder's
+  // whenISO is parsed by `new Date(...)` as local time when it has no "Z"/
+  // offset (same convention get_current_date's own `time`/`date` fields
+  // already used), and the model speaks times back to the user in local
+  // form too. Handing it a UTC timestamp instead (an earlier version of
+  // this did) got the arithmetic right but had the model repeat the UTC
+  // digits as if they were local — 2 hours off from CEST (observed live).
+  const promptForModel = `[Message sent at ${toLocalIsoLike(sentAt)} local time — use this as "now" for any relative time (e.g. "in 2 minutes", "tomorrow") and for any whenISO you compute, since real time may have passed since this was sent.]\n\n${text}`;
+
   const upstreamMessages: ChatMessageIn[] = [
     ...priorTurns
       .filter((m) => m.role !== 'assistant' || m.content)
@@ -430,70 +526,91 @@ async function handleMessage(
         content: m.content,
         ...(m.images?.length ? { images: m.images } : {}),
       })),
-    { role: 'user' as const, content: text, ...(images?.length ? { images } : {}) },
+    { role: 'user' as const, content: promptForModel, ...(images?.length ? { images } : {}) },
   ];
 
-  const job = createJob(assistantMessage.id, { sessionId, column: 'A', model });
-
   // Otherwise this is a black box until the final reply lands — Telegram's
-  // native typing indicator plus a status message that tracks tool calls
-  // (subscribing before runGeneration starts, same ordering requirement as
-  // api/chat/route.ts's event stream, so no event is ever missed).
+  // native typing indicator plus a status message that tracks tool calls,
+  // spanning every attempt below (including a corrective retry, if one
+  // happens) rather than resetting per attempt.
   const stopTyping = startTypingIndicator(token, chatId);
   const statusMessageId = await sendStatusMessage(token, chatId, '⏳ Thinking…').catch(() => null);
-  const unsubscribe = subscribe(job.id, (event) => {
-    if (statusMessageId == null) return;
-    const e = event as {
-      toolCall?: { name: string; arguments: unknown };
-      queued?: { aheadCount: number };
-    };
-    if (e.toolCall) {
-      editStatusMessage(
-        token,
-        chatId,
-        statusMessageId,
-        summarizeToolCall(e.toolCall.name, e.toolCall.arguments),
-      );
-    } else if (e.queued) {
-      editStatusMessage(
-        token,
-        chatId,
-        statusMessageId,
-        `⏳ Waiting — ${e.queued.aheadCount} other request(s) already running for this model…`,
-      );
-    }
-  });
 
+  let result: ChatMessage | undefined;
   try {
-    await runGeneration(job, {
+    result = await runTurn(
       base,
       model,
-      messages: upstreamMessages,
-      think: false,
-      options: undefined,
-      toolsEnabled: true,
+      sessionId,
+      assistantMessage.id,
+      upstreamMessages,
       memoryEnabled,
-      searxngTemplate: null, // server-side default (SEARXNG_HOST env)
-    });
+      token,
+      chatId,
+      statusMessageId,
+    );
   } catch (e) {
     // runGeneration's own catch-alls already settle the job and persist an
     // error message on every normal failure path — this only catches
     // something throwing past that, same last-resort net as api/chat/route.ts.
+    stopTyping();
+    if (statusMessageId != null) deleteMessage(token, chatId, statusMessageId);
     await sendMessage(
       token,
       chatId,
       `[Error] ${e instanceof Error ? e.message : 'Generation failed'}`,
     );
     return;
-  } finally {
-    stopTyping();
-    unsubscribe();
-    if (statusMessageId != null) deleteMessage(token, chatId, statusMessageId);
   }
 
-  const finalContent =
-    getSession(sessionId)?.messages.find((m) => m.id === assistantMessage.id)?.content ||
-    '(no reply generated)';
+  // A model can claim "I've set a reminder" in its final text without
+  // actually having called create_reminder — the trace is the only
+  // trustworthy signal (text-pattern-matching the reply would be guessing at
+  // phrasing across languages/models). Only worth checking when the user's
+  // *own* message looks reminder-shaped in the first place, so an unrelated
+  // reply that happens to mention "remind" doesn't trigger a pointless
+  // retry. One corrective retry with an explicit nudge; if that still
+  // doesn't produce a real tool call, say so honestly instead of repeating
+  // a false confirmation (observed live: exactly this happening).
+  let warning = '';
+  if (/erinner|remind/i.test(text) && !hasSuccessfulToolCall(result?.trace, 'create_reminder')) {
+    if (statusMessageId != null) {
+      editStatusMessage(token, chatId, statusMessageId, '🔁 Verifying reminder was actually set…');
+    }
+    const nudge: ChatMessageIn[] = [
+      ...upstreamMessages,
+      { role: 'assistant', content: result?.content ?? '' },
+      {
+        role: 'user',
+        content:
+          '[System: your previous reply claimed to set a reminder, but you did not actually call the create_reminder tool. If the user wants to be reminded of something, call create_reminder now with the correct whenISO and message — do not just say you will.]',
+      },
+    ];
+    try {
+      result = await runTurn(
+        base,
+        model,
+        sessionId,
+        assistantMessage.id,
+        nudge,
+        memoryEnabled,
+        token,
+        chatId,
+        statusMessageId,
+      );
+    } catch (e) {
+      console.error('[telegram-bridge] reminder-verification retry failed:', e);
+    }
+    if (!hasSuccessfulToolCall(result?.trace, 'create_reminder')) {
+      warning =
+        "\n\n⚠️ I couldn't reliably confirm the reminder was actually scheduled — please check the Scheduled page in the app, or try again with a more explicit time.";
+    }
+  }
+
+  stopTyping();
+  if (statusMessageId != null) deleteMessage(token, chatId, statusMessageId);
+
+  const finalContent = (result?.content || '(no reply generated)') + warning;
   await sendMessage(token, chatId, finalContent);
 }
 
@@ -520,6 +637,17 @@ async function pollLoop(config: BridgeConfig): Promise<void> {
       const msg = update.message;
       if (!msg?.from) continue;
       if (!msg.text && !msg.photo?.length) continue; // only text/photo messages, v1
+
+      // Logged before the allowlist check so "nothing arrived at all" and
+      // "arrived but got dropped by the allowlist" are distinguishable —
+      // console only, never sent back to Telegram (see this file's top doc
+      // comment on why a rejected sender gets no reply).
+      const receivedAtIso = msg.date ? new Date(msg.date * 1000).toISOString() : 'unknown time';
+      console.log(
+        `[telegram-bridge] update ${update.update_id} from user ${msg.from.id} at ${receivedAtIso}` +
+          (msg.text ? `: ${JSON.stringify(msg.text.slice(0, 80))}` : ' (photo)'),
+      );
+
       // Silent drop — see this file's top doc comment for why no reply.
       if (String(msg.from.id) !== allowedUserId) continue;
 
@@ -573,8 +701,9 @@ async function pollLoop(config: BridgeConfig): Promise<void> {
         }
       }
       const text = msg.text ?? msg.caption ?? '📷 (photo, no caption)';
+      const sentAt = msg.date ? new Date(msg.date * 1000) : new Date();
       try {
-        await handleMessage(token, effectiveModel, msg.chat.id, text, images);
+        await handleMessage(token, effectiveModel, msg.chat.id, text, sentAt, images);
       } catch (e) {
         console.error('[telegram-bridge] handleMessage failed:', e);
         await sendMessage(
@@ -585,6 +714,23 @@ async function pollLoop(config: BridgeConfig): Promise<void> {
       }
     }
   }
+}
+
+// Lets other server-side code (src/lib/scheduler.ts, for a recurring task or
+// a fired reminder) push a message to the same single allowed user without
+// needing an inbound message first — a private bot chat's chat_id is just
+// the user's own id, no stored conversation context required. No-ops
+// silently if the bridge isn't configured (TELEGRAM_BOT_TOKEN/
+// TELEGRAM_ALLOWED_USER_ID unset) or the id isn't a valid number, so callers
+// don't need to check "is Telegram set up" themselves.
+export async function notifyTelegram(text: string): Promise<void> {
+  const config = getConfig();
+  if (!config) return;
+  const chatId = Number(config.allowedUserId);
+  if (!Number.isFinite(chatId)) return;
+  await sendMessage(config.token, chatId, text).catch((e) => {
+    console.error('[telegram-bridge] notifyTelegram failed:', e);
+  });
 }
 
 // Guards against starting a second poll loop on Next.js dev's hot-reload —
