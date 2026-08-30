@@ -26,6 +26,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     modelB: row.modelB,
     compareMode: row.compareMode,
     memoryEnabled: row.memoryEnabled,
+    isTelegram: row.isTelegram,
     messages: row.messages,
     updatedAt: row.updated_at,
   });
@@ -47,6 +48,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     modelB: row.modelB,
     compareMode: row.compareMode,
     memoryEnabled: row.memoryEnabled,
+    isTelegram: row.isTelegram,
     updatedAt: row.updated_at,
   });
 }

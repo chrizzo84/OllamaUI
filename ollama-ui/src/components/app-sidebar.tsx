@@ -17,6 +17,7 @@ import {
   Activity,
   Gauge,
   CalendarClock,
+  Send,
 } from 'lucide-react';
 import { useSessionsStore } from '@/store/sessions';
 import { HostIndicator } from './header-brand';
@@ -323,7 +324,9 @@ export function AppSidebar() {
                         className={`h-1.5 w-1.5 rounded-full ${
                           active
                             ? 'bg-[rgb(var(--accent-glow))] shadow-[0_0_6px_rgb(var(--accent-glow)/0.8)]'
-                            : 'bg-white/25'
+                            : sess.isTelegram
+                              ? 'bg-[#2AABEE]'
+                              : 'bg-white/25'
                         }`}
                       />
                     </button>
@@ -335,6 +338,11 @@ export function AppSidebar() {
                         className="flex-1 min-w-0 text-left"
                       >
                         <div className="text-xs truncate flex items-center gap-1.5">
+                          {sess.isTelegram && (
+                            <span title="Telegram chat" className="shrink-0 flex">
+                              <Send className="h-3 w-3 text-[#2AABEE]" />
+                            </span>
+                          )}
                           <span className="truncate">{sess.title}</span>
                         </div>
                         {snippetById.get(sess.id)?.matchField === 'message' ? (

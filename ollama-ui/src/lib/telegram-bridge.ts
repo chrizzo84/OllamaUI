@@ -22,6 +22,7 @@ import {
   updateSession,
   listScheduledTasks,
   deleteScheduledTask,
+  markSessionTelegram,
 } from '@/lib/db';
 import { upsertMessages, persistFinalAssistantMessage } from '@/lib/chat-persistence';
 import { createJob, subscribe } from '@/lib/generation-jobs';
@@ -299,7 +300,7 @@ function summarizeToolCall(name: string, args: unknown): string {
 // the old session isn't deleted, just abandoned, so it stays visible in the
 // web UI's session list if you ever want to look back at it.
 function createNewTelegramSession(): string {
-  const row = createSession({ profileId: null });
+  const row = createSession({ profileId: null, isTelegram: true });
   updateSession(row.id, { title: 'Telegram' });
   setSetting(SESSION_SETTING_KEY, row.id);
   return row.id;
@@ -307,7 +308,14 @@ function createNewTelegramSession(): string {
 
 function getOrCreateSessionId(): string {
   const existingId = getSetting<string>(SESSION_SETTING_KEY);
-  if (existingId && getSession(existingId)) return existingId;
+  const existing = existingId ? getSession(existingId) : undefined;
+  if (existing) {
+    // Backfills a session created before the is_telegram column existed
+    // (e.g. an already-running conversation from before this feature
+    // shipped) — a no-op once it's already flagged.
+    if (!existing.isTelegram) markSessionTelegram(existing.id);
+    return existing.id;
+  }
   return createNewTelegramSession();
 }
 

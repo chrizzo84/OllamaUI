@@ -87,6 +87,7 @@ function initDb(): DatabaseSync {
       model_a TEXT NOT NULL DEFAULT '',
       model_b TEXT NOT NULL DEFAULT '',
       compare_mode INTEGER NOT NULL DEFAULT 0,
+      is_telegram INTEGER NOT NULL DEFAULT 0,
       messages TEXT NOT NULL DEFAULT '[]',
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
@@ -134,6 +135,11 @@ function initDb(): DatabaseSync {
   // the global memory setting (see src/app/api/settings/memory/route.ts),
   // same nullable-override semantics as profile_id.
   ensureColumn(instance, 'sessions', 'memory_enabled', 'INTEGER');
+  // `sessions` also predates the Telegram bridge — its one persistent
+  // conversation is flagged so the web UI can mark it visually (see
+  // app-sidebar.tsx). Set once at creation (createNewTelegramSession in
+  // telegram-bridge.ts), never toggled afterwards.
+  ensureColumn(instance, 'sessions', 'is_telegram', 'INTEGER NOT NULL DEFAULT 0');
   // `scheduled_tasks` predates one-off reminders (the create_reminder tool,
   // see generation-runner.ts) — existing recurring tasks default to
   // recurring=1 via DEFAULT 1 in ALTER TABLE, so they keep behaving exactly
@@ -456,6 +462,11 @@ export interface SessionRow {
   // global default (see src/app/api/settings/memory/route.ts); an explicit
   // true/false wins regardless of the global value.
   memoryEnabled: boolean | null;
+  // True only for the single, persistent Telegram bridge conversation (see
+  // createNewTelegramSession in telegram-bridge.ts) — lets the web UI mark
+  // it visually so it's not mistaken for an ordinary web chat. Fixed at
+  // creation, never patched afterwards.
+  isTelegram: boolean;
   messages: ChatMessage[];
   created_at: number;
   updated_at: number;
@@ -470,6 +481,7 @@ interface SessionDbRow {
   model_b: string;
   compare_mode: number;
   memory_enabled: number | null;
+  is_telegram: number;
   messages: string;
   created_at: number;
   updated_at: number;
@@ -485,6 +497,7 @@ function rowToSession(r: SessionDbRow): SessionRow {
     modelB: r.model_b,
     compareMode: !!r.compare_mode,
     memoryEnabled: r.memory_enabled === null ? null : !!r.memory_enabled,
+    isTelegram: !!r.is_telegram,
     messages: JSON.parse(r.messages),
     created_at: r.created_at,
     updated_at: r.updated_at,
@@ -501,7 +514,10 @@ export function getSession(id: string): SessionRow | undefined {
   return r ? rowToSession(r) : undefined;
 }
 
-export function createSession(data: { profileId?: string | null }): SessionRow {
+export function createSession(data: {
+  profileId?: string | null;
+  isTelegram?: boolean;
+}): SessionRow {
   const now = Date.now();
   const row: SessionRow = {
     id: safeUuid(),
@@ -512,12 +528,13 @@ export function createSession(data: { profileId?: string | null }): SessionRow {
     modelB: '',
     compareMode: false,
     memoryEnabled: null,
+    isTelegram: data.isTelegram ?? false,
     messages: [],
     created_at: now,
     updated_at: now,
   };
   db.prepare(
-    'INSERT INTO sessions (id, title, title_status, profile_id, model_a, model_b, compare_mode, memory_enabled, messages, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    'INSERT INTO sessions (id, title, title_status, profile_id, model_a, model_b, compare_mode, memory_enabled, is_telegram, messages, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
   ).run(
     row.id,
     row.title,
@@ -527,11 +544,23 @@ export function createSession(data: { profileId?: string | null }): SessionRow {
     row.modelB,
     row.compareMode ? 1 : 0,
     row.memoryEnabled === null ? null : row.memoryEnabled ? 1 : 0,
+    row.isTelegram ? 1 : 0,
     JSON.stringify(row.messages),
     row.created_at,
     row.updated_at,
   );
   return row;
+}
+
+// One-time backfill for a Telegram session created before the is_telegram
+// column existed (e.g. the single long-running conversation from before
+// this feature shipped) — updateSession's Pick<> deliberately excludes
+// isTelegram since it's meant to be set once at creation, so this bypasses
+// that for the migration case specifically. Idempotent; callers only need
+// to invoke it when they already know the flag is unset (see
+// getOrCreateSessionId in telegram-bridge.ts).
+export function markSessionTelegram(id: string): void {
+  db.prepare('UPDATE sessions SET is_telegram = 1 WHERE id = ?').run(id);
 }
 
 export function updateSession(
