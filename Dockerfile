@@ -63,12 +63,13 @@ RUN cmake -B build -DCMAKE_BUILD_TYPE=Release -DWHISPER_SDL2=OFF -DGGML_NATIVE=O
 FROM ollama/ollama:latest AS final
 WORKDIR /app
 
-# Install Node.js (no build tools needed – no native modules anymore) and
-# ffmpeg, which converts Telegram's OGG/Opus voice notes to the WAV
-# whisper-server expects (see src/lib/telegram-bridge.ts's convertOggToWav).
+# Install Node.js (no build tools needed – no native modules anymore),
+# ffmpeg (converts Telegram's OGG/Opus voice notes to the WAV whisper-server
+# expects — src/lib/whisper.ts) and poppler-utils, whose `pdftotext` extracts
+# text from a PDF document sent via Telegram (src/lib/document-extract.ts).
 RUN apt-get clean \
  && apt-get update \
- && for i in 1 2 3; do apt-get install -y --fix-missing curl ffmpeg && break || sleep 5; done \
+ && for i in 1 2 3; do apt-get install -y --fix-missing curl ffmpeg poppler-utils && break || sleep 5; done \
  && rm -rf /var/lib/apt/lists/*
 
 # Install Node.js

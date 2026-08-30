@@ -15,6 +15,8 @@ export const TOOL_KEYS = [
   'calculator',
   'createReminder',
   'createRecurringTask',
+  'listScheduledTasks',
+  'cancelScheduledTask',
 ] as const;
 
 export type ToolKey = (typeof TOOL_KEYS)[number];
@@ -31,6 +33,8 @@ export const TOOL_NAMES: Record<ToolKey, string> = {
   calculator: 'calculator',
   createReminder: 'create_reminder',
   createRecurringTask: 'create_recurring_task',
+  listScheduledTasks: 'list_scheduled_tasks',
+  cancelScheduledTask: 'cancel_scheduled_task',
 };
 
 export const TOOL_LABELS: Record<ToolKey, { title: string; description: string }> = {
@@ -55,6 +59,14 @@ export const TOOL_LABELS: Record<ToolKey, { title: string; description: string }
     title: 'Create recurring task',
     description: 'Schedule a repeating prompt (e.g. "every morning at 8"), from chat.',
   },
+  listScheduledTasks: {
+    title: 'List scheduled tasks',
+    description: 'See what\'s currently scheduled, e.g. "what reminders do I have?".',
+  },
+  cancelScheduledTask: {
+    title: 'Cancel scheduled task',
+    description: 'Cancel a reminder or recurring task by name, from chat.',
+  },
 };
 
 // Default: every tool on — the assistant can use anything unless you turn
@@ -66,6 +78,8 @@ export const DEFAULT_TOOL_TOGGLES: ToolToggles = {
   calculator: true,
   createReminder: true,
   createRecurringTask: true,
+  listScheduledTasks: true,
+  cancelScheduledTask: true,
 };
 
 export function anyToolEnabled(toggles: ToolToggles): boolean {
