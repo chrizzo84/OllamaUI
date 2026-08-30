@@ -51,7 +51,8 @@
 - 🛠️ Tool-calling for capable models (`web_search` via SearXNG, `get_current_date`, `get_weather` via Open-Meteo, `calculator`, `remember_fact`, `create_reminder`)
 - 🧠 Persistent memory — the assistant saves durable facts about you and recalls them automatically in future chats; on by default, toggle globally or per-chat
 - ⏰ Scheduled tasks — recurring prompts that run automatically at a set time/days, no tab needed; each run lands as a new session with the usual background-job notification. One-off reminders can also be set directly from chat ("remind me tomorrow at 9...") via `create_reminder`; a footer clock shows the server's own time since schedules run on it
-- 📱 Telegram bridge (opt-in) — chat with the app from your phone through a Telegram bot, using the same tool-calling/memory engine as the web UI, including sending photos to a vision model and `/info`/`/new`/`/help` slash commands. Locked to a single allowlisted Telegram user id; set `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_USER_ID` and `TELEGRAM_MODEL` in `.env.local` to enable it (unset = bridge stays off), plus `TELEGRAM_VISION_MODEL` if you want photo messages to work. Scheduled tasks and reminders push their result to Telegram too, not just into a new chat session, so they still reach you with no tab open
+- 📱 Telegram bridge (opt-in) — chat with the app from your phone through a Telegram bot, using the same tool-calling/memory engine as the web UI, including sending photos to a vision model, voice messages (transcribed via a local `whisper.cpp` server), and `/info`/`/new`/`/help` slash commands. Locked to a single allowlisted Telegram user id; set `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_USER_ID` and `TELEGRAM_MODEL` in `.env.local` to enable it (unset = bridge stays off), plus `TELEGRAM_VISION_MODEL` for photos and `WHISPER_HOST` for voice messages — the combined Docker image bundles `whisper-server` + a model automatically, so `WHISPER_HOST` there just defaults to it. Scheduled tasks and reminders push their result to Telegram too, not just into a new chat session, so they still reach you with no tab open
+- 🔁 `create_recurring_task` tool — schedule a repeating prompt directly from chat (Telegram or web), no need to open the Scheduled page. Both it and `create_reminder` get their result verified against the actual tool-call trace instead of trusting the model's own "done" claim
 - 📈 Model benchmark history — every real chat logs its speed automatically, plus an on-demand fixed-prompt benchmark across all installed models, with a trend chart
 - 🗜️ Context compaction — summarize older chat history into a dense context note via the model itself (with undo)
 - 📏 Honest context-window badge (real runtime `num_ctx` from `/api/ps`, not the model's theoretical max) + per-model context slider up to the model's maximum
@@ -233,9 +234,10 @@ You can deploy like any standard Next.js app (Vercel, Docker, etc.). Requirement
 
 This repository now includes a multi‑stage `Dockerfile` at repo root that:
 1. Builds the Next.js app (standalone) with Node 20.
-2. Uses the official `ollama/ollama:latest` image as the final base.
-3. Copies the standalone server + static assets + `models.json`.
-4. Starts both Ollama (`ollama serve`) and the UI (`node server.js`) via `start.sh`.
+2. Compiles `whisper.cpp`'s `whisper-server` from source in its own stage (speech-to-text for Telegram voice messages — Ollama has no audio-input support of its own) and downloads a multilingual model (~465MB; override with `--build-arg WHISPER_MODEL_URL=...` for a smaller/larger one, e.g. `ggml-base.bin` or `ggml-medium.bin` — avoid the `.en`-suffixed variants unless you only ever speak English to it).
+3. Uses the official `ollama/ollama:latest` image as the final base.
+4. Copies the standalone server + static assets + the compiled `whisper-server` + its model.
+5. Starts Ollama (`ollama serve`), `whisper-server` (bound to `127.0.0.1` only — internal, never exposed) and the UI (`node server.js`) via `start.sh`.
 
 Build & run:
 ```bash

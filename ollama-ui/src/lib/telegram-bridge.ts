@@ -14,11 +14,13 @@
 // keeps this to one person. An update from a non-matching id is dropped
 // silently — no reply — so an unauthorized prober can't even confirm the bot
 // is listening.
+import { spawn } from 'node:child_process';
 import { createSession, getSession, getSetting, setSetting, updateSession } from '@/lib/db';
 import { upsertMessages } from '@/lib/chat-persistence';
 import { createJob, subscribe } from '@/lib/generation-jobs';
 import { runGeneration, type ChatMessageIn } from '@/lib/generation-runner';
 import { compactMessages } from '@/lib/compact';
+import { SCHEDULE_INTENT_RE, hasAnySuccessfulSchedulingCall } from '@/lib/schedule-verify';
 import { resolveOllamaHostServer } from '@/lib/host-resolve-server';
 import { safeUuid, deriveSessionTitle } from '@/lib/utils';
 import type { ChatMessage } from '@/store/chat';
@@ -42,6 +44,12 @@ interface BridgeConfig {
   // TELEGRAM_MODEL is picked for general tool-calling chat, not necessarily
   // a vision-capable one.
   visionModel: string | undefined;
+  // Optional — base URL of a whisper.cpp `whisper-server` instance (e.g.
+  // "http://localhost:8790") for transcribing voice messages. Ollama itself
+  // has no speech-to-text model support, so this is a second, separate
+  // local service — see this file's `transcribeVoice` doc comment. Voice
+  // messages are declined with a setup message when unset.
+  whisperHost: string | undefined;
 }
 
 function getConfig(): BridgeConfig | null {
@@ -53,6 +61,7 @@ function getConfig(): BridgeConfig | null {
     allowedUserId,
     model: process.env.TELEGRAM_MODEL?.trim() || undefined,
     visionModel: process.env.TELEGRAM_VISION_MODEL?.trim() || undefined,
+    whisperHost: process.env.WHISPER_HOST?.trim().replace(/\/+$/, '') || undefined,
   };
 }
 
@@ -67,6 +76,7 @@ interface TelegramUpdate {
     // Telegram sends one entry per available resolution, smallest first —
     // the last one is the largest/highest-quality available.
     photo?: { file_id: string }[];
+    voice?: { file_id: string };
   };
 }
 
@@ -86,18 +96,21 @@ async function callTelegram<T>(
   return data.result as T;
 }
 
-// Downloads a Telegram-hosted photo and returns it as raw base64 (no
-// `data:...;base64,` prefix), matching ChatMessage.images' documented shape
-// (src/store/chat.ts) — the same format the web UI's Attach button produces,
-// so both paths feed the model identically.
-async function downloadTelegramPhoto(token: string, fileId: string): Promise<string> {
+async function downloadTelegramFileBytes(token: string, fileId: string): Promise<Buffer> {
   const file = await callTelegram<{ file_path: string }>(token, 'getFile', { file_id: fileId });
   const res = await fetch(`${API_BASE}/file/bot${token}/${file.file_path}`, {
     signal: AbortSignal.timeout(30_000),
   });
   if (!res.ok) throw new Error(`Telegram file download failed: ${res.status}`);
-  const bytes = await res.arrayBuffer();
-  return Buffer.from(bytes).toString('base64');
+  return Buffer.from(await res.arrayBuffer());
+}
+
+// Returns raw base64 (no `data:...;base64,` prefix), matching
+// ChatMessage.images' documented shape (src/store/chat.ts) — the same
+// format the web UI's Attach button produces, so both paths feed the model
+// identically.
+async function downloadTelegramPhoto(token: string, fileId: string): Promise<string> {
+  return (await downloadTelegramFileBytes(token, fileId)).toString('base64');
 }
 
 // Ollama's /api/show reports a model's declared capabilities (same field
@@ -126,6 +139,64 @@ async function modelSupportsVision(base: string, model: string): Promise<boolean
   // Unknown (lookup failed) is treated as unsupported — safer than silently
   // sending an image to a model that might not be able to use it.
   return (await fetchModelCapabilities(base, model))?.includes('vision') ?? false;
+}
+
+// Telegram voice notes arrive as OGG/Opus; whisper.cpp's server (like most
+// Whisper builds) expects WAV PCM — converted here via `ffmpeg` over
+// stdin/stdout, no temp files. `ffmpeg` needs to be present on the host
+// (bundled alongside whisper-cpp in the combined Docker image; on a plain
+// `next dev` checkout, install both locally to use this — e.g. `brew
+// install ffmpeg whisper-cpp` on macOS).
+function convertOggToWav(oggBytes: Buffer): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    let proc;
+    try {
+      proc = spawn('ffmpeg', ['-i', 'pipe:0', '-ar', '16000', '-ac', '1', '-f', 'wav', 'pipe:1']);
+    } catch (e) {
+      reject(e);
+      return;
+    }
+    const chunks: Buffer[] = [];
+    let stderr = '';
+    proc.stdout.on('data', (c: Buffer) => chunks.push(c));
+    proc.stderr.on('data', (c: Buffer) => {
+      stderr += c.toString();
+    });
+    proc.on('error', reject); // e.g. ffmpeg not installed (ENOENT)
+    proc.on('close', (code) => {
+      if (code !== 0) {
+        reject(new Error(`ffmpeg exited ${code}: ${stderr.slice(-300)}`));
+        return;
+      }
+      resolve(Buffer.concat(chunks));
+    });
+    proc.stdin.write(oggBytes);
+    proc.stdin.end();
+  });
+}
+
+// Posts WAV bytes to a whisper.cpp `whisper-server` instance's `/inference`
+// endpoint (multipart, same as its own examples/curl usage — confirmed live
+// against whisper-cpp 1.9.2) and returns the transcribed text.
+async function transcribeWav(whisperHost: string, wavBytes: Buffer): Promise<string> {
+  const form = new FormData();
+  form.append('file', new Blob([new Uint8Array(wavBytes)], { type: 'audio/wav' }), 'audio.wav');
+  form.append('response_format', 'json');
+  const res = await fetch(`${whisperHost}/inference`, {
+    method: 'POST',
+    body: form,
+    signal: AbortSignal.timeout(60_000),
+  });
+  if (!res.ok) throw new Error(`whisper-server request failed: ${res.status}`);
+  const data = await res.json();
+  const text = typeof data?.text === 'string' ? data.text.trim() : '';
+  if (!text) throw new Error('whisper-server returned empty transcription');
+  return text;
+}
+
+async function transcribeVoice(whisperHost: string, oggBytes: Buffer): Promise<string> {
+  const wav = await convertOggToWav(oggBytes);
+  return transcribeWav(whisperHost, wav);
 }
 
 // Local (server-timezone) date-time with no "Z"/offset suffix — the exact
@@ -390,14 +461,6 @@ async function maybeCompact(
   }
 }
 
-// Requires an actual success (no `error` on the trace entry), not just an
-// attempt — a model can call create_reminder repeatedly and have every
-// single attempt fail validation (observed live: whenISO landing in the
-// past from a timezone mix-up) while still telling the user it's done.
-function hasSuccessfulToolCall(trace: ChatMessage['trace'], toolName: string): boolean {
-  return !!trace?.some((t) => t.type === 'tool' && t.name === toolName && !t.error);
-}
-
 // Runs one generation turn end-to-end (job + status-message wiring +
 // runGeneration + reading the settled result back from the DB) and returns
 // the resulting message. Factored out so handleMessage can call it a second
@@ -563,19 +626,24 @@ async function handleMessage(
     return;
   }
 
-  // A model can claim "I've set a reminder" in its final text without
-  // actually having called create_reminder — the trace is the only
-  // trustworthy signal (text-pattern-matching the reply would be guessing at
-  // phrasing across languages/models). Only worth checking when the user's
-  // *own* message looks reminder-shaped in the first place, so an unrelated
-  // reply that happens to mention "remind" doesn't trigger a pointless
-  // retry. One corrective retry with an explicit nudge; if that still
-  // doesn't produce a real tool call, say so honestly instead of repeating
-  // a false confirmation (observed live: exactly this happening).
+  // A model can claim "I've set that up" in its final text without actually
+  // having called create_reminder or create_recurring_task — the trace is
+  // the only trustworthy signal (text-pattern-matching the reply would be
+  // guessing at phrasing across languages/models). Only worth checking when
+  // the user's *own* message looks schedule-shaped in the first place, so
+  // an unrelated reply doesn't trigger a pointless retry. One corrective
+  // retry with an explicit nudge; if that still doesn't produce a real tool
+  // call, say so honestly instead of repeating a false confirmation
+  // (observed live for both tools independently).
   let warning = '';
-  if (/erinner|remind/i.test(text) && !hasSuccessfulToolCall(result?.trace, 'create_reminder')) {
+  if (SCHEDULE_INTENT_RE.test(text) && !hasAnySuccessfulSchedulingCall(result?.trace)) {
     if (statusMessageId != null) {
-      editStatusMessage(token, chatId, statusMessageId, '🔁 Verifying reminder was actually set…');
+      editStatusMessage(
+        token,
+        chatId,
+        statusMessageId,
+        '🔁 Verifying that was actually scheduled…',
+      );
     }
     const nudge: ChatMessageIn[] = [
       ...upstreamMessages,
@@ -583,7 +651,7 @@ async function handleMessage(
       {
         role: 'user',
         content:
-          '[System: your previous reply claimed to set a reminder, but you did not actually call the create_reminder tool. If the user wants to be reminded of something, call create_reminder now with the correct whenISO and message — do not just say you will.]',
+          '[System: your previous reply claimed to schedule something, but you did not actually call create_reminder (one-off) or create_recurring_task (repeating). If the user wants to be reminded of or scheduled for something, call the appropriate tool now with the correct arguments — do not just say you will.]',
       },
     ];
     try {
@@ -599,11 +667,11 @@ async function handleMessage(
         statusMessageId,
       );
     } catch (e) {
-      console.error('[telegram-bridge] reminder-verification retry failed:', e);
+      console.error('[telegram-bridge] schedule-verification retry failed:', e);
     }
-    if (!hasSuccessfulToolCall(result?.trace, 'create_reminder')) {
+    if (!hasAnySuccessfulSchedulingCall(result?.trace)) {
       warning =
-        "\n\n⚠️ I couldn't reliably confirm the reminder was actually scheduled — please check the Scheduled page in the app, or try again with a more explicit time.";
+        "\n\n⚠️ I couldn't reliably confirm that was actually scheduled — please check the Scheduled page in the app, or try again with a more explicit time.";
     }
   }
 
@@ -615,7 +683,7 @@ async function handleMessage(
 }
 
 async function pollLoop(config: BridgeConfig): Promise<void> {
-  const { token, allowedUserId, model, visionModel } = config;
+  const { token, allowedUserId, model, visionModel, whisperHost } = config;
   let offset = 0;
 
   for (;;) {
@@ -636,7 +704,7 @@ async function pollLoop(config: BridgeConfig): Promise<void> {
       offset = update.update_id + 1;
       const msg = update.message;
       if (!msg?.from) continue;
-      if (!msg.text && !msg.photo?.length) continue; // only text/photo messages, v1
+      if (!msg.text && !msg.photo?.length && !msg.voice) continue; // text/photo/voice, v1
 
       // Logged before the allowlist check so "nothing arrived at all" and
       // "arrived but got dropped by the allowlist" are distinguishable —
@@ -645,7 +713,11 @@ async function pollLoop(config: BridgeConfig): Promise<void> {
       const receivedAtIso = msg.date ? new Date(msg.date * 1000).toISOString() : 'unknown time';
       console.log(
         `[telegram-bridge] update ${update.update_id} from user ${msg.from.id} at ${receivedAtIso}` +
-          (msg.text ? `: ${JSON.stringify(msg.text.slice(0, 80))}` : ' (photo)'),
+          (msg.text
+            ? `: ${JSON.stringify(msg.text.slice(0, 80))}`
+            : msg.voice
+              ? ' (voice)'
+              : ' (photo)'),
       );
 
       // Silent drop — see this file's top doc comment for why no reply.
@@ -700,8 +772,39 @@ async function pollLoop(config: BridgeConfig): Promise<void> {
           continue;
         }
       }
-      const text = msg.text ?? msg.caption ?? '📷 (photo, no caption)';
+      let text = msg.text ?? msg.caption ?? '📷 (photo, no caption)';
       const sentAt = msg.date ? new Date(msg.date * 1000) : new Date();
+
+      if (msg.voice) {
+        if (!whisperHost) {
+          await sendMessage(
+            token,
+            msg.chat.id,
+            '[Setup] WHISPER_HOST is not set in .env.local — voice messages need a running whisper.cpp server to transcribe. Text and photos still work.',
+          ).catch(() => {});
+          continue;
+        }
+        const statusId = await sendStatusMessage(
+          token,
+          msg.chat.id,
+          '🎙️ Transcribing voice message…',
+        ).catch(() => null);
+        try {
+          const bytes = await downloadTelegramFileBytes(token, msg.voice.file_id);
+          text = await transcribeVoice(whisperHost, bytes);
+        } catch (e) {
+          console.error('[telegram-bridge] voice transcription failed:', e);
+          if (statusId != null) deleteMessage(token, msg.chat.id, statusId);
+          await sendMessage(
+            token,
+            msg.chat.id,
+            '[Error] Could not transcribe that voice message.',
+          ).catch(() => {});
+          continue;
+        }
+        if (statusId != null) deleteMessage(token, msg.chat.id, statusId);
+      }
+
       try {
         await handleMessage(token, effectiveModel, msg.chat.id, text, sentAt, images);
       } catch (e) {

@@ -24,14 +24,39 @@ COPY ollama-ui .
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN pnpm build
 
+# ---------- Build stage: compile whisper.cpp's whisper-server binary ----------
+# Speech-to-text for Telegram voice messages (see
+# src/lib/telegram-bridge.ts's transcribeVoice/notifyTelegram) — Ollama has
+# no audio-input model support at all, this is a wholly separate local
+# service. Built from source (rather than trusting a third-party prebuilt
+# image) so the final stage below only needs the one compiled binary, no
+# build toolchain.
+FROM debian:bookworm-slim AS whisper-builder
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends git cmake build-essential ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+WORKDIR /build
+# Pinned to the exact version this integration was built and live-tested
+# against (see PLAN/session notes) — bump deliberately, not implicitly.
+RUN git clone --branch v1.9.2 --depth 1 https://github.com/ggml-org/whisper.cpp.git .
+# GGML_NATIVE=OFF: auto-detected -march flags can mismatch the fp16 NEON
+# intrinsics ggml's CPU backend uses on some GCC/aarch64 combinations inside
+# Docker (seen live: "target specific option mismatch" on vfmaq_f16),
+# because native detection reads the *build* machine's features, not a
+# fixed target — this pins a safe baseline instead.
+RUN cmake -B build -DCMAKE_BUILD_TYPE=Release -DWHISPER_SDL2=OFF -DGGML_NATIVE=OFF \
+ && cmake --build build --config Release -j --target whisper-server
+
 # ---------- Runtime stage: base Ollama image + UI ----------
 FROM ollama/ollama:latest AS final
 WORKDIR /app
 
-# Install Node.js (no build tools needed – no native modules anymore)
+# Install Node.js (no build tools needed – no native modules anymore) and
+# ffmpeg, which converts Telegram's OGG/Opus voice notes to the WAV
+# whisper-server expects (see src/lib/telegram-bridge.ts's convertOggToWav).
 RUN apt-get clean \
  && apt-get update \
- && for i in 1 2 3; do apt-get install -y --fix-missing curl && break || sleep 5; done \
+ && for i in 1 2 3; do apt-get install -y --fix-missing curl ffmpeg && break || sleep 5; done \
  && rm -rf /var/lib/apt/lists/*
 
 # Install Node.js
@@ -57,13 +82,28 @@ COPY --from=builder /build/ollama-ui/pnpm-workspace.yaml ./
 RUN HUSKY=0 pnpm install --prod --frozen-lockfile --ignore-scripts
 # (No local models.json needed; catalog fetched at runtime from remote repository)
 
+# whisper-server binary + its shared libs (all live alongside it in the
+# build output — resolved via relative rpath, confirmed with `ldd` against
+# this exact layout, so they must stay in the same directory together).
+COPY --from=whisper-builder /build/build/bin/ /app/whisper-server/
+
+# Multilingual model (~465MB — NOT one of the `.en`-suffixed variants,
+# which can only transcribe English; see WHISPER_MODEL_URL to swap for a
+# smaller/larger one, e.g. ggml-base.bin for a lighter image or
+# ggml-medium.bin for better accuracy at the cost of more RAM/CPU per
+# transcription).
+ARG WHISPER_MODEL_URL="https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin"
+RUN mkdir -p /app/whisper-models \
+ && curl -fsSL "$WHISPER_MODEL_URL" -o /app/whisper-models/model.bin
+
 # Optional: default env (can be overridden). Use internal service host.
 ENV OLLAMA_HOST="http://localhost:11434" \
     NODE_ENV=production \
     PORT=3000 \
-    OLLAMA_LISTEN="0.0.0.0:11434"
+    OLLAMA_LISTEN="0.0.0.0:11434" \
+    WHISPER_HOST="http://localhost:8790"
 
-# Start script to run both Ollama server and Next.js UI.
+# Start script to run Ollama, whisper-server (if present) and the Next.js UI.
 COPY <<'EOF' /app/start.sh
 #!/usr/bin/env bash
 set -euo pipefail
@@ -72,6 +112,25 @@ set -euo pipefail
 echo "[start] launching ollama server on ${OLLAMA_LISTEN:-0.0.0.0:11434}" >&2
 OLLAMA_HOST="${OLLAMA_LISTEN:-0.0.0.0:11434}" ollama serve &
 OLLAMA_PID=$!
+
+# Speech-to-text for Telegram voice messages — optional, only used if
+# TELEGRAM_BOT_TOKEN is also set (see src/lib/telegram-bridge.ts). Binds to
+# 127.0.0.1 only: it's for this container's own Next.js process to call,
+# never meant to be reachable from outside. `-l auto` auto-detects the
+# spoken language per message instead of assuming one.
+WHISPER_PORT="${WHISPER_HOST##*:}"
+if [ -x /app/whisper-server/whisper-server ] && [ -f /app/whisper-models/model.bin ]; then
+  echo "[start] launching whisper-server on 127.0.0.1:${WHISPER_PORT}" >&2
+  # The binary's shared libs (libwhisper/libggml*) live alongside it in the
+  # same directory rather than a system lib path — confirmed live that the
+  # dynamic linker doesn't find them there on its own ("cannot open shared
+  # object file") without this.
+  LD_LIBRARY_PATH="/app/whisper-server:${LD_LIBRARY_PATH:-}" \
+    /app/whisper-server/whisper-server \
+    -m /app/whisper-models/model.bin --host 127.0.0.1 --port "${WHISPER_PORT}" -l auto &
+else
+  echo "[start] whisper-server binary/model not found, skipping (voice messages will be declined)" >&2
+fi
 
 # Wait a little so initial state is ready
 sleep 2

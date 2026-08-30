@@ -23,6 +23,7 @@ import {
   createScheduledTask,
   type MemoryRow,
 } from '@/lib/db';
+import { computeNextRunAt } from '@/lib/schedule-time';
 import type { TraceEvent } from '@/store/chat';
 import type { ChatStats } from '@/lib/chat-stream';
 
@@ -177,7 +178,7 @@ const CREATE_REMINDER_TOOL = {
   function: {
     name: 'create_reminder',
     description:
-      'Schedule a one-time reminder that fires at a specific future date/time, even if this chat is closed by then — it runs as a new chat message at that time, exactly like a normal reply, and can use tools if needed. Call get_current_date first if you need to work out a relative time like "tomorrow" or "in 2 hours". Only for a single future moment — for anything recurring (daily/weekly), tell the user to set it up on the Scheduled page instead.',
+      'Schedule a one-time reminder that fires at a specific future date/time, even if this chat is closed by then — it runs as a new chat message at that time, exactly like a normal reply, and can use tools if needed. Call get_current_date first if you need to work out a relative time like "tomorrow" or "in 2 hours". Only for a single future moment — for anything recurring (daily/weekly), use create_recurring_task instead.',
     parameters: {
       type: 'object',
       properties: {
@@ -193,6 +194,40 @@ const CREATE_REMINDER_TOOL = {
         },
       },
       required: ['message', 'whenISO'],
+    },
+  },
+};
+
+const CREATE_RECURRING_TASK_TOOL = {
+  type: 'function',
+  function: {
+    name: 'create_recurring_task',
+    description:
+      'Schedule a prompt that runs automatically on a repeating schedule (e.g. "every weekday morning at 8, check the weather"), even if this chat is closed by then — each run lands as a new chat message, with tools and memory available, same as a normal reply. Same effect as adding it on the Scheduled page in the app. For a single one-off moment instead, use create_reminder.',
+    parameters: {
+      type: 'object',
+      properties: {
+        name: {
+          type: 'string',
+          description: 'Short label for this task, e.g. "Morning weather check".',
+        },
+        prompt: {
+          type: 'string',
+          description:
+            'What to do/ask each time it runs, e.g. "Check today\'s weather in Munich and summarize it."',
+        },
+        timeOfDay: {
+          type: 'string',
+          description: 'Time of day to run, 24h "HH:MM" format (server-local), e.g. "08:00".',
+        },
+        daysOfWeek: {
+          type: 'array',
+          items: { type: 'integer' },
+          description:
+            'Days to run on, 0=Sunday..6=Saturday, e.g. [1,2,3,4,5] for weekdays, [0,1,2,3,4,5,6] for every day.',
+        },
+      },
+      required: ['name', 'prompt', 'timeOfDay', 'daysOfWeek'],
     },
   },
 };
@@ -234,6 +269,7 @@ function buildTools(toolsEnabled: boolean, memoryEnabled: boolean, excludeNames:
           GET_WEATHER_TOOL,
           CALCULATOR_TOOL,
           CREATE_REMINDER_TOOL,
+          CREATE_RECURRING_TASK_TOOL,
         ]
       : []),
     ...(memoryEnabled ? [REMEMBER_FACT_TOOL] : []),
@@ -301,6 +337,52 @@ async function executeTool(
       nextRunAt: when.getTime(),
     });
     return { result: { scheduled: true, when: when.toISOString() } };
+  }
+  if (name === 'create_recurring_task') {
+    const a = (args && typeof args === 'object' ? args : {}) as {
+      name?: unknown;
+      prompt?: unknown;
+      timeOfDay?: unknown;
+      daysOfWeek?: unknown;
+    };
+    if (typeof a.name !== 'string' || !a.name.trim()) {
+      return { error: 'Missing required "name" argument' };
+    }
+    if (typeof a.prompt !== 'string' || !a.prompt.trim()) {
+      return { error: 'Missing required "prompt" argument' };
+    }
+    // Same "HH:MM" constraint POST /api/scheduled-tasks enforces.
+    if (typeof a.timeOfDay !== 'string' || !/^([01]\d|2[0-3]):[0-5]\d$/.test(a.timeOfDay)) {
+      return { error: 'Invalid "timeOfDay" — must be 24h "HH:MM" format, e.g. "08:00"' };
+    }
+    const daysOfWeek = Array.isArray(a.daysOfWeek)
+      ? a.daysOfWeek.filter(
+          (d): d is number => typeof d === 'number' && Number.isInteger(d) && d >= 0 && d <= 6,
+        )
+      : [];
+    if (daysOfWeek.length === 0) {
+      return {
+        error:
+          'Missing/invalid "daysOfWeek" — must be a non-empty array of integers 0 (Sunday) to 6 (Saturday)',
+      };
+    }
+    const taskName = a.name.trim().slice(0, 200);
+    const prompt = a.prompt.trim().slice(0, 4000);
+    const nextRunAt = computeNextRunAt(a.timeOfDay, daysOfWeek, new Date());
+    createScheduledTask({
+      name: taskName,
+      prompt,
+      model,
+      timeOfDay: a.timeOfDay,
+      daysOfWeek,
+      recurring: true,
+      toolsEnabled: true,
+      memoryEnabled: true,
+      nextRunAt,
+    });
+    return {
+      result: { scheduled: true, name: taskName, nextRunAt: new Date(nextRunAt).toISOString() },
+    };
   }
   if (name === 'get_weather') {
     const a = (args && typeof args === 'object' ? args : {}) as {
@@ -371,6 +453,19 @@ export interface GenerationParams {
   // Tool names to hide from the model for this run — see buildTools' doc
   // comment. Optional; empty/absent means the normal full set.
   excludeTools?: string[];
+  // Called once, right before a successful ('done') completion is persisted
+  // and published — may return a replacement content string (e.g. to append
+  // a warning), or nothing to leave the generated content as-is. Lets a
+  // caller layer a domain-specific post-check (e.g. "did this actually
+  // schedule the reminder it claims to have set?" — see
+  // src/lib/schedule-verify.ts) without this generic engine needing to know
+  // what a reminder is. Never runs for 'aborted'; a thrown/rejected
+  // postProcess is caught and ignored (the original content survives)
+  // rather than breaking an otherwise-successful turn over a broken hook.
+  postProcess?: (final: {
+    content: string;
+    trace: TraceEvent[];
+  }) => string | void | Promise<string | void>;
 }
 
 // Runs the actual Ollama tool-calling loop independently of any HTTP
@@ -434,14 +529,23 @@ export async function runGeneration(job: Job, params: GenerationParams): Promise
 
   async function finishDone(status: 'done' | 'aborted') {
     const stats = buildStats();
+    let finalContent = contentAggregated;
+    if (status === 'done' && params.postProcess) {
+      try {
+        const replacement = await params.postProcess({ content: contentAggregated, trace });
+        if (typeof replacement === 'string') finalContent = replacement;
+      } catch (e) {
+        console.error('runGeneration postProcess hook failed, keeping original content:', e);
+      }
+    }
     publish(job.id, {
       done: true,
       model,
-      content: contentAggregated,
+      content: finalContent,
       thinking: thinkingAggregated || undefined,
       stats,
     });
-    if (!contentAggregated && !thinkingAggregated && status === 'done') {
+    if (!finalContent && !thinkingAggregated && status === 'done') {
       publish(job.id, { info: 'empty response', model });
     }
     // Passive benchmark logging — every real completion becomes a data point
@@ -459,7 +563,7 @@ export async function runGeneration(job: Job, params: GenerationParams): Promise
     }
     settleJob(job.id, status);
     persistFinalAssistantMessage(job.sessionId, job.id, {
-      content: contentAggregated,
+      content: finalContent,
       trace,
       stats,
     });
