@@ -10,6 +10,7 @@ import { useEffect } from 'react';
 import { LocalStorageInfo } from '@/components/local-storage-info';
 import { HostManagerPanel } from '@/components/host-manager-panel';
 import { MemoryPanel } from '@/components/memory-panel';
+import { StatusPanel } from '@/components/status-panel';
 
 export default function SettingsPage() {
   const theme = useThemeStore((s) => s.theme);
@@ -53,6 +54,17 @@ export default function SettingsPage() {
             Settings
           </h2>
         </div>
+        <section className="glass-card p-5 flex flex-col gap-4">
+          <div>
+            <h2 className="text-lg font-semibold text-white/90 mb-1">Status</h2>
+            <p className="text-xs text-white/50 mb-3">
+              Live reachability of the services this app talks to — useful right after a deploy or
+              env var change, since e.g. a silently non-functioning Telegram bot otherwise gives no
+              signal anywhere.
+            </p>
+            <StatusPanel />
+          </div>
+        </section>
         <section className="glass-card p-5 flex flex-col gap-4">
           <div>
             <h2 className="text-lg font-semibold text-white/90 mb-1">Ollama Host</h2>
