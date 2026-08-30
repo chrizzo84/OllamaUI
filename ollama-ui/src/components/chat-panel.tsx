@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useChatStore, type ChatMessage } from '@/store/chat';
 import { useToastStore } from '@/store/toast';
 import { useSystemPromptStore } from '@/store/system-prompt';
-import { useToolsStore } from '@/store/tools';
+import { useToolsStore, useAnyToolEnabled } from '@/store/tools';
 import { useMemoryStore } from '@/store/memory';
 import { useSessionsStore, loadSessionMessages, persistSessionMessages } from '@/store/sessions';
 import { usePrefsStore } from '@/store/prefs';
@@ -23,6 +23,7 @@ import {
   Paperclip,
   X,
   Eye,
+  Mic,
 } from 'lucide-react';
 import { Button } from './ui/button';
 import { DEFAULT_MIN_NUM_CTX, hasCapability, safeUuid } from '@/lib/utils';
@@ -285,6 +286,17 @@ export function ChatPanel() {
   // actually goes to Ollama; dataUrl is only for the thumbnail preview.
   const [pendingImages, setPendingImages] = useState<{ base64: string; dataUrl: string }[]>([]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  // Voice-to-text via the composer's Mic button — records with the
+  // browser's own MediaRecorder, then POSTs the clip to /api/transcribe
+  // (same whisper.cpp server the Telegram bridge's voice messages use) and
+  // fills the transcribed text into the input for the user to review/edit
+  // before sending, rather than auto-sending it — unlike Telegram, there's
+  // a visible composer here to check a possibly-misheard transcription
+  // against before it goes anywhere.
+  const [recording, setRecording] = useState(false);
+  const [transcribing, setTranscribing] = useState(false);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const recordedChunksRef = useRef<Blob[]>([]);
 
   const sessions = useSessionsStore((s) => s.sessions);
   const activeSessionId = useSessionsStore((s) => s.activeId);
@@ -321,7 +333,7 @@ export function ChatPanel() {
   const activeProfile = profiles.find((p) => p.id === activeSession?.profileId);
   const activePrompt = activeProfile?.prompt || '';
 
-  const toolsEnabled = useToolsStore((s) => s.toolsEnabled);
+  const toolsEnabled = useAnyToolEnabled();
   const searxTemplate = useToolsStore((s) => s.searxngTemplate);
   const hydrateTools = useToolsStore((s) => s.hydrate);
   useEffect(() => {
@@ -524,6 +536,75 @@ export function ChatPanel() {
       if (removed) URL.revokeObjectURL(removed.dataUrl);
       return prev.filter((_, i) => i !== index);
     });
+  }
+
+  async function handleRecordedAudio(blob: Blob) {
+    setTranscribing(true);
+    try {
+      const form = new FormData();
+      form.append('audio', blob, 'voice.webm');
+      const res = await fetch('/api/transcribe', { method: 'POST', body: form });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(
+          json.code === 'NO_WHISPER'
+            ? 'Voice transcription isn’t set up — WHISPER_HOST is not configured on the server.'
+            : json.error || 'Transcription failed',
+        );
+      }
+      const text = typeof json.text === 'string' ? json.text.trim() : '';
+      if (!text) {
+        pushToast({ type: 'error', message: 'No speech detected in that recording.' });
+        return;
+      }
+      setInput((prev) => (prev.trim() ? `${prev.trim()} ${text}` : text));
+    } catch (e) {
+      pushToast({
+        type: 'error',
+        message: e instanceof Error ? e.message : 'Transcription failed',
+      });
+    } finally {
+      setTranscribing(false);
+    }
+  }
+
+  async function startRecording() {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+        ? 'audio/webm;codecs=opus'
+        : undefined; // let the browser pick (e.g. Safari has no webm/opus)
+      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+      recordedChunksRef.current = [];
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) recordedChunksRef.current.push(e.data);
+      };
+      recorder.onstop = () => {
+        // Release the mic indicator/hardware immediately, don't wait on
+        // the (possibly slow) transcription request below.
+        stream.getTracks().forEach((t) => t.stop());
+        void handleRecordedAudio(
+          new Blob(recordedChunksRef.current, { type: recorder.mimeType || 'audio/webm' }),
+        );
+      };
+      recorder.start();
+      mediaRecorderRef.current = recorder;
+      setRecording(true);
+    } catch {
+      pushToast({
+        type: 'error',
+        message: 'Could not access the microphone — check browser/site permissions.',
+      });
+    }
+  }
+
+  function toggleRecording() {
+    if (recording) {
+      mediaRecorderRef.current?.stop();
+      setRecording(false);
+    } else {
+      void startRecording();
+    }
   }
 
   function handleStop() {
@@ -1040,6 +1121,18 @@ export function ChatPanel() {
                 </span>
               </Button>
             )}
+            <Button
+              onClick={toggleRecording}
+              size="sm"
+              variant={recording ? 'danger' : 'outline'}
+              disabled={transcribing}
+              loading={transcribing}
+              title={recording ? 'Stop recording' : 'Record a voice message'}
+            >
+              <span className="inline-flex items-center gap-1.5">
+                <Mic className="h-3.5 w-3.5" /> {recording ? 'Stop' : 'Voice'}
+              </span>
+            </Button>
             <Button
               onClick={handleSend}
               size="sm"
