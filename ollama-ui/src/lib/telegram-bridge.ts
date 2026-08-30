@@ -14,7 +14,15 @@
 // keeps this to one person. An update from a non-matching id is dropped
 // silently — no reply — so an unauthorized prober can't even confirm the bot
 // is listening.
-import { createSession, getSession, getSetting, setSetting, updateSession } from '@/lib/db';
+import {
+  createSession,
+  getSession,
+  getSetting,
+  setSetting,
+  updateSession,
+  listScheduledTasks,
+  deleteScheduledTask,
+} from '@/lib/db';
 import { upsertMessages, persistFinalAssistantMessage } from '@/lib/chat-persistence';
 import { createJob, subscribe } from '@/lib/generation-jobs';
 import { runGeneration, type ChatMessageIn } from '@/lib/generation-runner';
@@ -85,6 +93,14 @@ interface TelegramUpdate {
     photo?: { file_id: string }[];
     voice?: { file_id: string };
     document?: { file_id: string; file_name?: string; mime_type?: string };
+  };
+  // Sent when the user taps an inline-keyboard button (e.g. a /tasks
+  // "❌ Cancel" button) — a distinct update type, not a `message`.
+  callback_query?: {
+    id: string;
+    from?: { id: number };
+    message?: { chat: { id: number }; message_id: number };
+    data?: string;
   };
 }
 
@@ -167,6 +183,31 @@ function chunkText(text: string): string[] {
   return chunks.length ? chunks : ['(empty reply)'];
 }
 
+// Reply markup (inline keyboard) is only attached to the final chunk — a
+// multi-chunk reply is rare in practice (only a very long list/reply hits
+// it), and Telegram only needs the buttons on one message anyway.
+type InlineKeyboard = { inline_keyboard: { text: string; callback_data: string }[][] };
+
+async function sendChunks(
+  token: string,
+  chatId: number,
+  chunks: string[],
+  parseMode: 'MarkdownV2' | undefined,
+  replyMarkup: InlineKeyboard | undefined,
+): Promise<number | undefined> {
+  let lastId: number | undefined;
+  for (let i = 0; i < chunks.length; i++) {
+    const result = await callTelegram<{ message_id: number }>(token, 'sendMessage', {
+      chat_id: chatId,
+      text: chunks[i],
+      ...(parseMode ? { parse_mode: parseMode } : {}),
+      ...(i === chunks.length - 1 && replyMarkup ? { reply_markup: replyMarkup } : {}),
+    });
+    lastId = result.message_id;
+  }
+  return lastId;
+}
+
 // Sends `text` as Telegram MarkdownV2 (so the model's normal **bold**/`code`/
 // lists render instead of showing as raw asterisks/backticks). LLM markdown
 // isn't guaranteed to be valid MarkdownV2 — telegramify-markdown handles the
@@ -174,19 +215,24 @@ function chunkText(text: string): string[] {
 // multi-chunk reply — so on any failure this resends the whole thing as
 // plain text instead. A rare double-send (some chunks already went out
 // formatted) is the accepted cost of never silently dropping a reply.
-async function sendMessage(token: string, chatId: number, text: string): Promise<void> {
+// Returns the last sent message's id (used to attach/edit an inline
+// keyboard later), or undefined if replyMarkup wasn't requested.
+async function sendMessage(
+  token: string,
+  chatId: number,
+  text: string,
+  replyMarkup?: InlineKeyboard,
+): Promise<number | undefined> {
   try {
-    for (const chunk of chunkText(telegramifyMarkdown(text, 'escape'))) {
-      await callTelegram(token, 'sendMessage', {
-        chat_id: chatId,
-        text: chunk,
-        parse_mode: 'MarkdownV2',
-      });
-    }
+    return await sendChunks(
+      token,
+      chatId,
+      chunkText(telegramifyMarkdown(text, 'escape')),
+      'MarkdownV2',
+      replyMarkup,
+    );
   } catch {
-    for (const chunk of chunkText(text)) {
-      await callTelegram(token, 'sendMessage', { chat_id: chatId, text: chunk });
-    }
+    return await sendChunks(token, chatId, chunkText(text), undefined, replyMarkup);
   }
 }
 
@@ -277,19 +323,90 @@ const BOT_COMMANDS: { command: string; description: string }[] = [
 const HELP_TEXT = [
   '**Commands:**',
   '/info — show the current model and what it can do',
-  '/tasks — list scheduled tasks and pending reminders',
+  '/tasks — list scheduled tasks and pending reminders (tap ❌ to cancel one)',
   '/new — start a fresh conversation (clears context)',
   '/help — show this message',
   '',
   'Anything else is sent straight to the model — text, a photo/voice message, or a document (PDF/text/code — attach it to summarize or ask about it). Ask it to cancel a reminder or task by name too.',
 ].join('\n');
 
+// One "❌ Cancel" button per task, callback_data `cancel_task:<id>` — well
+// under Telegram's 64-byte limit (safeUuid ids are 36 chars). undefined (no
+// keyboard at all) when nothing's scheduled, so an empty list doesn't show a
+// dangling empty button row.
+function buildTasksKeyboard(): InlineKeyboard | undefined {
+  const tasks = listScheduledTasks();
+  if (tasks.length === 0) return undefined;
+  return {
+    inline_keyboard: tasks.map((t) => [
+      { text: `❌ Cancel: ${t.name.slice(0, 40)}`, callback_data: `cancel_task:${t.id}` },
+    ]),
+  };
+}
+
 async function handleTasksCommand(token: string, chatId: number): Promise<void> {
   await sendMessage(
     token,
     chatId,
-    `${formatScheduledTasksList()}\n\nJust ask to cancel one by name.`,
+    `${formatScheduledTasksList()}\n\nTap Cancel below, or just ask to cancel one by name.`,
+    buildTasksKeyboard(),
   );
+}
+
+// Re-renders an already-sent tasks-list message in place after a button
+// tap — same list/keyboard-building logic as handleTasksCommand, just an
+// edit instead of a new message so the chat doesn't fill up with one
+// message per cancellation. Explicitly clears reply_markup to `[]` when
+// nothing's left scheduled, since omitting the field entirely would leave
+// Telegram showing the old (now-stale) buttons.
+async function editTasksMessage(token: string, chatId: number, messageId: number): Promise<void> {
+  const text = formatScheduledTasksList();
+  const replyMarkup = buildTasksKeyboard() ?? { inline_keyboard: [] };
+  try {
+    await callTelegram(token, 'editMessageText', {
+      chat_id: chatId,
+      message_id: messageId,
+      text: telegramifyMarkdown(text, 'escape'),
+      parse_mode: 'MarkdownV2',
+      reply_markup: replyMarkup,
+    });
+  } catch {
+    await callTelegram(token, 'editMessageText', {
+      chat_id: chatId,
+      message_id: messageId,
+      text,
+      reply_markup: replyMarkup,
+    }).catch(() => {});
+  }
+}
+
+// A button tap only ever carries `cancel_task:<id>` here (the only kind this
+// bridge sends) — cancels immediately (no LLM round-trip, same reasoning as
+// the slash commands: instant and deterministic) and answers the callback so
+// Telegram clears the button's loading spinner, with a short toast either
+// way (confirming, or noting it was already gone — e.g. two taps in a row,
+// or it fired on its own between the list being shown and the tap).
+async function handleCallbackQuery(
+  token: string,
+  chatId: number,
+  messageId: number,
+  callbackQueryId: string,
+  data: string,
+): Promise<void> {
+  if (!data.startsWith('cancel_task:')) {
+    await callTelegram(token, 'answerCallbackQuery', { callback_query_id: callbackQueryId }).catch(
+      () => {},
+    );
+    return;
+  }
+  const id = data.slice('cancel_task:'.length);
+  const task = listScheduledTasks().find((t) => t.id === id);
+  await callTelegram(token, 'answerCallbackQuery', {
+    callback_query_id: callbackQueryId,
+    text: task ? `Cancelled "${task.name}".` : 'Already gone.',
+  }).catch(() => {});
+  if (task) deleteScheduledTask(id);
+  await editTasksMessage(token, chatId, messageId);
 }
 
 async function handleInfoCommand(
@@ -664,12 +781,25 @@ async function handleMessage(
       stats: result?.stats,
     });
   }
-  await sendMessage(token, chatId, finalContent);
+  // Same tap-to-cancel buttons as /tasks, attached whenever the reply IS a
+  // tasks list (the override case) — whether the user asked via /tasks or
+  // just asked in plain language ("what's scheduled?"), the result looks
+  // and behaves the same.
+  await sendMessage(token, chatId, finalContent, listOverride ? buildTasksKeyboard() : undefined);
 }
+
+// Cap on getUpdates retry backoff — an extended Telegram-side or network
+// outage shouldn't turn into a request every few seconds forever.
+const MAX_GETUPDATES_BACKOFF_MS = 60_000;
 
 async function pollLoop(config: BridgeConfig): Promise<void> {
   const { token, allowedUserId, model, visionModel, whisperHost } = config;
   let offset = 0;
+  // Tracks getUpdates failures in a row — drives both the backoff below and
+  // a one-time "back online" notice once it recovers, so an outage while
+  // you're away doesn't go unnoticed (you'd otherwise only find out the
+  // bridge was down by trying to message it and getting silence).
+  let consecutiveFailures = 0;
 
   for (;;) {
     let updates: TelegramUpdate[];
@@ -677,16 +807,58 @@ async function pollLoop(config: BridgeConfig): Promise<void> {
       updates = await callTelegram<TelegramUpdate[]>(token, 'getUpdates', {
         timeout: 25, // Telegram-side long-poll wait, keeps request volume low
         offset,
-        allowed_updates: ['message'],
+        allowed_updates: ['message', 'callback_query'],
       });
     } catch (e) {
-      console.error('[telegram-bridge] getUpdates failed, retrying in 5s:', e);
-      await new Promise((r) => setTimeout(r, 5000));
+      consecutiveFailures++;
+      const backoffMs = Math.min(5000 * 2 ** (consecutiveFailures - 1), MAX_GETUPDATES_BACKOFF_MS);
+      console.error(
+        `[telegram-bridge] getUpdates failed (attempt ${consecutiveFailures}), retrying in ${Math.round(backoffMs / 1000)}s:`,
+        e,
+      );
+      await new Promise((r) => setTimeout(r, backoffMs));
       continue;
     }
+    if (consecutiveFailures >= 3) {
+      const chatId = Number(allowedUserId);
+      if (Number.isFinite(chatId)) {
+        await sendMessage(
+          token,
+          chatId,
+          `✅ Reconnected to Telegram after ${consecutiveFailures} failed attempt(s).`,
+        ).catch(() => {});
+      }
+    }
+    consecutiveFailures = 0;
 
     for (const update of updates) {
       offset = update.update_id + 1;
+
+      if (update.callback_query) {
+        const cq = update.callback_query;
+        // Same silent-drop policy as an unauthorized message — see this
+        // file's top doc comment.
+        if (!cq.from || String(cq.from.id) !== allowedUserId) continue;
+        if (cq.data && cq.message) {
+          try {
+            await handleCallbackQuery(
+              token,
+              cq.message.chat.id,
+              cq.message.message_id,
+              cq.id,
+              cq.data,
+            );
+          } catch (e) {
+            console.error('[telegram-bridge] callback query handling failed:', e);
+            await callTelegram(token, 'answerCallbackQuery', {
+              callback_query_id: cq.id,
+              text: 'Something went wrong.',
+            }).catch(() => {});
+          }
+        }
+        continue;
+      }
+
       const msg = update.message;
       if (!msg?.from) continue;
       if (!msg.text && !msg.photo?.length && !msg.voice && !msg.document) continue; // text/photo/voice/document, v1
@@ -838,6 +1010,25 @@ async function pollLoop(config: BridgeConfig): Promise<void> {
   }
 }
 
+// pollLoop's own `for (;;)` never returns normally — reaching either branch
+// here means something escaped its internal try/catches (a bug, or a
+// Telegram API shape this file doesn't handle yet). Without this wrapper
+// that would silently end the bridge for good until the next full server
+// restart, with nothing but one easy-to-miss console.error marking it —
+// this restarts it instead, same backoff-free 5s pause getUpdates itself
+// used to use, logged loudly either way.
+async function runForever(config: BridgeConfig): Promise<void> {
+  for (;;) {
+    try {
+      await pollLoop(config);
+      console.error('[telegram-bridge] poll loop exited unexpectedly, restarting in 5s.');
+    } catch (e) {
+      console.error('[telegram-bridge] poll loop crashed, restarting in 5s:', e);
+    }
+    await new Promise((r) => setTimeout(r, 5000));
+  }
+}
+
 // Lets other server-side code (src/lib/scheduler.ts, for a recurring task or
 // a fired reminder) push a message to the same single allowed user without
 // needing an inbound message first — a private bot chat's chat_id is just
@@ -877,5 +1068,5 @@ export function startTelegramBridge(): void {
   void callTelegram(config.token, 'setMyCommands', { commands: BOT_COMMANDS }).catch((e) =>
     console.error('[telegram-bridge] setMyCommands failed:', e),
   );
-  void pollLoop(config).catch((e) => console.error('[telegram-bridge] poll loop crashed:', e));
+  void runForever(config);
 }
