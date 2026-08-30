@@ -114,6 +114,16 @@ async function runScheduledTask(task: ScheduledTaskRow): Promise<void> {
     toolsEnabled: task.toolsEnabled,
     memoryEnabled,
     searxngTemplate: null, // server-side default (SEARXNG_HOST env), no per-request header here
+    // A one-off reminder is itself the fired create_reminder call — hide it
+    // during delivery so the model can't mistake "deliver this now" for
+    // "schedule this again" (see buildTools' doc comment in
+    // generation-runner.ts). remember_fact is hidden for the same reason:
+    // with create_reminder gone, a model still primed to "do something"
+    // rather than just reply reached for remember_fact instead, filing the
+    // reminder text away as a durable memory instead of speaking it
+    // (observed live in testing) — a delivery run has no legitimate reason
+    // to persist a new memory either way.
+    excludeTools: task.recurring ? [] : ['create_reminder', 'remember_fact'],
   });
 
   if (task.recurring) {

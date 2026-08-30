@@ -51,6 +51,7 @@
 - 🛠️ Tool-calling for capable models (`web_search` via SearXNG, `get_current_date`, `get_weather` via Open-Meteo, `calculator`, `remember_fact`, `create_reminder`)
 - 🧠 Persistent memory — the assistant saves durable facts about you and recalls them automatically in future chats; on by default, toggle globally or per-chat
 - ⏰ Scheduled tasks — recurring prompts that run automatically at a set time/days, no tab needed; each run lands as a new session with the usual background-job notification. One-off reminders can also be set directly from chat ("remind me tomorrow at 9...") via `create_reminder`; a footer clock shows the server's own time since schedules run on it
+- 📱 Telegram bridge (opt-in) — chat with the app from your phone through a Telegram bot, using the same tool-calling/memory engine as the web UI, including sending photos to a vision model. Locked to a single allowlisted Telegram user id; set `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_USER_ID` and `TELEGRAM_MODEL` in `.env.local` to enable it (unset = bridge stays off), plus `TELEGRAM_VISION_MODEL` if you want photo messages to work
 - 📈 Model benchmark history — every real chat logs its speed automatically, plus an on-demand fixed-prompt benchmark across all installed models, with a trend chart
 - 🗜️ Context compaction — summarize older chat history into a dense context note via the model itself (with undo)
 - 📏 Honest context-window badge (real runtime `num_ctx` from `/api/ps`, not the model's theoretical max) + per-model context slider up to the model's maximum

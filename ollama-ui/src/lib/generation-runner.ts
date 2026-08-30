@@ -216,7 +216,16 @@ const REMEMBER_FACT_TOOL = {
 // remember_fact is gated by its own `memoryEnabled` flag, independent of
 // `toolsEnabled` (web_search/get_current_date) — a user who wants memory but
 // not web search, or vice versa, shouldn't have to enable both together.
-function buildTools(toolsEnabled: boolean, memoryEnabled: boolean) {
+//
+// `excludeNames` drops specific tools by name — used when a one-off reminder
+// fires (see scheduler.ts) to hide create_reminder itself. Without that, a
+// model handling "this is the reminder, deliver it now" would still see
+// create_reminder in its tool list and, despite the prompt saying otherwise,
+// sometimes call it again instead of just answering (observed live in
+// testing: llama3.1:8b did this on 2/2 runs, either leaking the resulting
+// tool error into the visible reply or silently mis-calling the tool before
+// recovering).
+function buildTools(toolsEnabled: boolean, memoryEnabled: boolean, excludeNames: string[] = []) {
   return [
     ...(toolsEnabled
       ? [
@@ -228,7 +237,7 @@ function buildTools(toolsEnabled: boolean, memoryEnabled: boolean) {
         ]
       : []),
     ...(memoryEnabled ? [REMEMBER_FACT_TOOL] : []),
-  ];
+  ].filter((t) => !excludeNames.includes(t.function.name));
 }
 
 async function executeTool(
@@ -359,6 +368,9 @@ export interface GenerationParams {
   toolsEnabled: boolean;
   memoryEnabled: boolean;
   searxngTemplate: string | null;
+  // Tool names to hide from the model for this run — see buildTools' doc
+  // comment. Optional; empty/absent means the normal full set.
+  excludeTools?: string[];
 }
 
 // Runs the actual Ollama tool-calling loop independently of any HTTP
@@ -370,6 +382,7 @@ export interface GenerationParams {
 // every exit path settles the job and persists something.
 export async function runGeneration(job: Job, params: GenerationParams): Promise<void> {
   const { base, model, think, options, toolsEnabled, memoryEnabled, searxngTemplate } = params;
+  const excludeTools = params.excludeTools ?? [];
   const messages: ChatMessageIn[] = params.messages.map((m) => ({
     role: m.role,
     content: m.content,
@@ -497,7 +510,7 @@ export async function runGeneration(job: Job, params: GenerationParams): Promise
           // requesting one more tool call that we'd have to drop; it's
           // forced to answer in plain text instead.
           ...((toolsEnabled || memoryEnabled) && !isLastIteration
-            ? { tools: buildTools(toolsEnabled, memoryEnabled) }
+            ? { tools: buildTools(toolsEnabled, memoryEnabled, excludeTools) }
             : {}),
         }),
       });
