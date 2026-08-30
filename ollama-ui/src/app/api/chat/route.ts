@@ -4,6 +4,7 @@ import { createJob, publish, settleJob, createJobEventStream } from '@/lib/gener
 import { upsertMessages, persistFinalAssistantMessage } from '@/lib/chat-persistence';
 import { getSession, getSetting } from '@/lib/db';
 import { runGeneration, injectMemories, type ChatMessageIn } from '@/lib/generation-runner';
+import { scheduleVerificationWarning } from '@/lib/schedule-verify';
 import type { ChatMessage } from '@/store/chat';
 
 export const runtime = 'nodejs';
@@ -104,6 +105,19 @@ export async function POST(req: NextRequest) {
       toolsEnabled,
       memoryEnabled,
       searxngTemplate,
+      // A model can say "reminder set"/"scheduled that" without ever
+      // successfully calling create_reminder or create_recurring_task
+      // (observed live via the Telegram bridge, which does a full
+      // corrective retry — not practical here since the reply has already
+      // streamed to the browser by the time this runs; a warning appended
+      // to the persisted/displayed content is the honest option that fits
+      // a live-streaming UI instead).
+      postProcess: ({ content, trace }) => {
+        const lastUserText =
+          [...clientMessages].reverse().find((m) => m.role === 'user')?.content ?? '';
+        const warning = scheduleVerificationWarning(lastUserText, trace);
+        return warning ? content + warning : undefined;
+      },
     }).catch((err) => {
       const message = err instanceof Error ? err.message : String(err);
       publish(job.id, { error: message });

@@ -20,31 +20,18 @@ import {
 import { upsertMessages } from '@/lib/chat-persistence';
 import { createJob } from '@/lib/generation-jobs';
 import { runGeneration, injectMemories } from '@/lib/generation-runner';
+import { computeNextRunAt } from '@/lib/schedule-time';
 import { resolveOllamaHostServer } from '@/lib/host-resolve-server';
 import { notifyTelegram } from '@/lib/telegram-bridge';
 import { safeUuid } from '@/lib/utils';
 import type { ChatMessage } from '@/store/chat';
 
-const TICK_INTERVAL_MS = 60_000;
+// Re-exported so the Scheduled-page API routes (which have always imported
+// this from here) don't need to change — canonical implementation lives in
+// schedule-time.ts now, see that file's doc comment for why.
+export { computeNextRunAt };
 
-// Finds the next moment (strictly after `from`) that matches `timeOfDay`
-// ('HH:MM', server-local) and one of `daysOfWeek` (JS Date.getDay()
-// convention: 0 = Sunday). Scans up to 7 days ahead, which always finds a
-// match as long as daysOfWeek is non-empty (enforced by the create/update
-// API route).
-export function computeNextRunAt(timeOfDay: string, daysOfWeek: number[], from: Date): number {
-  const [hh, mm] = timeOfDay.split(':').map(Number);
-  for (let addDays = 0; addDays <= 7; addDays++) {
-    const candidate = new Date(from);
-    candidate.setDate(candidate.getDate() + addDays);
-    candidate.setHours(hh, mm, 0, 0);
-    if (candidate.getTime() <= from.getTime()) continue; // strictly future
-    if (daysOfWeek.includes(candidate.getDay())) return candidate.getTime();
-  }
-  // Unreachable in practice (daysOfWeek is never empty), but keep the
-  // scheduler alive rather than throwing if it somehow happens.
-  return from.getTime() + 24 * 60 * 60 * 1000;
-}
+const TICK_INTERVAL_MS = 60_000;
 
 function formatRunTitle(taskName: string, at: Date): string {
   return `${taskName} — ${at.toLocaleDateString('de-DE')} ${at.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })}`;
@@ -123,8 +110,12 @@ async function runScheduledTask(task: ScheduledTaskRow): Promise<void> {
     // rather than just reply reached for remember_fact instead, filing the
     // reminder text away as a durable memory instead of speaking it
     // (observed live in testing) — a delivery run has no legitimate reason
-    // to persist a new memory either way.
-    excludeTools: task.recurring ? [] : ['create_reminder', 'remember_fact'],
+    // to persist a new memory either way. create_recurring_task is excluded
+    // for the same "don't schedule something new while just delivering
+    // this one" reasoning as create_reminder.
+    excludeTools: task.recurring
+      ? []
+      : ['create_reminder', 'remember_fact', 'create_recurring_task'],
   });
 
   if (task.recurring) {
