@@ -15,12 +15,18 @@
 // silently — no reply — so an unauthorized prober can't even confirm the bot
 // is listening.
 import { createSession, getSession, getSetting, setSetting, updateSession } from '@/lib/db';
-import { upsertMessages } from '@/lib/chat-persistence';
+import { upsertMessages, persistFinalAssistantMessage } from '@/lib/chat-persistence';
 import { createJob, subscribe } from '@/lib/generation-jobs';
 import { runGeneration, type ChatMessageIn } from '@/lib/generation-runner';
 import { compactMessages } from '@/lib/compact';
-import { SCHEDULE_INTENT_RE, hasAnySuccessfulSchedulingCall } from '@/lib/schedule-verify';
+import {
+  SCHEDULE_INTENT_RE,
+  hasAnySuccessfulSchedulingCall,
+  formatScheduledTasksList,
+  listVerificationOverride,
+} from '@/lib/schedule-verify';
 import { transcribeAudio, getWhisperHost } from '@/lib/whisper';
+import { extractDocumentText } from '@/lib/document-extract';
 import { getGloballyDisabledToolNames } from '@/lib/tool-settings-server';
 import { resolveOllamaHostServer } from '@/lib/host-resolve-server';
 import { safeUuid, deriveSessionTitle } from '@/lib/utils';
@@ -78,6 +84,7 @@ interface TelegramUpdate {
     // the last one is the largest/highest-quality available.
     photo?: { file_id: string }[];
     voice?: { file_id: string };
+    document?: { file_id: string; file_name?: string; mime_type?: string };
   };
 }
 
@@ -262,6 +269,7 @@ function getOrCreateSessionId(): string {
 // as autocomplete in the client, in addition to just working when typed.
 const BOT_COMMANDS: { command: string; description: string }[] = [
   { command: 'info', description: 'Show the current model and what it can do' },
+  { command: 'tasks', description: 'List scheduled tasks and pending reminders' },
   { command: 'new', description: 'Start a fresh conversation (clears context)' },
   { command: 'help', description: 'List available commands' },
 ];
@@ -269,11 +277,20 @@ const BOT_COMMANDS: { command: string; description: string }[] = [
 const HELP_TEXT = [
   '**Commands:**',
   '/info — show the current model and what it can do',
+  '/tasks — list scheduled tasks and pending reminders',
   '/new — start a fresh conversation (clears context)',
   '/help — show this message',
   '',
-  'Anything else is sent straight to the model — text, or a photo for vision.',
+  'Anything else is sent straight to the model — text, a photo/voice message, or a document (PDF/text/code — attach it to summarize or ask about it). Ask it to cancel a reminder or task by name too.',
 ].join('\n');
+
+async function handleTasksCommand(token: string, chatId: number): Promise<void> {
+  await sendMessage(
+    token,
+    chatId,
+    `${formatScheduledTasksList()}\n\nJust ask to cancel one by name.`,
+  );
+}
 
 async function handleInfoCommand(
   token: string,
@@ -324,11 +341,14 @@ async function handleCommand(
       await sendMessage(
         token,
         chatId,
-        `👋 Connected. Send a message to chat, or a photo for vision. Commands: /info, /new, /help.`,
+        `👋 Connected. Send a message to chat, or a photo/voice message/document. Commands: /info, /tasks, /new, /help.`,
       );
       return true;
     case 'info':
       await handleInfoCommand(token, chatId, model);
+      return true;
+    case 'tasks':
+      await handleTasksCommand(token, chatId);
       return true;
     case 'new':
       createNewTelegramSession();
@@ -597,7 +617,7 @@ async function handleMessage(
       {
         role: 'user',
         content:
-          '[System: your previous reply claimed to schedule something, but you did not actually call create_reminder (one-off) or create_recurring_task (repeating). If the user wants to be reminded of or scheduled for something, call the appropriate tool now with the correct arguments — do not just say you will.]',
+          '[System: your previous reply claimed something was scheduled, cancelled, or changed, but you did not actually call the matching tool (create_reminder, create_recurring_task, or cancel_scheduled_task). Call the correct one now with the right arguments — do not just say you did it.]',
       },
     ];
     try {
@@ -617,14 +637,33 @@ async function handleMessage(
     }
     if (!hasAnySuccessfulSchedulingCall(result?.trace)) {
       warning =
-        "\n\n⚠️ I couldn't reliably confirm that was actually scheduled — please check the Scheduled page in the app, or try again with a more explicit time.";
+        "\n\n⚠️ I couldn't reliably confirm that actually went through — please check the Scheduled page in the app, or try again with a more explicit request.";
     }
   }
 
   stopTyping();
   if (statusMessageId != null) deleteMessage(token, chatId, statusMessageId);
 
-  const finalContent = (result?.content || '(no reply generated)') + warning;
+  // A confabulated *list* of scheduled tasks is misinformation about the
+  // user's own data, not just an unconfirmed action — replaced outright
+  // with the real, deterministic result rather than merely flagged (see
+  // listVerificationOverride's doc comment in schedule-verify.ts).
+  const listOverride = listVerificationOverride(text, result?.trace);
+  const finalContent = listOverride ?? (result?.content || '(no reply generated)') + warning;
+
+  // runGeneration already persisted its own (pre-correction) content before
+  // any of the checks above ever ran — unlike api/chat/route.ts, this file
+  // doesn't go through runGeneration's postProcess hook (its own retry loop
+  // needs the raw result mid-flight), so a listOverride or warning has to
+  // be re-persisted by hand or the web UI's session history would keep
+  // showing the uncorrected version forever.
+  if (finalContent !== result?.content) {
+    persistFinalAssistantMessage(sessionId, assistantMessage.id, {
+      content: finalContent,
+      trace: result?.trace,
+      stats: result?.stats,
+    });
+  }
   await sendMessage(token, chatId, finalContent);
 }
 
@@ -650,7 +689,7 @@ async function pollLoop(config: BridgeConfig): Promise<void> {
       offset = update.update_id + 1;
       const msg = update.message;
       if (!msg?.from) continue;
-      if (!msg.text && !msg.photo?.length && !msg.voice) continue; // text/photo/voice, v1
+      if (!msg.text && !msg.photo?.length && !msg.voice && !msg.document) continue; // text/photo/voice/document, v1
 
       // Logged before the allowlist check so "nothing arrived at all" and
       // "arrived but got dropped by the allowlist" are distinguishable —
@@ -663,7 +702,9 @@ async function pollLoop(config: BridgeConfig): Promise<void> {
             ? `: ${JSON.stringify(msg.text.slice(0, 80))}`
             : msg.voice
               ? ' (voice)'
-              : ' (photo)'),
+              : msg.document
+                ? ` (document: ${msg.document.file_name ?? 'unnamed'})`
+                : ' (photo)'),
       );
 
       // Silent drop — see this file's top doc comment for why no reply.
@@ -718,7 +759,12 @@ async function pollLoop(config: BridgeConfig): Promise<void> {
           continue;
         }
       }
-      let text = msg.text ?? msg.caption ?? '📷 (photo, no caption)';
+      let text =
+        msg.text ??
+        msg.caption ??
+        (msg.document
+          ? `📄 (document: ${msg.document.file_name ?? 'file'}, no caption)`
+          : '📷 (photo, no caption)');
       const sentAt = msg.date ? new Date(msg.date * 1000) : new Date();
 
       if (msg.voice) {
@@ -745,6 +791,33 @@ async function pollLoop(config: BridgeConfig): Promise<void> {
             token,
             msg.chat.id,
             '[Error] Could not transcribe that voice message.',
+          ).catch(() => {});
+          continue;
+        }
+        if (statusId != null) deleteMessage(token, msg.chat.id, statusId);
+      }
+
+      if (msg.document) {
+        const fileName = msg.document.file_name ?? 'document';
+        const statusId = await sendStatusMessage(
+          token,
+          msg.chat.id,
+          `📄 Reading ${fileName}…`,
+        ).catch(() => null);
+        try {
+          const bytes = await downloadTelegramFileBytes(token, msg.document.file_id);
+          const content = await extractDocumentText(bytes, fileName, msg.document.mime_type);
+          // The user's own caption (if any) becomes the actual instruction;
+          // the document content follows as context, same "instruction
+          // first, material after" shape a person would naturally use.
+          text = `${msg.caption?.trim() || `Summarize this document (${fileName}).`}\n\n[Document: ${fileName}]\n${content}`;
+        } catch (e) {
+          console.error('[telegram-bridge] document extraction failed:', e);
+          if (statusId != null) deleteMessage(token, msg.chat.id, statusId);
+          await sendMessage(
+            token,
+            msg.chat.id,
+            `[Error] ${e instanceof Error ? e.message : 'Could not read that document.'}`,
           ).catch(() => {});
           continue;
         }

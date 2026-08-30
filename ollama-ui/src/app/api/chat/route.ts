@@ -4,7 +4,7 @@ import { createJob, publish, settleJob, createJobEventStream } from '@/lib/gener
 import { upsertMessages, persistFinalAssistantMessage } from '@/lib/chat-persistence';
 import { getSession, getSetting } from '@/lib/db';
 import { runGeneration, injectMemories, type ChatMessageIn } from '@/lib/generation-runner';
-import { scheduleVerificationWarning } from '@/lib/schedule-verify';
+import { scheduleVerificationWarning, listVerificationOverride } from '@/lib/schedule-verify';
 import { getGloballyDisabledToolNames } from '@/lib/tool-settings-server';
 import type { ChatMessage } from '@/store/chat';
 
@@ -110,8 +110,9 @@ export async function POST(req: NextRequest) {
       // the same list) — resolved server-side, not trusted from the
       // client, same reasoning as memoryEnabled just above.
       excludeTools: getGloballyDisabledToolNames(),
-      // A model can say "reminder set"/"scheduled that" without ever
-      // successfully calling create_reminder or create_recurring_task
+      // A model can say "reminder set"/"scheduled that"/"cancelled that"
+      // without ever successfully calling the matching tool (create_reminder,
+      // create_recurring_task, cancel_scheduled_task)
       // (observed live via the Telegram bridge, which does a full
       // corrective retry — not practical here since the reply has already
       // streamed to the browser by the time this runs; a warning appended
@@ -120,6 +121,12 @@ export async function POST(req: NextRequest) {
       postProcess: ({ content, trace }) => {
         const lastUserText =
           [...clientMessages].reverse().find((m) => m.role === 'user')?.content ?? '';
+        // A confabulated *list* of scheduled tasks is misinformation about
+        // the user's own data, not just an unconfirmed action — replaced
+        // outright rather than merely flagged (see listVerificationOverride's
+        // doc comment in schedule-verify.ts).
+        const listOverride = listVerificationOverride(lastUserText, trace);
+        if (listOverride) return listOverride;
         const warning = scheduleVerificationWarning(lastUserText, trace);
         return warning ? content + warning : undefined;
       },

@@ -21,6 +21,8 @@ import {
   listMemories,
   recordBenchmarkRun,
   createScheduledTask,
+  listScheduledTasks,
+  deleteScheduledTask,
   type MemoryRow,
 } from '@/lib/db';
 import { computeNextRunAt } from '@/lib/schedule-time';
@@ -232,6 +234,35 @@ const CREATE_RECURRING_TASK_TOOL = {
   },
 };
 
+const LIST_SCHEDULED_TASKS_TOOL = {
+  type: 'function',
+  function: {
+    name: 'list_scheduled_tasks',
+    description:
+      "List every currently scheduled recurring task and pending one-off reminder, with each one's id, name and next run time. Call this before cancel_scheduled_task if you don't already know the exact id.",
+    parameters: { type: 'object', properties: {} },
+  },
+};
+
+const CANCEL_SCHEDULED_TASK_TOOL = {
+  type: 'function',
+  function: {
+    name: 'cancel_scheduled_task',
+    description:
+      "Cancel (permanently delete) a scheduled recurring task or pending one-off reminder. Provide the exact id from list_scheduled_tasks, or a name/distinctive substring to match by if you don't have the id.",
+    parameters: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'Exact task id, from list_scheduled_tasks.' },
+        name: {
+          type: 'string',
+          description: 'Task name or a distinctive substring of it, used only if id is omitted.',
+        },
+      },
+    },
+  },
+};
+
 const REMEMBER_FACT_TOOL = {
   type: 'function',
   function: {
@@ -270,6 +301,8 @@ function buildTools(toolsEnabled: boolean, memoryEnabled: boolean, excludeNames:
           CALCULATOR_TOOL,
           CREATE_REMINDER_TOOL,
           CREATE_RECURRING_TASK_TOOL,
+          LIST_SCHEDULED_TASKS_TOOL,
+          CANCEL_SCHEDULED_TASK_TOOL,
         ]
       : []),
     ...(memoryEnabled ? [REMEMBER_FACT_TOOL] : []),
@@ -383,6 +416,45 @@ async function executeTool(
     return {
       result: { scheduled: true, name: taskName, nextRunAt: new Date(nextRunAt).toISOString() },
     };
+  }
+  if (name === 'list_scheduled_tasks') {
+    const tasks = listScheduledTasks().map((t) => ({
+      id: t.id,
+      name: t.name,
+      recurring: t.recurring,
+      ...(t.recurring
+        ? { timeOfDay: t.timeOfDay, daysOfWeek: t.daysOfWeek }
+        : { whenISO: t.nextRunAt ? new Date(t.nextRunAt).toISOString() : null }),
+    }));
+    return { result: { tasks } };
+  }
+  if (name === 'cancel_scheduled_task') {
+    const a = (args && typeof args === 'object' ? args : {}) as {
+      id?: unknown;
+      name?: unknown;
+    };
+    const tasks = listScheduledTasks();
+    let match: (typeof tasks)[number] | undefined;
+    if (typeof a.id === 'string' && a.id.trim()) {
+      match = tasks.find((t) => t.id === (a.id as string).trim());
+      if (!match) return { error: `No scheduled task found with id "${a.id}"` };
+    } else if (typeof a.name === 'string' && a.name.trim()) {
+      const needle = a.name.trim().toLowerCase();
+      const matches = tasks.filter((t) => t.name.toLowerCase().includes(needle));
+      if (matches.length === 0) {
+        return { error: `No scheduled task found matching "${a.name}"` };
+      }
+      if (matches.length > 1) {
+        return {
+          error: `Multiple tasks match "${a.name}" — call list_scheduled_tasks and use the exact id instead: ${matches.map((m) => `"${m.name}" (${m.id})`).join(', ')}`,
+        };
+      }
+      match = matches[0];
+    } else {
+      return { error: 'Provide either "id" or "name" to identify which task to cancel' };
+    }
+    deleteScheduledTask(match.id);
+    return { result: { cancelled: true, id: match.id, name: match.name } };
   }
   if (name === 'get_weather') {
     const a = (args && typeof args === 'object' ? args : {}) as {
