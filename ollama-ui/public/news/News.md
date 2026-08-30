@@ -1,5 +1,18 @@
 Chronological list of notable changes to Ollama UI.
 
+## 2026-08-30
+
+- **Telegram Bridge (opt-in)**
+  - Chat with the app from your phone via a Telegram bot — messages go through the same tool-calling/memory engine as the web UI, running as a background long-poll worker (no public port needed, no webhook to secure).
+  - Locked to a single Telegram user: every incoming update is checked against `TELEGRAM_ALLOWED_USER_ID` (Telegram sets this server-side per message, so it can't be spoofed by a client); anything else is silently dropped, no reply sent. The bot token only authenticates this server to Telegram's API — it doesn't gate who can message the bot, so the id check is the actual access control.
+  - Set `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_USER_ID` and `TELEGRAM_MODEL` in `.env.local` to enable it; leaving them unset keeps the bridge off entirely.
+  - While a reply is generating, Telegram's native "typing…" indicator stays on and a status message tracks what's happening (which tool is running, or that the model is queued behind another request) instead of silence until the final answer lands.
+  - Replies render as real Telegram formatting (bold, lists, code) via `telegramify-markdown` instead of showing raw `**`/`` ` `` characters, with a plain-text fallback if a particular reply can't be converted cleanly.
+  - The single ongoing Telegram conversation auto-compacts once it passes 16 messages — older history gets summarized into a dense note (last 4 messages kept verbatim), same mechanism as the web UI's Compact button, so it never silently overflows the model's context window. A short "🗜️ Compacted…" note marks when this happens.
+  - Send a photo (with or without a caption) and it's downloaded and passed to the model just like an Attach-button image in the web UI. Uses a separate `TELEGRAM_VISION_MODEL` for that message if set (checked against Ollama's reported model capabilities first) — `TELEGRAM_MODEL` doesn't have to be vision-capable itself; if it already reports vision support (some do), photos work with no extra env var at all.
+  - Three slash commands, registered with Telegram so they autocomplete: `/info` (current model + its capabilities, read live from Ollama), `/new` (starts a fresh conversation — the old one stays in the web UI's session list), `/help`. Commands are intercepted before ever reaching the model — instant, deterministic replies instead of an unreliable generation call (this also fixed `/start` previously being sent through as ordinary chat text and getting an odd literal reply).
+  - When a one-off reminder (`create_reminder`) fires, the model no longer sees `create_reminder`/`remember_fact` in its own tool list — without that, a small model firing its own reminder could mistake "deliver this now" for a fresh request and call the tool again instead of just replying (seen live in testing).
+
 ## 2026-08-28
 
 - **Reminders From Chat, Server Clock in the Footer**
