@@ -281,6 +281,37 @@ Override default host the UI uses:
 docker run --rm -e OLLAMA_HOST=http://localhost:11434 -p 11434:11434 -p 3000:3000 ollama-ui:latest
 ```
 
+#### Telegram Bridge & Voice Transcription (Docker / Unraid)
+
+`.env.local` (used elsewhere in this doc) only applies to `pnpm dev` — it's never baked into the image or read inside a container. In Docker, set the same variable names as regular container environment variables instead:
+
+```bash
+docker run --rm -p 11434:11434 -p 3000:3000 \
+	-v /path/to/ollama-models:/root/.ollama \
+	-v /path/to/ollama-ui-data:/app/data \
+	-e TELEGRAM_BOT_TOKEN=your-bot-token \
+	-e TELEGRAM_ALLOWED_USER_ID=your-telegram-user-id \
+	-e TELEGRAM_MODEL=llama3.1:8b \
+	ollama-ui:latest
+```
+
+Same idea in Docker Compose — add them under `environment:` (or `env_file:` pointing at a local file kept out of version control, so the token isn't sitting in `docker-compose.yml` itself):
+```yaml
+services:
+	ollama-ui:
+		image: ollama-ui:latest
+		environment:
+			- TELEGRAM_BOT_TOKEN=your-bot-token
+			- TELEGRAM_ALLOWED_USER_ID=your-telegram-user-id
+			- TELEGRAM_MODEL=llama3.1:8b
+```
+
+**On Unraid**: edit the container → *Add another Path, Port, Variable* → type **Variable**, with `TELEGRAM_BOT_TOKEN` etc. as Key and the value as Value — no file involved, same as any other env var on that screen (this is also how `OLLAMA_HOST` gets set on Unraid).
+
+Optional additions, same mechanism: `TELEGRAM_VISION_MODEL` (photos, only if `TELEGRAM_MODEL` itself doesn't already report vision support) and `TELEGRAM_MODEL`'s tool-calling requirement carries over unchanged. Voice messages need nothing extra in the combined image — `WHISPER_HOST` already defaults to the bundled `whisper-server` (`http://localhost:8790`, see the Dockerfile section above); only set it yourself to point at a different/external Whisper server instead.
+
+The bot token is a credential like any other — treat it the same way you'd treat `OLLAMA_HOST` credentials or a database password: not in `docker-compose.yml` committed to a repo, not pasted into shell history you'll publish, etc. If it ever leaks, revoke/regenerate it via [@BotFather](https://t.me/BotFather) (`/revoke` or `/token`) — that's cheap and immediate.
+
 #### Prebuilt Images (Combined Ollama + UI)
 
 You can use prebuilt images from GitHub Container Registry (GHCR):
