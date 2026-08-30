@@ -237,7 +237,7 @@ This repository now includes a multi‑stage `Dockerfile` at repo root that:
 1. Builds the Next.js app (standalone) with Node 20.
 2. Compiles `whisper.cpp`'s `whisper-server` from source in its own stage (speech-to-text for Telegram voice messages — Ollama has no audio-input support of its own) and downloads a multilingual model (~465MB; override with `--build-arg WHISPER_MODEL_URL=...` for a smaller/larger one, e.g. `ggml-base.bin` or `ggml-medium.bin` — avoid the `.en`-suffixed variants unless you only ever speak English to it).
 3. Uses the official `ollama/ollama:latest` image as the final base.
-4. Copies the standalone server + static assets + the compiled `whisper-server` + its model.
+4. Copies the standalone server + static assets + the compiled `whisper-server` + its model, plus the compiled `instrumentation.js` (and the server chunk(s) it depends on) explicitly — Next's standalone output tracing doesn't include these on its own, which silently prevented the scheduler and Telegram bridge from ever starting in the built image (no error anywhere — confirmed live, see instrumentation.ts's own doc comment and the Dockerfile's comment at this COPY step for the full story).
 5. Starts Ollama (`ollama serve`), `whisper-server` (bound to `127.0.0.1` only — internal, never exposed) and the UI (`node server.js`) via `start.sh`.
 6. Also installs `ffmpeg` (audio conversion for voice messages) and `poppler-utils` (`pdftotext`, for reading PDF documents sent to the Telegram bridge) via apt-get in the final image.
 

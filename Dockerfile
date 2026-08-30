@@ -85,6 +85,31 @@ COPY --from=builder /build/ollama-ui/.next/standalone ./
 COPY --from=builder /build/ollama-ui/.next/static ./.next/static
 COPY --from=builder /build/ollama-ui/public ./public
 
+# instrumentation.ts (starts the scheduler and Telegram bridge — see
+# instrumentation.ts's own doc comment) is NOT included by Next's standalone
+# output tracing: it only copies instrumentation.ts's raw *source* into
+# .next/standalone/instrumentation.ts, never the actually-compiled
+# .next/server/instrumentation.js the runtime needs to load it, nor that
+# compiled file's own Turbopack-split runtime chunk(s) under
+# .next/server/chunks/ (build now defaults to Turbopack, which splits
+# instrumentation.js's dependencies into a separate numbered chunk file that
+# isn't traced as a dependency of any page/route, so the standalone copy
+# skips it too). Without this, Next silently swallows the resulting
+# MODULE_NOT_FOUND (see next/dist/server/next-server.js's
+# loadInstrumentationModule) and instrumentation.ts's register() never runs
+# at all in the deployed container — no error, no log line, nothing —
+# meaning the scheduler and Telegram bridge silently never start. Confirmed
+# live: a `getMe`-valid, correctly-configured Telegram bot did genuinely
+# nothing when messaged, and reproduced+fixed locally by running the actual
+# standalone `node server.js` output directly instead of only ever testing
+# via `next dev` (which loads instrumentation differently and never hit
+# this). Copying the whole chunks/ directory (not just the one missing
+# chunk) is deliberate — which chunk(s) instrumentation.js's dependencies
+# land in is a Turbopack build-output implementation detail, not something
+# to hardcode and have silently break again on a Next.js/Turbopack update.
+COPY --from=builder /build/ollama-ui/.next/server/instrumentation.js ./.next/server/instrumentation.js
+COPY --from=builder /build/ollama-ui/.next/server/chunks ./.next/server/chunks
+
 # Copy package.json, pnpm-lock.yaml and pnpm-workspace.yaml (has the
 # dependency "overrides") for dependency management
 COPY --from=builder /build/ollama-ui/package.json ./
