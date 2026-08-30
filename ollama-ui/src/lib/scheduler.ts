@@ -21,6 +21,7 @@ import { upsertMessages } from '@/lib/chat-persistence';
 import { createJob } from '@/lib/generation-jobs';
 import { runGeneration, injectMemories } from '@/lib/generation-runner';
 import { computeNextRunAt } from '@/lib/schedule-time';
+import { getGloballyDisabledToolNames } from '@/lib/tool-settings-server';
 import { resolveOllamaHostServer } from '@/lib/host-resolve-server';
 import { notifyTelegram } from '@/lib/telegram-bridge';
 import { safeUuid } from '@/lib/utils';
@@ -113,9 +114,12 @@ async function runScheduledTask(task: ScheduledTaskRow): Promise<void> {
     // to persist a new memory either way. create_recurring_task is excluded
     // for the same "don't schedule something new while just delivering
     // this one" reasoning as create_reminder.
-    excludeTools: task.recurring
-      ? []
-      : ['create_reminder', 'remember_fact', 'create_recurring_task'],
+    excludeTools: [
+      ...(task.recurring ? [] : ['create_reminder', 'remember_fact', 'create_recurring_task']),
+      // Settings → Tools individual toggles apply here too, not just the
+      // web UI/Telegram — a tool turned off globally stays off everywhere.
+      ...getGloballyDisabledToolNames(),
+    ],
   });
 
   if (task.recurring) {
@@ -130,11 +134,16 @@ async function runScheduledTask(task: ScheduledTaskRow): Promise<void> {
   // Otherwise a scheduled run's only trace is a new session nobody's told
   // about until they happen to open the app — the entire point of a
   // reminder set from Telegram is to still reach you if the browser was
-  // never open. No-ops silently if the Telegram bridge isn't configured.
+  // never open. No-ops silently if the Telegram bridge isn't configured;
+  // Settings → Telegram can also turn this off specifically (on by
+  // default) for someone who wants Telegram for chat but not a push on
+  // every background run.
+  const notifyScheduledTasks =
+    getSetting<{ notifyScheduledTasks: boolean }>('telegram')?.notifyScheduledTasks ?? true;
   const finalContent = getSession(session.id)?.messages.find(
     (m) => m.id === assistantMessage.id,
   )?.content;
-  if (finalContent) {
+  if (finalContent && notifyScheduledTasks) {
     // task.name for a one-off reminder is just a truncated echo of the
     // reminder text itself (see create_reminder's handler in
     // generation-runner.ts) — a fixed "Reminder" label reads better than

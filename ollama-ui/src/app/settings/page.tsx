@@ -2,8 +2,10 @@
 import { ThemeSwitcher } from '@/components/theme-switcher';
 import { useThemeStore } from '@/store/theme';
 import { usePrefsStore } from '@/store/prefs';
-import { useToolsStore } from '@/store/tools';
+import { useToolsStore, useAnyToolEnabled } from '@/store/tools';
+import { TOOL_KEYS, TOOL_LABELS } from '@/lib/tool-settings';
 import { useMemoryStore } from '@/store/memory';
+import { useTelegramSettingsStore } from '@/store/telegram';
 import { useEffect } from 'react';
 import { LocalStorageInfo } from '@/components/local-storage-info';
 import { HostManagerPanel } from '@/components/host-manager-panel';
@@ -21,19 +23,24 @@ export default function SettingsPage() {
   const autoCompactThresholdPct = usePrefsStore((s) => s.autoCompactThresholdPct);
   const setAutoCompactThresholdPct = usePrefsStore((s) => s.setAutoCompactThresholdPct);
   const hydrateTools = useToolsStore((s) => s.hydrate);
-  const toolsEnabled = useToolsStore((s) => s.toolsEnabled);
-  const setToolsEnabled = useToolsStore((s) => s.setToolsEnabled);
+  const toolToggles = useToolsStore((s) => s);
+  const setToolEnabled = useToolsStore((s) => s.setToolEnabled);
+  const anyToolEnabled = useAnyToolEnabled();
   const searxngTemplate = useToolsStore((s) => s.searxngTemplate);
   const setSearxngTemplate = useToolsStore((s) => s.setSearxngTemplate);
   const hydrateMemory = useMemoryStore((s) => s.hydrate);
   const memoryEnabled = useMemoryStore((s) => s.memoryEnabled);
   const setMemoryEnabled = useMemoryStore((s) => s.setMemoryEnabled);
+  const hydrateTelegramSettings = useTelegramSettingsStore((s) => s.hydrate);
+  const notifyScheduledTasks = useTelegramSettingsStore((s) => s.notifyScheduledTasks);
+  const setNotifyScheduledTasks = useTelegramSettingsStore((s) => s.setNotifyScheduledTasks);
 
   useEffect(() => {
     hydratePrefs();
     hydrateTools();
     hydrateMemory();
-  }, [hydratePrefs, hydrateTools, hydrateMemory]);
+    hydrateTelegramSettings();
+  }, [hydratePrefs, hydrateTools, hydrateMemory, hydrateTelegramSettings]);
 
   return (
     <div className="p-6 flex flex-col gap-8 max-w-3xl mx-auto items-center">
@@ -135,23 +142,30 @@ export default function SettingsPage() {
           <div>
             <h2 className="text-lg font-semibold text-white/90 mb-1">Tools</h2>
             <p className="text-xs text-white/50 mb-3">
-              Lets tool-capable models call functions during chat: web search (via SearXNG) and
-              reading the current date/time. Applies to all chats; the selected model must advertise{' '}
-              <code className="text-white/70">tools</code> support (checked automatically) for this
-              to have any effect.
+              Lets tool-capable models call functions during chat, in Telegram, and in scheduled
+              tasks — on by default, turn off individually as needed. The selected model must also
+              advertise <code className="text-white/70">tools</code> support (checked automatically)
+              for any of this to have an effect.
             </p>
-            <label className="flex items-center gap-2 cursor-pointer select-none mb-3">
-              <input
-                type="checkbox"
-                className="accent-cyan-500"
-                checked={toolsEnabled}
-                onChange={(e) => setToolsEnabled(e.target.checked)}
-              />
-              <span className="text-xs text-white/70">
-                Enable tools (web search + current date) for tool-capable models
-              </span>
-            </label>
-            {toolsEnabled && (
+            <div className="flex flex-col gap-2 mb-3">
+              {TOOL_KEYS.map((key) => (
+                <label key={key} className="flex items-start gap-2 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    className="accent-cyan-500 mt-0.5"
+                    checked={toolToggles[key]}
+                    onChange={(e) => setToolEnabled(key, e.target.checked)}
+                  />
+                  <span className="flex flex-col">
+                    <span className="text-xs text-white/70">{TOOL_LABELS[key].title}</span>
+                    <span className="text-[10px] text-white/40">
+                      {TOOL_LABELS[key].description}
+                    </span>
+                  </span>
+                </label>
+              ))}
+            </div>
+            {toolToggles.webSearch && (
               <div className="flex flex-col gap-2 ml-6">
                 <label
                   className="text-[11px] font-medium text-cyan-200/80"
@@ -172,6 +186,12 @@ export default function SettingsPage() {
                   <code>http://localhost:8080</code>).
                 </span>
               </div>
+            )}
+            {!anyToolEnabled && (
+              <p className="text-[10px] text-amber-300/70 mt-1">
+                All tools are off — the assistant can still chat normally, just without calling any
+                of these.
+              </p>
             )}
           </div>
         </section>
@@ -195,6 +215,29 @@ export default function SettingsPage() {
               <span className="text-xs text-white/70">Enable memory globally</span>
             </label>
             <MemoryPanel />
+          </div>
+        </section>
+        <section className="glass-card p-5 flex flex-col gap-4">
+          <div>
+            <h2 className="text-lg font-semibold text-white/90 mb-1">Telegram</h2>
+            <p className="text-xs text-white/50 mb-3">
+              The Telegram bridge itself is set up via environment variables (
+              <code className="text-white/70">TELEGRAM_BOT_TOKEN</code>, not here — see the README).
+              This only controls whether a fired scheduled task or reminder also pushes its result
+              to Telegram, on top of always landing in a new chat session either way. Has no effect
+              if the bridge isn&apos;t configured.
+            </p>
+            <label className="flex items-center gap-2 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                className="accent-sky-500"
+                checked={notifyScheduledTasks}
+                onChange={(e) => setNotifyScheduledTasks(e.target.checked)}
+              />
+              <span className="text-xs text-white/70">
+                Push scheduled task/reminder results to Telegram
+              </span>
+            </label>
           </div>
         </section>
         <section className="glass-card p-5 flex flex-col gap-4">

@@ -5,6 +5,7 @@ import { upsertMessages, persistFinalAssistantMessage } from '@/lib/chat-persist
 import { getSession, getSetting } from '@/lib/db';
 import { runGeneration, injectMemories, type ChatMessageIn } from '@/lib/generation-runner';
 import { scheduleVerificationWarning } from '@/lib/schedule-verify';
+import { getGloballyDisabledToolNames } from '@/lib/tool-settings-server';
 import type { ChatMessage } from '@/store/chat';
 
 export const runtime = 'nodejs';
@@ -105,6 +106,10 @@ export async function POST(req: NextRequest) {
       toolsEnabled,
       memoryEnabled,
       searxngTemplate,
+      // Settings → Tools individual toggles (Telegram/scheduled tasks read
+      // the same list) — resolved server-side, not trusted from the
+      // client, same reasoning as memoryEnabled just above.
+      excludeTools: getGloballyDisabledToolNames(),
       // A model can say "reminder set"/"scheduled that" without ever
       // successfully calling create_reminder or create_recurring_task
       // (observed live via the Telegram bridge, which does a full

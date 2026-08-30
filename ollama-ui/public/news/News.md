@@ -18,6 +18,14 @@ Chronological list of notable changes to Ollama UI.
   - Voice messages: send one and it's transcribed via a local `whisper.cpp` server (OGG/Opus → WAV via `ffmpeg`, then Whisper) and handled exactly like a typed message — same tool-calling, reminders, everything. Opt-in via `WHISPER_HOST`; the combined Docker image now builds and bundles `whisper-server` + a multilingual model automatically, no separate setup needed there. Ollama itself has no speech-to-text support at all, so this is a second, fully local service alongside it, not a hosted API.
   - The bundled `whisper-server`'s CPU requirements are now pinned to a portable baseline (no AVX2/FMA/F16C) instead of ggml's default — those aren't guaranteed on every machine `ghcr.io`'s image gets pulled onto, and the build isn't performance-critical (occasional voice transcription, not the model inference hot path).
   - README now covers setting `TELEGRAM_*`/`WHISPER_HOST` on Docker/Unraid specifically (container environment variables, not `.env.local` — that file is dev-only and was previously the only documented way).
+- **Voice Input in the Web UI**
+  - New Voice button next to Attach in the composer: records with the browser's own microphone (`MediaRecorder`), transcribes via the same local `whisper.cpp` server Telegram voice messages use, and fills the result into the input box for you to review/edit before sending — unlike Telegram, nothing here auto-sends, since there's a visible composer to catch a misheard transcription first.
+  - New `POST /api/transcribe` endpoint backing it; the actual conversion/transcription logic moved into a shared `src/lib/whisper.ts` so the Telegram bridge and this endpoint aren't duplicating it.
+- **Individually Toggleable Tools**
+  - Settings → Tools previously had one master on/off switch; now every tool (web search, current date, weather, calculator, create reminder, create recurring task) has its own toggle, all on by default. Turning one off applies everywhere it could run — web chat, Telegram, and scheduled tasks — not just the page you toggled it from.
+  - Also fixed: the master switch actually defaulted to **off**, so a fresh install's web chat couldn't use any tools until someone found the Settings toggle — confusing since Telegram (which always forced tools on regardless of this setting) worked fine the whole time. Default is now on, consistently, everywhere.
+- **New Settings → Telegram Toggle**
+  - "Push scheduled task/reminder results to Telegram" — on by default, separate from whether the bridge itself is configured. Every background run always lands in a new web UI session either way; this only controls the extra Telegram push, for when the notification volume from frequent tasks gets more than you want without giving up Telegram entirely.
 
 ## 2026-08-28
 

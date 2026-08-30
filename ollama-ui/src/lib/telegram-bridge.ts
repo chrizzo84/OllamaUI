@@ -14,13 +14,14 @@
 // keeps this to one person. An update from a non-matching id is dropped
 // silently — no reply — so an unauthorized prober can't even confirm the bot
 // is listening.
-import { spawn } from 'node:child_process';
 import { createSession, getSession, getSetting, setSetting, updateSession } from '@/lib/db';
 import { upsertMessages } from '@/lib/chat-persistence';
 import { createJob, subscribe } from '@/lib/generation-jobs';
 import { runGeneration, type ChatMessageIn } from '@/lib/generation-runner';
 import { compactMessages } from '@/lib/compact';
 import { SCHEDULE_INTENT_RE, hasAnySuccessfulSchedulingCall } from '@/lib/schedule-verify';
+import { transcribeAudio, getWhisperHost } from '@/lib/whisper';
+import { getGloballyDisabledToolNames } from '@/lib/tool-settings-server';
 import { resolveOllamaHostServer } from '@/lib/host-resolve-server';
 import { safeUuid, deriveSessionTitle } from '@/lib/utils';
 import type { ChatMessage } from '@/store/chat';
@@ -47,8 +48,8 @@ interface BridgeConfig {
   // Optional — base URL of a whisper.cpp `whisper-server` instance (e.g.
   // "http://localhost:8790") for transcribing voice messages. Ollama itself
   // has no speech-to-text model support, so this is a second, separate
-  // local service — see this file's `transcribeVoice` doc comment. Voice
-  // messages are declined with a setup message when unset.
+  // local service — see src/lib/whisper.ts. Voice messages are declined
+  // with a setup message when unset.
   whisperHost: string | undefined;
 }
 
@@ -61,7 +62,7 @@ function getConfig(): BridgeConfig | null {
     allowedUserId,
     model: process.env.TELEGRAM_MODEL?.trim() || undefined,
     visionModel: process.env.TELEGRAM_VISION_MODEL?.trim() || undefined,
-    whisperHost: process.env.WHISPER_HOST?.trim().replace(/\/+$/, '') || undefined,
+    whisperHost: getWhisperHost() ?? undefined,
   };
 }
 
@@ -139,64 +140,6 @@ async function modelSupportsVision(base: string, model: string): Promise<boolean
   // Unknown (lookup failed) is treated as unsupported — safer than silently
   // sending an image to a model that might not be able to use it.
   return (await fetchModelCapabilities(base, model))?.includes('vision') ?? false;
-}
-
-// Telegram voice notes arrive as OGG/Opus; whisper.cpp's server (like most
-// Whisper builds) expects WAV PCM — converted here via `ffmpeg` over
-// stdin/stdout, no temp files. `ffmpeg` needs to be present on the host
-// (bundled alongside whisper-cpp in the combined Docker image; on a plain
-// `next dev` checkout, install both locally to use this — e.g. `brew
-// install ffmpeg whisper-cpp` on macOS).
-function convertOggToWav(oggBytes: Buffer): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    let proc;
-    try {
-      proc = spawn('ffmpeg', ['-i', 'pipe:0', '-ar', '16000', '-ac', '1', '-f', 'wav', 'pipe:1']);
-    } catch (e) {
-      reject(e);
-      return;
-    }
-    const chunks: Buffer[] = [];
-    let stderr = '';
-    proc.stdout.on('data', (c: Buffer) => chunks.push(c));
-    proc.stderr.on('data', (c: Buffer) => {
-      stderr += c.toString();
-    });
-    proc.on('error', reject); // e.g. ffmpeg not installed (ENOENT)
-    proc.on('close', (code) => {
-      if (code !== 0) {
-        reject(new Error(`ffmpeg exited ${code}: ${stderr.slice(-300)}`));
-        return;
-      }
-      resolve(Buffer.concat(chunks));
-    });
-    proc.stdin.write(oggBytes);
-    proc.stdin.end();
-  });
-}
-
-// Posts WAV bytes to a whisper.cpp `whisper-server` instance's `/inference`
-// endpoint (multipart, same as its own examples/curl usage — confirmed live
-// against whisper-cpp 1.9.2) and returns the transcribed text.
-async function transcribeWav(whisperHost: string, wavBytes: Buffer): Promise<string> {
-  const form = new FormData();
-  form.append('file', new Blob([new Uint8Array(wavBytes)], { type: 'audio/wav' }), 'audio.wav');
-  form.append('response_format', 'json');
-  const res = await fetch(`${whisperHost}/inference`, {
-    method: 'POST',
-    body: form,
-    signal: AbortSignal.timeout(60_000),
-  });
-  if (!res.ok) throw new Error(`whisper-server request failed: ${res.status}`);
-  const data = await res.json();
-  const text = typeof data?.text === 'string' ? data.text.trim() : '';
-  if (!text) throw new Error('whisper-server returned empty transcription');
-  return text;
-}
-
-async function transcribeVoice(whisperHost: string, oggBytes: Buffer): Promise<string> {
-  const wav = await convertOggToWav(oggBytes);
-  return transcribeWav(whisperHost, wav);
 }
 
 // Local (server-timezone) date-time with no "Z"/offset suffix — the exact
@@ -511,6 +454,9 @@ async function runTurn(
       toolsEnabled: true,
       memoryEnabled,
       searxngTemplate: null, // server-side default (SEARXNG_HOST env)
+      // Settings → Tools individual toggles apply here too, not just the
+      // web UI — a tool turned off globally stays off in Telegram as well.
+      excludeTools: getGloballyDisabledToolNames(),
     });
   } finally {
     unsubscribe();
@@ -791,7 +737,7 @@ async function pollLoop(config: BridgeConfig): Promise<void> {
         ).catch(() => null);
         try {
           const bytes = await downloadTelegramFileBytes(token, msg.voice.file_id);
-          text = await transcribeVoice(whisperHost, bytes);
+          text = await transcribeAudio(whisperHost, bytes);
         } catch (e) {
           console.error('[telegram-bridge] voice transcription failed:', e);
           if (statusId != null) deleteMessage(token, msg.chat.id, statusId);
