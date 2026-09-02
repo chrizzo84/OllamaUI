@@ -85,30 +85,35 @@ COPY --from=builder /build/ollama-ui/.next/standalone ./
 COPY --from=builder /build/ollama-ui/.next/static ./.next/static
 COPY --from=builder /build/ollama-ui/public ./public
 
-# instrumentation.ts (starts the scheduler and Telegram bridge — see
-# instrumentation.ts's own doc comment) is NOT included by Next's standalone
-# output tracing: it only copies instrumentation.ts's raw *source* into
-# .next/standalone/instrumentation.ts, never the actually-compiled
-# .next/server/instrumentation.js the runtime needs to load it, nor that
-# compiled file's own Turbopack-split runtime chunk(s) under
-# .next/server/chunks/ (build now defaults to Turbopack, which splits
-# instrumentation.js's dependencies into a separate numbered chunk file that
-# isn't traced as a dependency of any page/route, so the standalone copy
-# skips it too). Without this, Next silently swallows the resulting
-# MODULE_NOT_FOUND (see next/dist/server/next-server.js's
-# loadInstrumentationModule) and instrumentation.ts's register() never runs
-# at all in the deployed container — no error, no log line, nothing —
-# meaning the scheduler and Telegram bridge silently never start. Confirmed
-# live: a `getMe`-valid, correctly-configured Telegram bot did genuinely
-# nothing when messaged, and reproduced+fixed locally by running the actual
-# standalone `node server.js` output directly instead of only ever testing
-# via `next dev` (which loads instrumentation differently and never hit
-# this). Copying the whole chunks/ directory (not just the one missing
-# chunk) is deliberate — which chunk(s) instrumentation.js's dependencies
-# land in is a Turbopack build-output implementation detail, not something
-# to hardcode and have silently break again on a Next.js/Turbopack update.
+# src/instrumentation.ts starts the scheduler and Telegram bridge (see its
+# own doc comment). If Next silently fails to load it, register() never runs
+# in the deployed container — no error, no log line, nothing — and both
+# silently never start. That has happened twice now, for two different
+# reasons, and neither showed up in `next dev`:
+#
+#  1. Under Turbopack, standalone output tracing copied instrumentation.ts's
+#     raw *source* but not the compiled .next/server/instrumentation.js, nor
+#     the numbered runtime chunk its dependencies were split into. Confirmed
+#     live by a correctly-configured, getMe-valid Telegram bot doing
+#     genuinely nothing when messaged.
+#  2. Under webpack (which the build now pins — see package.json for why),
+#     instrumentation.ts was not compiled AT ALL, because it sat in the
+#     project root while this project uses a src/ directory. Next documents
+#     that the file must live inside src/ in that case; Turbopack was lenient
+#     about it, webpack is not. Caught by this very COPY failing in CI with
+#     "instrumentation.js: not found" — a loud failure, unlike (1).
+#
+# The explicit COPYs below are kept even though webpack's tracing currently
+# does include these files: they are cheap, and they turn a silent
+# never-starts-in-production regression back into a build failure. Copying
+# the whole chunks/ directory rather than the specific numbered chunks is
+# deliberate — which chunk instrumentation's dependencies land in is a build
+# output detail, not something to hardcode and have break again.
 COPY --from=builder /build/ollama-ui/.next/server/instrumentation.js ./.next/server/instrumentation.js
 COPY --from=builder /build/ollama-ui/.next/server/chunks ./.next/server/chunks
+# Required by the webpack-built instrumentation.js, which loads its chunks
+# through it.
+COPY --from=builder /build/ollama-ui/.next/server/webpack-runtime.js ./.next/server/webpack-runtime.js
 
 # Copy package.json, pnpm-lock.yaml and pnpm-workspace.yaml (has the
 # dependency "overrides") for dependency management

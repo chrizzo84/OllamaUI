@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useChatStore, type ChatMessage } from '@/store/chat';
 import { useToastStore } from '@/store/toast';
@@ -9,6 +9,8 @@ import { useMemoryStore } from '@/store/memory';
 import { useSessionsStore, loadSessionMessages, persistSessionMessages } from '@/store/sessions';
 import { usePrefsStore } from '@/store/prefs';
 import { useColumnChat } from '@/hooks/use-column-chat';
+import { useAttachments } from '@/hooks/use-attachments';
+import { useVoiceInput } from '@/hooks/use-voice-input';
 import { ChatColumn } from './chat-column';
 import { NumCtxControl } from './num-ctx-control';
 import {
@@ -21,6 +23,7 @@ import {
   FoldVertical,
   Download,
   Paperclip,
+  FileText,
   X,
   Eye,
   Mic,
@@ -38,21 +41,6 @@ interface TagsResponse {
 }
 interface ModelShowResponse {
   capabilities?: string[];
-}
-
-// Reads an image file as raw base64 (no `data:...;base64,` prefix) —
-// Ollama's own wire format for a message's `images` field.
-function readImageAsBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = reader.result as string;
-      const comma = result.indexOf(',');
-      resolve(comma === -1 ? result : result.slice(comma + 1));
-    };
-    reader.onerror = () => reject(reader.error ?? new Error('Failed to read file'));
-    reader.readAsDataURL(file);
-  });
 }
 
 async function fetchModels(): Promise<TagsResponse> {
@@ -282,21 +270,17 @@ export function ChatPanel() {
   >(null);
   const [undoTimeoutId, setUndoTimeoutId] = useState<ReturnType<typeof setTimeout> | null>(null);
   const [input, setInput] = useState('');
-  // Attached-but-not-yet-sent images for the next message. base64 is what
-  // actually goes to Ollama; dataUrl is only for the thumbnail preview.
-  const [pendingImages, setPendingImages] = useState<{ base64: string; dataUrl: string }[]>([]);
+  // Everything the composer is currently carrying — images for a vision
+  // model, documents already extracted to text. See use-attachments.ts.
+  const attachments = useAttachments();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  // Voice-to-text via the composer's Mic button — records with the
-  // browser's own MediaRecorder, then POSTs the clip to /api/transcribe
-  // (same whisper.cpp server the Telegram bridge's voice messages use) and
-  // fills the transcribed text into the input for the user to review/edit
-  // before sending, rather than auto-sending it — unlike Telegram, there's
-  // a visible composer here to check a possibly-misheard transcription
-  // against before it goes anywhere.
-  const [recording, setRecording] = useState(false);
-  const [transcribing, setTranscribing] = useState(false);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const recordedChunksRef = useRef<Blob[]>([]);
+  // Push-to-talk transcription; appends to whatever is already typed so a
+  // dictated sentence can be reviewed and edited before it is sent.
+  const voice = useVoiceInput(
+    useCallback((text: string) => {
+      setInput((prev) => (prev.trim() ? `${prev.trim()} ${text}` : text));
+    }, []),
+  );
 
   const sessions = useSessionsStore((s) => s.sessions);
   const activeSessionId = useSessionsStore((s) => s.activeId);
@@ -334,7 +318,6 @@ export function ChatPanel() {
   const activePrompt = activeProfile?.prompt || '';
 
   const toolsEnabled = useAnyToolEnabled();
-  const searxTemplate = useToolsStore((s) => s.searxngTemplate);
   const hydrateTools = useToolsStore((s) => s.hydrate);
   useEffect(() => {
     hydrateTools();
@@ -477,19 +460,29 @@ export function ChatPanel() {
   const containerRef = useRef<HTMLDivElement | null>(null);
 
   async function handleSend() {
-    if (!input.trim()) return;
-    const text = input.trim();
-    const images = pendingImages.map((i) => i.base64);
+    // A document on its own is a valid message — "summarize this" is the
+    // obvious intent, and requiring the user to also type something would
+    // just be ceremony.
+    if (!input.trim() && attachments.documents.length === 0) return;
+    const typed = input.trim();
+    const { images, documents } = attachments.takeAll();
     setInput('');
-    // Sent images stay in the store as base64 (persisted onto the message
-    // itself); the object URLs were only ever needed for this composer's
-    // thumbnail preview, so release them now instead of leaking.
-    pendingImages.forEach((i) => URL.revokeObjectURL(i.dataUrl));
-    setPendingImages([]);
+    /*
+    Document text goes into the message body rather than travelling
+    alongside it: it then shows up in the transcript, gets persisted and
+    compacted like any other content, and needs no special handling in the
+    generation path. Same layout the Telegram bridge produces, so a model
+    meets one convention rather than two.
+    */
+    const documentContext = documents.map((d) => d.context).join('\n\n');
+    const fallbackPrompt =
+      documents.length === 1
+        ? `Summarize this document (${documents[0].name}).`
+        : `Summarize these documents (${documents.map((d) => d.name).join(', ')}).`;
+    const text = documentContext ? `${typed || fallbackPrompt}\n\n${documentContext}` : typed;
     const opts = {
       systemPrompt: activePrompt || undefined,
       toolsEnabled,
-      searxTemplate,
     };
     const jobs = [
       columnA.send(
@@ -510,103 +503,6 @@ export function ChatPanel() {
     await Promise.all(jobs);
   }
 
-  async function handleAttachFiles(files: FileList | null) {
-    if (!files || files.length === 0) return;
-    const imageFiles = Array.from(files).filter((f) => f.type.startsWith('image/'));
-    if (imageFiles.length === 0) {
-      pushToast({ type: 'error', message: 'Only image files can be attached.' });
-      return;
-    }
-    try {
-      const read = await Promise.all(
-        imageFiles.map(async (file) => ({
-          base64: await readImageAsBase64(file),
-          dataUrl: URL.createObjectURL(file),
-        })),
-      );
-      setPendingImages((prev) => [...prev, ...read]);
-    } catch {
-      pushToast({ type: 'error', message: 'Could not read one or more images.' });
-    }
-  }
-
-  function removePendingImage(index: number) {
-    setPendingImages((prev) => {
-      const removed = prev[index];
-      if (removed) URL.revokeObjectURL(removed.dataUrl);
-      return prev.filter((_, i) => i !== index);
-    });
-  }
-
-  async function handleRecordedAudio(blob: Blob) {
-    setTranscribing(true);
-    try {
-      const form = new FormData();
-      form.append('audio', blob, 'voice.webm');
-      const res = await fetch('/api/transcribe', { method: 'POST', body: form });
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(
-          json.code === 'NO_WHISPER'
-            ? 'Voice transcription isn’t set up — WHISPER_HOST is not configured on the server.'
-            : json.error || 'Transcription failed',
-        );
-      }
-      const text = typeof json.text === 'string' ? json.text.trim() : '';
-      if (!text) {
-        pushToast({ type: 'error', message: 'No speech detected in that recording.' });
-        return;
-      }
-      setInput((prev) => (prev.trim() ? `${prev.trim()} ${text}` : text));
-    } catch (e) {
-      pushToast({
-        type: 'error',
-        message: e instanceof Error ? e.message : 'Transcription failed',
-      });
-    } finally {
-      setTranscribing(false);
-    }
-  }
-
-  async function startRecording() {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-        ? 'audio/webm;codecs=opus'
-        : undefined; // let the browser pick (e.g. Safari has no webm/opus)
-      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
-      recordedChunksRef.current = [];
-      recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) recordedChunksRef.current.push(e.data);
-      };
-      recorder.onstop = () => {
-        // Release the mic indicator/hardware immediately, don't wait on
-        // the (possibly slow) transcription request below.
-        stream.getTracks().forEach((t) => t.stop());
-        void handleRecordedAudio(
-          new Blob(recordedChunksRef.current, { type: recorder.mimeType || 'audio/webm' }),
-        );
-      };
-      recorder.start();
-      mediaRecorderRef.current = recorder;
-      setRecording(true);
-    } catch {
-      pushToast({
-        type: 'error',
-        message: 'Could not access the microphone — check browser/site permissions.',
-      });
-    }
-  }
-
-  function toggleRecording() {
-    if (recording) {
-      mediaRecorderRef.current?.stop();
-      setRecording(false);
-    } else {
-      void startRecording();
-    }
-  }
-
   function handleStop() {
     columnA.stop();
     if (compareMode) columnB.stop();
@@ -614,6 +510,15 @@ export function ChatPanel() {
 
   const pushToast = useToastStore((s) => s.push);
 
+  /*
+  Regenerate keeps the answer it replaces.
+
+  It used to delete the last exchange and re-ask, so a reply you preferred
+  was gone the moment you were curious whether another try would be better —
+  which made the button quietly risky to press. The new reply is now stored
+  as an alternative to the old one, and the message carries a "‹ 2 / 2 ›"
+  switcher to move between them.
+  */
   function regenerateColumn(column: 'A' | 'B') {
     const col = column === 'A' ? columnA : columnB;
     const numCtx = column === 'A' ? numCtxA : numCtxB;
@@ -623,16 +528,18 @@ export function ChatPanel() {
     const last = msgs[msgs.length - 1];
     const secondLast = msgs[msgs.length - 2];
     if (!last || last.role !== 'assistant' || !secondLast || secondLast.role !== 'user') return;
-    const lastUserText = secondLast.content;
-    const remaining = sessionMessages.filter((m) => m.id !== last.id && m.id !== secondLast.id);
-    setSessionMessages(activeSessionId, remaining);
-    persistSessionMessages(activeSessionId, remaining);
-    void col.send(lastUserText, {
+    // Only the previous reply leaves the visible thread; it stays in the
+    // database as a sibling of the one about to be generated.
+    setSessionMessages(
+      activeSessionId,
+      sessionMessages.filter((m) => m.id !== last.id),
+    );
+    void col.send(secondLast.content, {
       systemPrompt: activePrompt || undefined,
       toolsEnabled,
-      searxTemplate,
       think: hasCapability(caps, 'thinking'),
       numCtx,
+      reuseUserMessageId: secondLast.id,
     });
   }
 
@@ -645,10 +552,16 @@ export function ChatPanel() {
     downloadTextFile(`${slugifyFilename(title)}.md`, md, 'text/markdown');
   }
 
-  // Editing a user message only makes sense as "rewind to here and continue
-  // differently" — so it removes this message and everything after it in
-  // this column (there's no branching/version history), then resends the
-  // edited text exactly like a fresh send().
+  /*
+  Editing a user message means "ask this differently from here on" — the
+  rewritten question and everything that follows it become an alternative
+  branch, with the original still reachable through the switcher on that
+  message. It used to delete the original and everything after it outright.
+
+  The messages below the edit point leave the *visible* thread (they answered
+  a question that is no longer the one being asked) but stay in the database
+  on the branch they belong to.
+  */
   function editMessage(column: 'A' | 'B', userMessageId: string, newText: string) {
     const col = column === 'A' ? columnA : columnB;
     const numCtx = column === 'A' ? numCtxA : numCtxB;
@@ -657,31 +570,83 @@ export function ChatPanel() {
     const colMessages = sessionMessages.filter((m) => (m.column ?? 'A') === column);
     const idx = colMessages.findIndex((m) => m.id === userMessageId);
     if (idx === -1 || colMessages[idx].role !== 'user') return;
-    const toRemove = new Set(colMessages.slice(idx).map((m) => m.id));
-    const remaining = sessionMessages.filter((m) => !toRemove.has(m.id));
-    setSessionMessages(activeSessionId, remaining);
-    persistSessionMessages(activeSessionId, remaining);
+    const hidden = new Set(colMessages.slice(idx).map((m) => m.id));
+    setSessionMessages(
+      activeSessionId,
+      sessionMessages.filter((m) => !hidden.has(m.id)),
+    );
     void col.send(newText, {
       systemPrompt: activePrompt || undefined,
       toolsEnabled,
-      searxTemplate,
       think: hasCapability(caps, 'thinking'),
       numCtx,
+      siblingOfMessageId: userMessageId,
     });
   }
 
-  function deletePair(column: 'A' | 'B', assistantMessageId: string) {
+  /*
+  Moves the conversation onto a different alternative at one point — the
+  other side of regenerate/edit keeping what they replace. The server owns
+  which branch is active (it is a property of the conversation, not of this
+  tab), so it answers with the resulting history and the store is replaced
+  with that rather than reconstructed locally.
+  */
+  async function switchVariant(messageId: string) {
+    if (!activeSessionId) return;
+    try {
+      const res = await fetch(`/api/sessions/${activeSessionId}/branch`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messageId }),
+      });
+      if (!res.ok) {
+        pushToast({ type: 'error', message: 'Could not switch to that version.' });
+        return;
+      }
+      const data = await res.json();
+      setSessionMessages(
+        activeSessionId,
+        (data.messages as ChatMessage[]).map((m) => ({ ...m, sessionId: activeSessionId })),
+      );
+    } catch {
+      pushToast({ type: 'error', message: 'Could not switch to that version.' });
+    }
+  }
+
+  /*
+  Deletes a question/answer pair and everything after it on that branch.
+
+  This goes through a dedicated endpoint rather than PATCHing the remaining
+  history back: the browser only holds the branch it is showing, so a
+  full-history write would silently take every other branch in the session
+  with it. The server answers with the history that is left.
+  */
+  async function deletePair(column: 'A' | 'B', assistantMessageId: string) {
     if (!activeSessionId) return;
     const colMessages = sessionMessages.filter((m) => (m.column ?? 'A') === column);
     const idx = colMessages.findIndex((m) => m.id === assistantMessageId);
     if (idx === -1) return;
-    const toRemove = new Set([assistantMessageId]);
+    // Delete from the question, so the pair goes together rather than
+    // leaving an orphaned question with no answer.
     const prev = colMessages[idx - 1];
-    if (prev && prev.role === 'user') toRemove.add(prev.id);
-    const next = sessionMessages.filter((m) => !toRemove.has(m.id));
-    setSessionMessages(activeSessionId, next);
-    persistSessionMessages(activeSessionId, next);
-    pushToast({ type: 'info', message: 'Message pair deleted' });
+    const from = prev && prev.role === 'user' ? prev.id : assistantMessageId;
+    try {
+      const res = await fetch(`/api/sessions/${activeSessionId}/messages/${from}`, {
+        method: 'DELETE',
+      });
+      if (!res.ok) {
+        pushToast({ type: 'error', message: 'Could not delete those messages.' });
+        return;
+      }
+      const data = await res.json();
+      setSessionMessages(
+        activeSessionId,
+        (data.messages as ChatMessage[]).map((m) => ({ ...m, sessionId: activeSessionId })),
+      );
+      pushToast({ type: 'info', message: 'Message pair deleted' });
+    } catch {
+      pushToast({ type: 'error', message: 'Could not delete those messages.' });
+    }
   }
 
   const [compacting, setCompacting] = useState(false);
@@ -961,6 +926,7 @@ export function ChatPanel() {
             onRegenerate={() => regenerateColumn('A')}
             onDeletePair={(id) => deletePair('A', id)}
             onEditMessage={(id, text) => editMessage('A', id, text)}
+            onSwitchVariant={switchVariant}
           />
           {compareMode && (
             <ChatColumn
@@ -973,6 +939,7 @@ export function ChatPanel() {
               onRegenerate={() => regenerateColumn('B')}
               onDeletePair={(id) => deletePair('B', id)}
               onEditMessage={(id, text) => editMessage('B', id, text)}
+              onSwitchVariant={switchVariant}
             />
           )}
         </div>
@@ -1061,9 +1028,9 @@ export function ChatPanel() {
               )}
             </div>
           )}
-          {pendingImages.length > 0 && (
+          {attachments.images.length > 0 && (
             <div className="flex flex-wrap gap-2">
-              {pendingImages.map((img, idx) => (
+              {attachments.images.map((img, idx) => (
                 <div key={idx} className="relative group/thumb">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
@@ -1073,7 +1040,7 @@ export function ChatPanel() {
                   />
                   <button
                     type="button"
-                    onClick={() => removePendingImage(idx)}
+                    onClick={() => attachments.removeImage(idx)}
                     title="Remove image"
                     className="absolute -right-1.5 -top-1.5 h-4 w-4 grid place-items-center rounded-full bg-black/80 border border-white/20 text-white/70 opacity-0 group-hover/thumb:opacity-100 hover:text-white transition"
                   >
@@ -1083,7 +1050,31 @@ export function ChatPanel() {
               ))}
             </div>
           )}
-          {pendingImages.length > 0 && !canAttachImages && (
+          {attachments.documents.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {attachments.documents.map((doc, idx) => (
+                <div
+                  key={idx}
+                  className="group/doc flex items-center gap-2 rounded-lg border border-white/15 bg-white/5 px-2.5 py-1.5"
+                >
+                  <FileText className="h-3.5 w-3.5 shrink-0 text-white/50" aria-hidden />
+                  <span className="max-w-[16rem] truncate text-xs text-white/80">{doc.name}</span>
+                  <span className="text-[10px] text-white/35">
+                    {doc.characters.toLocaleString()} chars
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => attachments.removeDocument(idx)}
+                    title="Remove document"
+                    className="text-white/40 transition hover:text-white"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          {attachments.images.length > 0 && !canAttachImages && (
             <div className="text-[11px] text-amber-300/80 flex items-center gap-1.5">
               <TriangleAlert className="h-3 w-3 shrink-0" />
               The selected model doesn&apos;t advertise vision support — it may ignore the attached
@@ -1093,11 +1084,15 @@ export function ChatPanel() {
           <input
             ref={fileInputRef}
             type="file"
-            accept="image/*"
+            // Images for vision models, plus the document types
+            // src/lib/document-extract.ts can actually read. Deliberately
+            // not "*/*": offering a file that will certainly be rejected
+            // server-side is worse than not offering it.
+            accept="image/*,.pdf,.txt,.md,.markdown,.csv,.tsv,.json,.jsonl,.log,.yml,.yaml,.xml,.html,.htm,.css,.js,.mjs,.jsx,.ts,.tsx,.py,.rb,.go,.rs,.java,.kt,.c,.cc,.cpp,.h,.hpp,.sh,.bash,.sql,.toml,.ini,.env"
             multiple
             className="hidden"
             onChange={(e) => {
-              void handleAttachFiles(e.target.files);
+              void attachments.attach(e.target.files);
               e.target.value = '';
             }}
           />
@@ -1109,28 +1104,30 @@ export function ChatPanel() {
             className="min-h-[72px] rounded-xl border border-white/10 bg-black/25 px-3.5 py-2.5 text-sm text-white placeholder:text-white/25 transition-colors focus:outline-none focus:border-[rgb(var(--accent-glow)/0.5)] focus:ring-2 focus:ring-[rgb(var(--accent-glow)/0.3)]"
           />
           <div className="flex gap-2">
-            {canAttachImages && (
-              <Button
-                onClick={() => fileInputRef.current?.click()}
-                size="sm"
-                variant="outline"
-                title="Attach image(s)"
-              >
-                <span className="inline-flex items-center gap-1.5">
-                  <Paperclip className="h-3.5 w-3.5" /> Attach
-                </span>
-              </Button>
-            )}
+            {/* Always available: even a model with no vision support can be
+                asked about a PDF or a source file, since documents go in as
+                text. */}
             <Button
-              onClick={toggleRecording}
+              onClick={() => fileInputRef.current?.click()}
               size="sm"
-              variant={recording ? 'danger' : 'outline'}
-              disabled={transcribing}
-              loading={transcribing}
-              title={recording ? 'Stop recording' : 'Record a voice message'}
+              variant="outline"
+              loading={attachments.extracting}
+              title={canAttachImages ? 'Attach image(s) or a document' : 'Attach a document'}
             >
               <span className="inline-flex items-center gap-1.5">
-                <Mic className="h-3.5 w-3.5" /> {recording ? 'Stop' : 'Voice'}
+                <Paperclip className="h-3.5 w-3.5" /> Attach
+              </span>
+            </Button>
+            <Button
+              onClick={voice.toggleRecording}
+              size="sm"
+              variant={voice.recording ? 'danger' : 'outline'}
+              disabled={voice.transcribing}
+              loading={voice.transcribing}
+              title={voice.recording ? 'Stop recording' : 'Record a voice message'}
+            >
+              <span className="inline-flex items-center gap-1.5">
+                <Mic className="h-3.5 w-3.5" /> {voice.recording ? 'Stop' : 'Voice'}
               </span>
             </Button>
             <Button

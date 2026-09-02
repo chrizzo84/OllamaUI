@@ -64,3 +64,7 @@ Thumbs.db
 ollama-ui/data/app.db
 ollama-ui/data/app.db-shm
 ollama-ui/data/app.db-wal
+# Uploaded files (images attached to chats) — user content, same as the DB.
+ollama-ui/data/uploads/
+# Automatic database snapshots (see README §5c).
+ollama-ui/data/backups/

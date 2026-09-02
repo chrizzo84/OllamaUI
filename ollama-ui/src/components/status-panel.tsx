@@ -32,9 +32,18 @@ interface TelegramStatus {
   };
 }
 
+interface BackupStatus {
+  enabled: boolean;
+  directory: string;
+  count: number;
+  newestAt: number | null;
+  newestBytes: number | null;
+}
+
 interface StatusResponse {
   ollama: ServiceStatus;
   whisper: ServiceStatus;
+  backups?: BackupStatus;
   telegram: TelegramStatus;
   checkedAt: number;
 }
@@ -47,6 +56,16 @@ const DOT: Record<Level, string> = {
   error: 'bg-red-400 shadow-[0_0_6px_rgba(248,113,113,0.8)]',
   off: 'bg-white/25',
 };
+
+// A snapshot older than this is worth flagging: the periodic one runs daily,
+// so three days of silence means it is not actually running.
+const STALE_BACKUP_MS = 3 * 24 * 60 * 60 * 1000;
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
 
 function formatAgo(ts: number | null): string {
   if (!ts) return 'never';
@@ -92,6 +111,34 @@ export function StatusPanel() {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  /*
+  Backups are their own row because the failure that matters here is silence:
+  a read-only volume means no snapshot is ever written, and nothing else in
+  the app would ever say so.
+  */
+  const backups = data?.backups;
+  const backupLevel: Level = !backups
+    ? 'off'
+    : !backups.enabled
+      ? 'off'
+      : backups.count === 0
+        ? 'warn'
+        : // Measured against the server's own check time, which is already in
+          // the response — the snapshot was written by that clock, and
+          // reading Date.now() during render is impure anyway.
+          backups.newestAt && (data?.checkedAt ?? 0) - backups.newestAt > STALE_BACKUP_MS
+          ? 'warn'
+          : 'ok';
+  const backupDetail = !backups
+    ? ''
+    : !backups.enabled
+      ? 'OLLAMA_UI_BACKUP_DISABLED=1 — no snapshots are being taken.'
+      : backups.count === 0
+        ? `No snapshots yet in ${backups.directory} — one is taken on the first start of a new day.`
+        : `${backups.count} snapshot${backups.count === 1 ? '' : 's'}, newest ${formatAgo(
+            backups.newestAt,
+          )}${backups.newestBytes ? ` (${formatBytes(backups.newestBytes)})` : ''} in ${backups.directory}`;
 
   const refreshButton = (
     <button
@@ -168,6 +215,7 @@ export function StatusPanel() {
         <Row level={ollamaLevel} title="Ollama" detail={ollamaDetail} />
         <Row level={whisperLevel} title="Whisper (voice)" detail={whisperDetail} />
         <Row level={telegramLevel} title="Telegram bridge" detail={telegramDetail} />
+        <Row level={backupLevel} title="Database backups" detail={backupDetail} />
       </div>
     </div>
   );

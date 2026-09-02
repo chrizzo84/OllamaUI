@@ -16,12 +16,16 @@ import {
   getSession,
   getSetting,
   type ScheduledTaskRow,
+  getMessage,
 } from '@/lib/db';
 import { upsertMessages } from '@/lib/chat-persistence';
 import { createJob } from '@/lib/generation-jobs';
 import { runGeneration, injectMemories } from '@/lib/generation-runner';
 import { computeNextRunAt } from '@/lib/schedule-time';
-import { getGloballyDisabledToolNames } from '@/lib/tool-settings-server';
+import {
+  getGloballyDisabledToolNames,
+  getEffectiveSearxngTemplate,
+} from '@/lib/tool-settings-server';
 import { resolveOllamaHostServer } from '@/lib/host-resolve-server';
 import { notifyTelegram } from '@/lib/telegram-bridge';
 import { safeUuid } from '@/lib/utils';
@@ -102,7 +106,7 @@ async function runScheduledTask(task: ScheduledTaskRow): Promise<void> {
     options: undefined,
     toolsEnabled: task.toolsEnabled,
     memoryEnabled,
-    searxngTemplate: null, // server-side default (SEARXNG_HOST env), no per-request header here
+    searxngTemplate: getEffectiveSearxngTemplate(),
     // A one-off reminder is itself the fired create_reminder call — hide it
     // during delivery so the model can't mistake "deliver this now" for
     // "schedule this again" (see buildTools' doc comment in
@@ -140,9 +144,7 @@ async function runScheduledTask(task: ScheduledTaskRow): Promise<void> {
   // every background run.
   const notifyScheduledTasks =
     getSetting<{ notifyScheduledTasks: boolean }>('telegram')?.notifyScheduledTasks ?? true;
-  const finalContent = getSession(session.id)?.messages.find(
-    (m) => m.id === assistantMessage.id,
-  )?.content;
+  const finalContent = getMessage(assistantMessage.id)?.content;
   if (finalContent && notifyScheduledTasks) {
     // task.name for a one-off reminder is just a truncated echo of the
     // reminder text itself (see create_reminder's handler in

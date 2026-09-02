@@ -30,7 +30,7 @@ export async function POST(req: NextRequest) {
   const model = (body.model as string | undefined)?.trim();
   if (!model) return new Response(JSON.stringify({ error: 'Missing model' }), { status: 400 });
 
-  const base = resolveOllamaHostServer(req);
+  const base = resolveOllamaHostServer();
   if (!base) {
     return new Response(JSON.stringify({ error: 'No host configured', code: 'NO_HOST' }), {
       status: 428,

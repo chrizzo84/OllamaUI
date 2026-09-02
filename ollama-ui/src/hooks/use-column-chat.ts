@@ -1,7 +1,7 @@
 'use client';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useChatStore, ChatMessage, TraceEvent } from '@/store/chat';
-import { useSessionsStore, persistSessionMessages } from '@/store/sessions';
+import { useSessionsStore } from '@/store/sessions';
 import { consumeChatStream, readErrorMessage } from '@/lib/chat-stream';
 import { deriveSessionTitle, isThinkingModel, safeUuid } from '@/lib/utils';
 import { useGenerationStore, getGenerationEntry, generationKey } from '@/store/generation';
@@ -9,13 +9,24 @@ import { useGenerationStore, getGenerationEntry, generationKey } from '@/store/g
 export interface SendOptions {
   systemPrompt?: string;
   toolsEnabled: boolean;
-  searxTemplate: string;
   // Whether this model should think/reason. Pass the real value from the
   // model's reported capabilities when known; falls back to a name-based
   // guess (isThinkingModel) only when capabilities weren't available.
   think?: boolean;
   // Context window override (num_ctx) for this model; undefined = server default.
   numCtx?: number;
+  /*
+  Branch targets, passed straight through to /api/chat. Absent for an
+  ordinary send.
+
+  reuseUserMessageId — regenerate: answer the question that is already
+                       stored instead of asking it again, so the previous
+                       reply stays alongside the new one as an alternative.
+  siblingOfMessageId — edit: the rewritten question becomes an alternative
+                       to the original rather than deleting it.
+  */
+  reuseUserMessageId?: string;
+  siblingOfMessageId?: string;
 }
 
 export interface ColumnChat {
@@ -288,10 +299,15 @@ export function useColumnChat(column: 'A' | 'B', sessionId: string | null): Colu
             jobId: null,
             queuedAhead: null,
           });
-          const sessionMessages = useChatStore
-            .getState()
-            .messages.filter((m) => m.sessionId === sessionId);
-          persistSessionMessages(sessionId, sessionMessages);
+          /*
+          No client-side write here: /api/chat persists the user message and
+          the assistant placeholder before it contacts Ollama, and the
+          generation job writes the final content itself when it finishes —
+          that is what lets a reply survive a closed tab. Sending the whole
+          history back from the browser would also destroy branches, since
+          a full-history write is "this is the conversation now" and the tab
+          only holds the currently-visible path.
+          */
         }
       }
     })();
@@ -324,14 +340,22 @@ export function useColumnChat(column: 'A' | 'B', sessionId: string | null): Colu
       // sessions/columns, which is the whole point: those run independently.
       if (getGenerationEntry(genKey).loading) return;
       const columnTag = column === 'A' ? undefined : column;
-      const userId = append({
-        role: 'user',
-        content: text.trim(),
-        model,
-        sessionId,
-        column: columnTag,
-        ...(images?.length ? { images } : {}),
-      });
+      /*
+      Regenerating reuses the question that is already on screen and in the
+      database rather than appending a second copy of it — the user asked
+      once. Only the reply is new, and it hangs off that same question,
+      which is what makes the previous reply its sibling.
+      */
+      const userId =
+        opts.reuseUserMessageId ??
+        append({
+          role: 'user',
+          content: text.trim(),
+          model,
+          sessionId,
+          column: columnTag,
+          ...(images?.length ? { images } : {}),
+        });
       const assistantId = append({
         role: 'assistant',
         content: '',
@@ -359,14 +383,12 @@ export function useColumnChat(column: 'A' | 'B', sessionId: string | null): Colu
       handledIdsRef.current.add(assistantId);
       // Read the exact stored objects back (rather than reconstructing them)
       // so the server persists byte-identical createdAt/model/column to what
-      // the client store already holds.
+      // the client store already holds. They travel in the /api/chat body,
+      // which is what writes them — see the note above about why the
+      // browser no longer PATCHes the whole history alongside it.
       const storeMessages = useChatStore.getState().messages;
       const userMessage = storeMessages.find((m) => m.id === userId);
       const assistantMessage = storeMessages.find((m) => m.id === assistantId);
-      persistSessionMessages(
-        sessionId,
-        storeMessages.filter((m) => m.sessionId === sessionId),
-      );
 
       const loaded = await isModelLoaded(model);
       if (!loaded) {
@@ -400,18 +422,19 @@ export function useColumnChat(column: 'A' | 'B', sessionId: string | null): Colu
           ...(opts.numCtx ? { options: { num_ctx: opts.numCtx } } : {}),
           sessionId,
           column,
-          userMessage,
+          // Omitted when regenerating: the question is already stored, and
+          // resending it would just rewrite the row it is already in.
+          ...(opts.reuseUserMessageId ? {} : { userMessage }),
           assistantMessage,
+          // Where the new reply attaches. Regenerating names the question
+          // it answers; editing names the message it is an alternative to.
+          ...(opts.reuseUserMessageId ? { parentMessageId: opts.reuseUserMessageId } : {}),
+          ...(opts.siblingOfMessageId ? { siblingOfMessageId: opts.siblingOfMessageId } : {}),
         };
         setLastPayload(payload);
         const res = await fetch('/api/chat', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(opts.toolsEnabled && opts.searxTemplate.trim()
-              ? { 'x-searxng-endpoint-template': opts.searxTemplate.trim() }
-              : {}),
-          },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
           signal: abortController.signal,
         });
@@ -439,11 +462,6 @@ export function useColumnChat(column: 'A' | 'B', sessionId: string | null): Colu
           jobId: null,
           queuedAhead: null,
         });
-
-        const sessionMessages = useChatStore
-          .getState()
-          .messages.filter((m) => m.sessionId === sessionId);
-        persistSessionMessages(sessionId, sessionMessages);
       }
     },
     [model, column, sessionId, append, update, attachToJobStream, patchEntry],

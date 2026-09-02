@@ -6,17 +6,23 @@
 // persistence. (Session titles are derived client-side from the first
 // message — see deriveSessionTitle in src/lib/utils.ts — so they don't need
 // any server-side completion step.)
-import { getSession, updateSession } from '@/lib/db';
+//
+// Both operations used to read the whole conversation, splice it in memory
+// and write it back as one JSON blob. They are now single-row writes against
+// the `messages` table (see src/lib/db.ts), so appending a message costs the
+// same whether the conversation has three messages or three hundred.
+import { upsertMessages as dbUpsertMessages, patchMessage, type UpsertOptions } from '@/lib/db';
 import type { ChatMessage, ChatStats, TraceEvent } from '@/store/chat';
 
 // Returns false if the session doesn't exist (caller should respond 404).
-export function upsertMessages(sessionId: string, incoming: ChatMessage[]): boolean {
-  const session = getSession(sessionId);
-  if (!session) return false;
-  const byId = new Map(session.messages.map((m) => [m.id, m]));
-  for (const m of incoming) byId.set(m.id, m);
-  updateSession(sessionId, { messages: [...byId.values()] });
-  return true;
+// `options` carries the branch target for a regenerate or an edit — see
+// UpsertOptions in src/lib/db.ts.
+export function upsertMessages(
+  sessionId: string,
+  incoming: ChatMessage[],
+  options?: UpsertOptions,
+): boolean {
+  return dbUpsertMessages(sessionId, incoming, options);
 }
 
 export function persistFinalAssistantMessage(
@@ -24,12 +30,5 @@ export function persistFinalAssistantMessage(
   assistantId: string,
   patch: { content: string; trace?: TraceEvent[]; stats?: ChatStats },
 ): void {
-  const session = getSession(sessionId);
-  if (!session) return; // session deleted mid-flight — nothing to persist into
-  const messages = session.messages.map((m) =>
-    m.id === assistantId
-      ? { ...m, content: patch.content, trace: patch.trace, stats: patch.stats }
-      : m,
-  );
-  updateSession(sessionId, { messages });
+  patchMessage(assistantId, patch);
 }

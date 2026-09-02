@@ -15,14 +15,12 @@
 // silently — no reply — so an unauthorized prober can't even confirm the bot
 // is listening.
 import {
-  createSession,
   getSession,
   getSetting,
-  setSetting,
   updateSession,
-  listScheduledTasks,
-  deleteScheduledTask,
-  markSessionTelegram,
+  listMessages,
+  replaceMessages,
+  getMessage,
 } from '@/lib/db';
 import { upsertMessages, persistFinalAssistantMessage } from '@/lib/chat-persistence';
 import { createJob, subscribe } from '@/lib/generation-jobs';
@@ -31,25 +29,47 @@ import { compactMessages } from '@/lib/compact';
 import {
   SCHEDULE_INTENT_RE,
   hasAnySuccessfulSchedulingCall,
-  formatScheduledTasksList,
   listVerificationOverride,
 } from '@/lib/schedule-verify';
 import { transcribeAudio, getWhisperHost } from '@/lib/whisper';
-import { extractDocumentText } from '@/lib/document-extract';
-import { getGloballyDisabledToolNames } from '@/lib/tool-settings-server';
+import { extractDocumentText, formatDocumentContext } from '@/lib/document-extract';
+import {
+  getGloballyDisabledToolNames,
+  getEffectiveSearxngTemplate,
+} from '@/lib/tool-settings-server';
 import { resolveOllamaHostServer } from '@/lib/host-resolve-server';
 import { safeUuid, deriveSessionTitle } from '@/lib/utils';
 import type { ChatMessage } from '@/store/chat';
-import telegramifyMarkdown from 'telegramify-markdown';
+// The Telegram wire protocol lives in telegram-api.ts and the slash commands
+// in telegram-commands.ts — this file is the conversation engine and the
+// polling loop that drives it.
+import {
+  callTelegram,
+  deleteMessage,
+  downloadTelegramFileBytes,
+  downloadTelegramPhoto,
+  editStatusMessage,
+  sendMessage,
+  sendStatusMessage,
+  startTypingIndicator,
+  type TelegramUpdate,
+} from '@/lib/telegram-api';
+import {
+  BOT_COMMANDS,
+  buildTasksKeyboard,
+  handleCallbackQuery,
+  handleCommand,
+} from '@/lib/telegram-commands';
+import { getOrCreateSessionId } from '@/lib/telegram-session';
+import { modelSupportsVision } from '@/lib/model-capabilities';
 
-const API_BASE = 'https://api.telegram.org';
-// One persistent conversation for the single allowed user, so context
-// carries across messages the same way a normal chat session does. Keyed in
-// `settings` (not a module-level variable) so it survives a server restart.
-const SESSION_SETTING_KEY = 'telegram_session_id';
-// Telegram's real cap is 4096 UTF-16 code units; leave headroom rather than
-// cut it exactly at the limit.
-const TELEGRAM_MESSAGE_LIMIT = 3500;
+// A timestamp the model can read as "now" — local time, no timezone suffix,
+// so a relative instruction ("in 2 minutes") resolves against the same clock
+// the scheduler runs on.
+function toLocalIsoLike(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
 
 interface BridgeConfig {
   token: string;
@@ -81,211 +101,6 @@ function getConfig(): BridgeConfig | null {
   };
 }
 
-interface TelegramUpdate {
-  update_id: number;
-  message?: {
-    from?: { id: number };
-    chat: { id: number };
-    text?: string;
-    caption?: string;
-    date?: number; // Unix seconds — when Telegram received the message
-    // Telegram sends one entry per available resolution, smallest first —
-    // the last one is the largest/highest-quality available.
-    photo?: { file_id: string }[];
-    voice?: { file_id: string };
-    document?: { file_id: string; file_name?: string; mime_type?: string };
-  };
-  // Sent when the user taps an inline-keyboard button (e.g. a /tasks
-  // "❌ Cancel" button) — a distinct update type, not a `message`.
-  callback_query?: {
-    id: string;
-    from?: { id: number };
-    message?: { chat: { id: number }; message_id: number };
-    data?: string;
-  };
-}
-
-async function callTelegram<T>(
-  token: string,
-  method: string,
-  body: Record<string, unknown>,
-): Promise<T> {
-  const res = await fetch(`${API_BASE}/bot${token}/${method}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(method === 'getUpdates' ? 35_000 : 15_000),
-  });
-  const data = await res.json();
-  if (!data.ok) throw new Error(`Telegram ${method} failed: ${data.description ?? res.status}`);
-  return data.result as T;
-}
-
-async function downloadTelegramFileBytes(token: string, fileId: string): Promise<Buffer> {
-  const file = await callTelegram<{ file_path: string }>(token, 'getFile', { file_id: fileId });
-  const res = await fetch(`${API_BASE}/file/bot${token}/${file.file_path}`, {
-    signal: AbortSignal.timeout(30_000),
-  });
-  if (!res.ok) throw new Error(`Telegram file download failed: ${res.status}`);
-  return Buffer.from(await res.arrayBuffer());
-}
-
-// Returns raw base64 (no `data:...;base64,` prefix), matching
-// ChatMessage.images' documented shape (src/store/chat.ts) — the same
-// format the web UI's Attach button produces, so both paths feed the model
-// identically.
-async function downloadTelegramPhoto(token: string, fileId: string): Promise<string> {
-  return (await downloadTelegramFileBytes(token, fileId)).toString('base64');
-}
-
-// Ollama's /api/show reports a model's declared capabilities (same field
-// the web UI reads via POST /api/models/show to decide whether to show the
-// vision badge/Attach button) — called directly against `base` here since
-// this already runs server-side, no need to bounce through that route.
-// Returns null (not []) when the lookup itself failed, so callers can tell
-// "no capabilities" from "couldn't ask".
-async function fetchModelCapabilities(base: string, model: string): Promise<string[] | null> {
-  try {
-    const res = await fetch(`${base}/api/show`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model }),
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (!res.ok) return null;
-    const data = await res.json();
-    return Array.isArray(data?.capabilities) ? data.capabilities : null;
-  } catch {
-    return null;
-  }
-}
-
-async function modelSupportsVision(base: string, model: string): Promise<boolean> {
-  // Unknown (lookup failed) is treated as unsupported — safer than silently
-  // sending an image to a model that might not be able to use it.
-  return (await fetchModelCapabilities(base, model))?.includes('vision') ?? false;
-}
-
-// Local (server-timezone) date-time with no "Z"/offset suffix — the exact
-// format create_reminder's whenISO expects (see its tool description in
-// generation-runner.ts) and what get_current_date's own `date`/`time`
-// fields already represent, so the model reasons in one consistent
-// timezone instead of mixing this with a UTC timestamp.
-function toLocalIsoLike(d: Date): string {
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-}
-
-function chunkText(text: string): string[] {
-  const chunks: string[] = [];
-  for (let i = 0; i < text.length; i += TELEGRAM_MESSAGE_LIMIT) {
-    chunks.push(text.slice(i, i + TELEGRAM_MESSAGE_LIMIT));
-  }
-  return chunks.length ? chunks : ['(empty reply)'];
-}
-
-// Reply markup (inline keyboard) is only attached to the final chunk — a
-// multi-chunk reply is rare in practice (only a very long list/reply hits
-// it), and Telegram only needs the buttons on one message anyway.
-type InlineKeyboard = { inline_keyboard: { text: string; callback_data: string }[][] };
-
-async function sendChunks(
-  token: string,
-  chatId: number,
-  chunks: string[],
-  parseMode: 'MarkdownV2' | undefined,
-  replyMarkup: InlineKeyboard | undefined,
-): Promise<number | undefined> {
-  let lastId: number | undefined;
-  for (let i = 0; i < chunks.length; i++) {
-    const result = await callTelegram<{ message_id: number }>(token, 'sendMessage', {
-      chat_id: chatId,
-      text: chunks[i],
-      ...(parseMode ? { parse_mode: parseMode } : {}),
-      ...(i === chunks.length - 1 && replyMarkup ? { reply_markup: replyMarkup } : {}),
-    });
-    lastId = result.message_id;
-  }
-  return lastId;
-}
-
-// Sends `text` as Telegram MarkdownV2 (so the model's normal **bold**/`code`/
-// lists render instead of showing as raw asterisks/backticks). LLM markdown
-// isn't guaranteed to be valid MarkdownV2 — telegramify-markdown handles the
-// escaping, but a chunk boundary can still split an entity in two on a long,
-// multi-chunk reply — so on any failure this resends the whole thing as
-// plain text instead. A rare double-send (some chunks already went out
-// formatted) is the accepted cost of never silently dropping a reply.
-// Returns the last sent message's id (used to attach/edit an inline
-// keyboard later), or undefined if replyMarkup wasn't requested.
-async function sendMessage(
-  token: string,
-  chatId: number,
-  text: string,
-  replyMarkup?: InlineKeyboard,
-): Promise<number | undefined> {
-  try {
-    return await sendChunks(
-      token,
-      chatId,
-      chunkText(telegramifyMarkdown(text, 'escape')),
-      'MarkdownV2',
-      replyMarkup,
-    );
-  } catch {
-    return await sendChunks(token, chatId, chunkText(text), undefined, replyMarkup);
-  }
-}
-
-async function sendStatusMessage(token: string, chatId: number, text: string): Promise<number> {
-  try {
-    const result = await callTelegram<{ message_id: number }>(token, 'sendMessage', {
-      chat_id: chatId,
-      text: telegramifyMarkdown(text, 'escape'),
-      parse_mode: 'MarkdownV2',
-    });
-    return result.message_id;
-  } catch {
-    const result = await callTelegram<{ message_id: number }>(token, 'sendMessage', {
-      chat_id: chatId,
-      text,
-    });
-    return result.message_id;
-  }
-}
-
-// Best-effort — a status update racing the final delete, Telegram rejecting
-// a no-op edit ("message is not modified"), or a formatting edge case are
-// all fine to silently drop, this is cosmetic only.
-function editStatusMessage(token: string, chatId: number, messageId: number, text: string): void {
-  void callTelegram(token, 'editMessageText', {
-    chat_id: chatId,
-    message_id: messageId,
-    text: telegramifyMarkdown(text, 'escape'),
-    parse_mode: 'MarkdownV2',
-  }).catch(() => {});
-}
-
-function deleteMessage(token: string, chatId: number, messageId: number): void {
-  void callTelegram(token, 'deleteMessage', { chat_id: chatId, message_id: messageId }).catch(
-    () => {},
-  );
-}
-
-// Telegram's "X is typing…" indicator lasts ~5s per call and needs
-// refreshing while a reply is still being generated — this is purely a
-// native, wordless heads-up; the status message below carries the actual
-// detail (which tool is running, whether the model is queued).
-function startTypingIndicator(token: string, chatId: number): () => void {
-  const tick = () =>
-    void callTelegram(token, 'sendChatAction', { chat_id: chatId, action: 'typing' }).catch(
-      () => {},
-    );
-  tick();
-  const interval = setInterval(tick, 4000);
-  return () => clearInterval(interval);
-}
-
 // Turns a tool call's arguments into a short, human-readable hint for the
 // status message — best-effort across tools with different argument shapes
 // rather than a per-tool switch, since new tools shouldn't need to touch this.
@@ -294,202 +109,6 @@ function summarizeToolCall(name: string, args: unknown): string {
   const hint = a.query ?? a.location ?? a.expression ?? a.message ?? a.fact ?? '';
   const hintText = typeof hint === 'string' && hint.trim() ? `: "${hint.trim().slice(0, 60)}"` : '';
   return `🔧 Using \`${name}\`${hintText}…`;
-}
-
-// Starts (or, via /new, restarts) the one persistent Telegram conversation —
-// the old session isn't deleted, just abandoned, so it stays visible in the
-// web UI's session list if you ever want to look back at it.
-function createNewTelegramSession(): string {
-  const row = createSession({ profileId: null, isTelegram: true });
-  updateSession(row.id, { title: 'Telegram' });
-  setSetting(SESSION_SETTING_KEY, row.id);
-  return row.id;
-}
-
-function getOrCreateSessionId(): string {
-  const existingId = getSetting<string>(SESSION_SETTING_KEY);
-  const existing = existingId ? getSession(existingId) : undefined;
-  if (existing) {
-    // Backfills a session created before the is_telegram column existed
-    // (e.g. an already-running conversation from before this feature
-    // shipped) — a no-op once it's already flagged.
-    if (!existing.isTelegram) markSessionTelegram(existing.id);
-    return existing.id;
-  }
-  return createNewTelegramSession();
-}
-
-// Registered with Telegram once at startup (setMyCommands) so they show up
-// as autocomplete in the client, in addition to just working when typed.
-const BOT_COMMANDS: { command: string; description: string }[] = [
-  { command: 'info', description: 'Show the current model and what it can do' },
-  { command: 'tasks', description: 'List scheduled tasks and pending reminders' },
-  { command: 'new', description: 'Start a fresh conversation (clears context)' },
-  { command: 'help', description: 'List available commands' },
-];
-
-const HELP_TEXT = [
-  '**Commands:**',
-  '/info — show the current model and what it can do',
-  '/tasks — list scheduled tasks and pending reminders (tap ❌ to cancel one)',
-  '/new — start a fresh conversation (clears context)',
-  '/help — show this message',
-  '',
-  'Anything else is sent straight to the model — text, a photo/voice message, or a document (PDF/text/code — attach it to summarize or ask about it). Ask it to cancel a reminder or task by name too.',
-].join('\n');
-
-// One "❌ Cancel" button per task, callback_data `cancel_task:<id>` — well
-// under Telegram's 64-byte limit (safeUuid ids are 36 chars). undefined (no
-// keyboard at all) when nothing's scheduled, so an empty list doesn't show a
-// dangling empty button row.
-function buildTasksKeyboard(): InlineKeyboard | undefined {
-  const tasks = listScheduledTasks();
-  if (tasks.length === 0) return undefined;
-  return {
-    inline_keyboard: tasks.map((t) => [
-      { text: `❌ Cancel: ${t.name.slice(0, 40)}`, callback_data: `cancel_task:${t.id}` },
-    ]),
-  };
-}
-
-async function handleTasksCommand(token: string, chatId: number): Promise<void> {
-  await sendMessage(
-    token,
-    chatId,
-    `${formatScheduledTasksList()}\n\nTap Cancel below, or just ask to cancel one by name.`,
-    buildTasksKeyboard(),
-  );
-}
-
-// Re-renders an already-sent tasks-list message in place after a button
-// tap — same list/keyboard-building logic as handleTasksCommand, just an
-// edit instead of a new message so the chat doesn't fill up with one
-// message per cancellation. Explicitly clears reply_markup to `[]` when
-// nothing's left scheduled, since omitting the field entirely would leave
-// Telegram showing the old (now-stale) buttons.
-async function editTasksMessage(token: string, chatId: number, messageId: number): Promise<void> {
-  const text = formatScheduledTasksList();
-  const replyMarkup = buildTasksKeyboard() ?? { inline_keyboard: [] };
-  try {
-    await callTelegram(token, 'editMessageText', {
-      chat_id: chatId,
-      message_id: messageId,
-      text: telegramifyMarkdown(text, 'escape'),
-      parse_mode: 'MarkdownV2',
-      reply_markup: replyMarkup,
-    });
-  } catch {
-    await callTelegram(token, 'editMessageText', {
-      chat_id: chatId,
-      message_id: messageId,
-      text,
-      reply_markup: replyMarkup,
-    }).catch(() => {});
-  }
-}
-
-// A button tap only ever carries `cancel_task:<id>` here (the only kind this
-// bridge sends) — cancels immediately (no LLM round-trip, same reasoning as
-// the slash commands: instant and deterministic) and answers the callback so
-// Telegram clears the button's loading spinner, with a short toast either
-// way (confirming, or noting it was already gone — e.g. two taps in a row,
-// or it fired on its own between the list being shown and the tap).
-async function handleCallbackQuery(
-  token: string,
-  chatId: number,
-  messageId: number,
-  callbackQueryId: string,
-  data: string,
-): Promise<void> {
-  if (!data.startsWith('cancel_task:')) {
-    await callTelegram(token, 'answerCallbackQuery', { callback_query_id: callbackQueryId }).catch(
-      () => {},
-    );
-    return;
-  }
-  const id = data.slice('cancel_task:'.length);
-  const task = listScheduledTasks().find((t) => t.id === id);
-  await callTelegram(token, 'answerCallbackQuery', {
-    callback_query_id: callbackQueryId,
-    text: task ? `Cancelled "${task.name}".` : 'Already gone.',
-  }).catch(() => {});
-  if (task) deleteScheduledTask(id);
-  await editTasksMessage(token, chatId, messageId);
-}
-
-async function handleInfoCommand(
-  token: string,
-  chatId: number,
-  model: string | undefined,
-): Promise<void> {
-  if (!model) {
-    await sendMessage(token, chatId, '[Setup] TELEGRAM_MODEL is not set in .env.local.');
-    return;
-  }
-  const base = resolveOllamaHostServer();
-  if (!base) {
-    await sendMessage(token, chatId, '[Error] No Ollama host configured.');
-    return;
-  }
-  const caps = await fetchModelCapabilities(base, model);
-  await sendMessage(
-    token,
-    chatId,
-    [
-      `**Model:** \`${model}\``,
-      caps
-        ? `**Capabilities:** ${caps.join(', ')}`
-        : '**Capabilities:** unknown (could not reach Ollama)',
-    ].join('\n'),
-  );
-}
-
-// Returns true if `text` was a recognized (or at least slash-shaped) command
-// and has been fully handled — the caller should not fall through to the
-// model in that case. Slash commands never reach the LLM: instant and
-// deterministic instead of an unreliable, wasted generation call (this is
-// also what fixes /start previously getting sent through as normal chat
-// text and getting an oddly literal reply).
-async function handleCommand(
-  token: string,
-  chatId: number,
-  model: string | undefined,
-  text: string,
-): Promise<boolean> {
-  if (!text.startsWith('/')) return false;
-  // Telegram sometimes appends "@BotUsername" to a command (default client
-  // behavior in some contexts even in private chats).
-  const command = text.trim().split(/\s+/)[0].slice(1).split('@')[0].toLowerCase();
-
-  switch (command) {
-    case 'start':
-      await sendMessage(
-        token,
-        chatId,
-        `👋 Connected. Send a message to chat, or a photo/voice message/document. Commands: /info, /tasks, /new, /help.`,
-      );
-      return true;
-    case 'info':
-      await handleInfoCommand(token, chatId, model);
-      return true;
-    case 'tasks':
-      await handleTasksCommand(token, chatId);
-      return true;
-    case 'new':
-      createNewTelegramSession();
-      await sendMessage(
-        token,
-        chatId,
-        "🆕 Started a fresh conversation — previous context cleared (still viewable in the web UI's session list).",
-      );
-      return true;
-    case 'help':
-      await sendMessage(token, chatId, HELP_TEXT);
-      return true;
-    default:
-      await sendMessage(token, chatId, `Unknown command: /${command}. Try /help.`);
-      return true;
-  }
 }
 
 // The Telegram session is a single, indefinitely long-lived conversation
@@ -512,7 +131,7 @@ async function maybeCompact(
   token: string,
   chatId: number,
 ): Promise<ChatMessage[]> {
-  const messages = getSession(sessionId)?.messages ?? [];
+  const messages = listMessages(sessionId);
   if (messages.length <= COMPACT_TRIGGER_COUNT) return messages;
 
   const older = messages.slice(0, -KEEP_RECENT);
@@ -533,7 +152,7 @@ async function maybeCompact(
       sessionId,
     };
     const next = [summaryMessage, ...recent];
-    updateSession(sessionId, { messages: next });
+    replaceMessages(sessionId, next);
     await sendMessage(
       token,
       chatId,
@@ -598,7 +217,7 @@ async function runTurn(
       options: undefined,
       toolsEnabled: true,
       memoryEnabled,
-      searxngTemplate: null, // server-side default (SEARXNG_HOST env)
+      searxngTemplate: getEffectiveSearxngTemplate(),
       // Settings → Tools individual toggles apply here too, not just the
       // web UI — a tool turned off globally stays off in Telegram as well.
       excludeTools: getGloballyDisabledToolNames(),
@@ -606,7 +225,7 @@ async function runTurn(
   } finally {
     unsubscribe();
   }
-  return getSession(sessionId)?.messages.find((m) => m.id === assistantMessageId);
+  return getMessage(assistantMessageId);
 }
 
 async function handleMessage(
@@ -627,6 +246,9 @@ async function handleMessage(
   const priorTurns = await maybeCompact(sessionId, model, base, token, chatId);
   const isFirstMessage = priorTurns.length === 0;
 
+  // A photo from Telegram is passed through as base64 and stored as an
+  // attachment by the persistence layer, exactly like a browser upload — so
+  // the web UI can display it too, from the same URL.
   const userMessage: ChatMessage = {
     id: safeUuid(),
     role: 'user',
@@ -1027,7 +649,7 @@ async function pollLoop(config: BridgeConfig): Promise<void> {
           // The user's own caption (if any) becomes the actual instruction;
           // the document content follows as context, same "instruction
           // first, material after" shape a person would naturally use.
-          text = `${msg.caption?.trim() || `Summarize this document (${fileName}).`}\n\n[Document: ${fileName}]\n${content}`;
+          text = `${msg.caption?.trim() || `Summarize this document (${fileName}).`}\n\n${formatDocumentContext(fileName, content)}`;
         } catch (e) {
           console.error('[telegram-bridge] document extraction failed:', e);
           if (statusId != null) deleteMessage(token, msg.chat.id, statusId);

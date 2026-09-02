@@ -5,7 +5,10 @@ import { upsertMessages, persistFinalAssistantMessage } from '@/lib/chat-persist
 import { getSession, getSetting } from '@/lib/db';
 import { runGeneration, injectMemories, type ChatMessageIn } from '@/lib/generation-runner';
 import { scheduleVerificationWarning, listVerificationOverride } from '@/lib/schedule-verify';
-import { getGloballyDisabledToolNames } from '@/lib/tool-settings-server';
+import {
+  getEffectiveSearxngTemplate,
+  getGloballyDisabledToolNames,
+} from '@/lib/tool-settings-server';
 import type { ChatMessage } from '@/store/chat';
 
 export const runtime = 'nodejs';
@@ -16,7 +19,8 @@ POST body: {
   toolsEnabled?: boolean, sessionId: string, column?: 'A'|'B',
   userMessage: ChatMessage, assistantMessage: ChatMessage,
 }
-Header: x-searxng-endpoint-template (optional, forwarded to the web_search tool)
+The SearXNG endpoint for web_search comes from the stored Settings -> Tools
+value (tool-settings-server.ts), never from a request header.
 
 Starts a server-side generation job (src/lib/generation-jobs.ts) that runs
 independently of this HTTP connection, then returns a ReadableStream that
@@ -38,11 +42,23 @@ export async function POST(req: NextRequest) {
     const think = body.think === true; // only enable if client explicitly requests it
     const options = typeof body.options === 'object' && body.options ? body.options : undefined;
     const toolsEnabled = body.toolsEnabled === true;
-    const searxngTemplate = req.headers.get('x-searxng-endpoint-template');
+    const searxngTemplate = getEffectiveSearxngTemplate();
     const sessionId = (body.sessionId as string | undefined)?.trim();
     const column: 'A' | 'B' = body.column === 'B' ? 'B' : 'A';
     const userMessage = body.userMessage as ChatMessage | undefined;
     const assistantMessage = body.assistantMessage as ChatMessage | undefined;
+    /*
+    Branch targets, both optional and mutually exclusive in practice:
+      parentMessageId    — regenerate: hang the new reply off the question
+                           that prompted it, leaving the old reply as a sibling.
+      siblingOfMessageId — edit: the rewritten question becomes an alternative
+                           to the original rather than replacing it.
+    Absent for an ordinary send, which just appends to the end of the thread.
+    */
+    const parentMessageId =
+      typeof body.parentMessageId === 'string' ? body.parentMessageId : undefined;
+    const siblingOfMessageId =
+      typeof body.siblingOfMessageId === 'string' ? body.siblingOfMessageId : undefined;
 
     if (!model) {
       return new Response(JSON.stringify({ error: 'Missing model' }), { status: 400 });
@@ -65,7 +81,7 @@ export async function POST(req: NextRequest) {
       sessionForMemory.memoryEnabled ??
       getSetting<{ memoryEnabled: boolean }>('memory')?.memoryEnabled ??
       true;
-    const base = resolveOllamaHostServer(req);
+    const base = resolveOllamaHostServer();
     if (!base) {
       return new Response(JSON.stringify({ error: 'No host configured', code: 'NO_HOST' }), {
         status: 428,
@@ -77,8 +93,11 @@ export async function POST(req: NextRequest) {
     // touching Ollama at all — this is what makes closing the tab safe even
     // immediately after hitting send, not just mid-stream. Previously this
     // was a client-side, unawaited PATCH that a fast tab-close could lose.
+    // Any images the browser attached ride along as base64 on the user
+    // message; the persistence layer turns them into stored attachments (see
+    // resolveAttachments in src/lib/db.ts) so nothing here has to.
     const toUpsert = userMessage?.id ? [userMessage, assistantMessage] : [assistantMessage];
-    const ok = upsertMessages(sessionId, toUpsert);
+    const ok = upsertMessages(sessionId, toUpsert, { parentMessageId, siblingOfMessageId });
     if (!ok) {
       return new Response(JSON.stringify({ error: 'Session not found' }), { status: 404 });
     }

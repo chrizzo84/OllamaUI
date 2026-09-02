@@ -4,8 +4,9 @@
 // Telegram bot that silently does nothing (wrong env var, a bot token
 // rotated in Telegram but not updated in the deployed container, ...) gave
 // no visible signal anywhere before this existed.
-import { checkOllama, checkWhisper } from '@/lib/status-checks';
+import { checkOllama, checkWhisper, checkBackups } from '@/lib/status-checks';
 import { getTelegramDiagnostics } from '@/lib/telegram-bridge';
+import { isAuthEnabled } from '@/lib/auth';
 
 export const runtime = 'nodejs';
 
@@ -15,5 +16,15 @@ export async function GET() {
     checkWhisper(),
     getTelegramDiagnostics(),
   ]);
-  return Response.json({ ollama, whisper, telegram, checkedAt: Date.now() });
+  // Whether the password gate is on — the Settings page uses this to decide
+  // whether to show a sign-out button and to warn when the instance is
+  // reachable by anyone. Never exposes the password itself.
+  return Response.json({
+    ollama,
+    whisper,
+    telegram,
+    auth: { enabled: isAuthEnabled() },
+    backups: checkBackups(),
+    checkedAt: Date.now(),
+  });
 }

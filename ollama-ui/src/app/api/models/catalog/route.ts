@@ -24,7 +24,10 @@ interface CatalogModel {
   tags_count?: number | null;
   variants?: CatalogVariant[];
 }
-interface CatalogFile { scraped_at: string; models: CatalogModel[] }
+interface CatalogFile {
+  scraped_at: string;
+  models: CatalogModel[];
+}
 
 function filterAndLimit(models: CatalogModel[], q?: string | null, limit?: number | null) {
   let out = models;

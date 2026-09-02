@@ -8,7 +8,7 @@ export const runtime = 'nodejs';
 
 export async function GET(req: NextRequest) {
   try {
-    const base = resolveOllamaHostServer(req);
+    const base = resolveOllamaHostServer();
     if (!base) {
       return new Response(JSON.stringify({ error: 'No host configured', code: 'NO_HOST' }), {
         status: 428,

@@ -28,6 +28,8 @@ import {
   Wrench,
   Pencil,
   X,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import { ChatMessage, TraceEvent } from '@/store/chat';
 import { useToastStore } from '@/store/toast';
@@ -36,6 +38,72 @@ import {
   parsePseudoToolCall,
   renderPseudoToolCallAsMarkdown,
 } from '@/lib/pseudo-tool-call';
+
+/*
+Image sources for a message, in the order they were attached.
+
+Persisted messages carry attachment ids and are served from
+/api/attachments/<id>, so a conversation with screenshots in it no longer
+ships megabytes of base64 on every load. The inline base64 branch is the
+optimistic message the composer just created locally, before the server has
+written the file and handed back an id.
+*/
+// A message as the server hands it over: plus the sibling info that drives
+// the version switcher, present only where alternatives actually exist.
+export type ChatMessageWithVariants = ChatMessage & {
+  variants?: { index: number; total: number; ids: string[] };
+};
+
+/*
+The "‹ 2 / 3 ›" control shown on a message that has alternatives — the other
+half of regenerate and edit no longer throwing the previous version away.
+Renders nothing when there is only one version, so an ordinary conversation
+looks exactly as it did.
+*/
+function VariantSwitcher({
+  variants,
+  onSwitch,
+  disabled,
+}: {
+  variants: { index: number; total: number; ids: string[] };
+  onSwitch: (messageId: string) => void;
+  disabled?: boolean;
+}) {
+  const go = (delta: number) => {
+    const next = variants.ids[variants.index + delta];
+    if (next) onSwitch(next);
+  };
+  return (
+    <div className="inline-flex items-center gap-0.5 rounded-md border border-white/10 bg-white/5 px-1 py-0.5 text-[10px] text-white/50">
+      <button
+        type="button"
+        onClick={() => go(-1)}
+        disabled={disabled || variants.index === 0}
+        title="Previous version"
+        className="px-1 transition hover:text-white disabled:opacity-30 disabled:hover:text-white/50"
+      >
+        <ChevronLeft className="h-3 w-3" />
+      </button>
+      <span className="tabular-nums" title="This message has other versions">
+        {variants.index + 1} / {variants.total}
+      </span>
+      <button
+        type="button"
+        onClick={() => go(1)}
+        disabled={disabled || variants.index === variants.total - 1}
+        title="Next version"
+        className="px-1 transition hover:text-white disabled:opacity-30 disabled:hover:text-white/50"
+      >
+        <ChevronRight className="h-3 w-3" />
+      </button>
+    </div>
+  );
+}
+
+function messageImageSources(m: ChatMessage): string[] {
+  if (m.attachments?.length) return m.attachments.map((id) => `/api/attachments/${id}`);
+  return (m.images ?? []).map((b64) => `data:image/png;base64,${b64}`);
+}
 
 // Shown instead of the raw, ugly tag soup while a model streams an
 // unsupported pseudo tool-call (see lib/pseudo-tool-call.ts) — ticks so it's
@@ -110,9 +178,11 @@ interface ChatColumnProps {
   emptyLabel?: string;
   onRegenerate?: () => void; // only offered for the last assistant message
   onDeletePair?: (assistantMessageId: string) => void;
-  // Editing a user message truncates everything after it and resends the
-  // edited text — see editMessage in chat-panel.tsx.
+  // Editing a user message branches: the rewritten text becomes an
+  // alternative to the original — see editMessage in chat-panel.tsx.
   onEditMessage?: (userMessageId: string, newText: string) => void;
+  // Show a different alternative at this point in the conversation.
+  onSwitchVariant?: (messageId: string) => void;
 }
 
 function ThinkingLine({
@@ -301,6 +371,7 @@ interface MessageBubbleProps {
   onRegenerate?: () => void;
   onDeletePair?: (assistantMessageId: string) => void;
   onEditMessage?: (userMessageId: string, newText: string) => void;
+  onSwitchVariant?: (messageId: string) => void;
 }
 
 // One message row. Memoized so that, while a reply streams in, only the
@@ -323,7 +394,11 @@ const MessageBubble = memo(function MessageBubble({
   onRegenerate,
   onDeletePair,
   onEditMessage,
+  onSwitchVariant,
 }: MessageBubbleProps) {
+  // Sibling info travels on the message, put there by the server (see
+  // listMessagesWithVariants in src/lib/db.ts).
+  const variants = (m as ChatMessageWithVariants).variants;
   const [editing, setEditing] = useState(false);
   const [editText, setEditText] = useState('');
   // Decouples markdown re-parsing from the raw per-token update rate: React
@@ -454,13 +529,13 @@ const MessageBubble = memo(function MessageBubble({
           </div>
         ) : (
           <div className="flex flex-col gap-2">
-            {!!m.images?.length && (
+            {!!messageImageSources(m).length && (
               <div className="flex flex-wrap gap-2">
-                {m.images.map((img, idx) => (
+                {messageImageSources(m).map((src, idx) => (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
                     key={idx}
-                    src={`data:image/png;base64,${img}`}
+                    src={src}
                     alt=""
                     className="max-h-40 rounded-lg border border-white/15 object-contain"
                   />
@@ -598,6 +673,9 @@ const MessageBubble = memo(function MessageBubble({
               <Trash2 className="h-3 w-3" />
             </button>
           )}
+          {onSwitchVariant && variants && variants.total > 1 && (
+            <VariantSwitcher variants={variants} onSwitch={onSwitchVariant} disabled={columnBusy} />
+          )}
         </div>
       )}
     </div>
@@ -614,6 +692,7 @@ export function ChatColumn({
   onRegenerate,
   onDeletePair,
   onEditMessage,
+  onSwitchVariant,
 }: ChatColumnProps) {
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -699,6 +778,7 @@ export function ChatColumn({
           onToggle={toggle}
           onRegenerate={onRegenerate}
           onDeletePair={onDeletePair}
+          onSwitchVariant={onSwitchVariant}
           onEditMessage={onEditMessage}
         />
       ))}
