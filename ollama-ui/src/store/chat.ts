@@ -31,10 +31,24 @@ export interface ChatMessage {
   createdAt: number;
   model?: string;
   sessionId?: string;
-  // Raw base64 image data (no `data:...;base64,` prefix), matching Ollama's
-  // own `images` field on a chat message — attached by the user, vision
-  // models read them directly. Only ever set on user messages.
+  /*
+  Raw base64 image data (no `data:...;base64,` prefix), matching Ollama's
+  own `images` field on a chat message — attached by the user, vision models
+  read them directly. Only ever set on user messages.
+
+  TRANSIENT: this is the wire format on the way *in* (browser -> /api/chat)
+  and on the way *out* to Ollama, never what gets stored. The server writes
+  the bytes to the attachment store and persists ids in `attachments`
+  instead — keeping megabytes of base64 out of every message read. A message
+  loaded back from the database therefore has `attachments`, not `images`.
+  */
   images?: string[];
+  /*
+  Attachment ids (see data/uploads and the `attachments` table) for files on
+  this message. Rendered via /api/attachments/<id>, and re-hydrated into
+  base64 `images` only at the moment a request goes to Ollama.
+  */
+  attachments?: string[];
 }
 
 interface ChatState {

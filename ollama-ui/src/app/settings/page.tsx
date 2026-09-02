@@ -11,6 +11,8 @@ import { LocalStorageInfo } from '@/components/local-storage-info';
 import { HostManagerPanel } from '@/components/host-manager-panel';
 import { MemoryPanel } from '@/components/memory-panel';
 import { StatusPanel } from '@/components/status-panel';
+import { AuthPanel } from '@/components/auth-panel';
+import { McpPanel } from '@/components/mcp-panel';
 
 export default function SettingsPage() {
   const theme = useThemeStore((s) => s.theme);
@@ -63,6 +65,24 @@ export default function SettingsPage() {
               signal anywhere.
             </p>
             <StatusPanel />
+          </div>
+        </section>
+        <section className="glass-card p-5 flex flex-col gap-4">
+          <div>
+            <h2 className="text-lg font-semibold text-white/90 mb-1">MCP Servers</h2>
+            <p className="text-xs text-white/50 mb-3">
+              Connect Model Context Protocol servers to give the assistant tools beyond the built-in
+              set — without changing any code. Their tools appear alongside the built-in ones in
+              every chat, in Telegram and in scheduled tasks.
+            </p>
+            <McpPanel />
+          </div>
+        </section>
+        <section className="glass-card p-5 flex flex-col gap-4">
+          <div>
+            <h2 className="text-lg font-semibold text-white/90 mb-1">Access</h2>
+            <p className="text-xs text-white/50 mb-3">Who can reach this instance.</p>
+            <AuthPanel />
           </div>
         </section>
         <section className="glass-card p-5 flex flex-col gap-4">

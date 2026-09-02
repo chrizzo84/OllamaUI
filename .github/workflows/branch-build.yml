@@ -34,6 +34,11 @@ jobs:
           pnpm lint
           pnpm typecheck
 
+      - name: Unit tests
+        run: |
+          cd ollama-ui
+          pnpm test
+
       - name: Build Next.js app
         run: |
           cd ollama-ui

@@ -1,12 +1,15 @@
 import { NextRequest } from 'next/server';
 import { z } from 'zod';
-import { listSessions, createSession } from '@/lib/db';
+import { listSessions, createSession, messageCountsBySession } from '@/lib/db';
 
 const createSchema = z.object({
   profileId: z.string().nullable().optional(),
 });
 
 export async function GET() {
+  // One grouped COUNT instead of deserializing every conversation just to
+  // read its length — see messageCountsBySession in src/lib/db.ts.
+  const counts = messageCountsBySession();
   const rows = listSessions().map((r) => ({
     id: r.id,
     title: r.title,
@@ -17,7 +20,7 @@ export async function GET() {
     compareMode: r.compareMode,
     memoryEnabled: r.memoryEnabled,
     isTelegram: r.isTelegram,
-    messageCount: r.messages.length,
+    messageCount: counts.get(r.id) ?? 0,
     updatedAt: r.updated_at,
   }));
   return Response.json({ items: rows });
@@ -38,7 +41,7 @@ export async function POST(req: NextRequest) {
     compareMode: row.compareMode,
     memoryEnabled: row.memoryEnabled,
     isTelegram: row.isTelegram,
-    messages: row.messages,
+    messages: [],
     updatedAt: row.updated_at,
   });
 }

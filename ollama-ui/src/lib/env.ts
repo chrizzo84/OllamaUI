@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import type { NextRequest } from 'next/server';
 
 // Default host (legacy fallback). Will only be used if explicitly requested via getDefaultOllamaHost().
 const DEFAULT_FALLBACK = 'http://192.168.188.57:11434';
@@ -16,14 +15,4 @@ export function getDefaultOllamaHost(): string {
 export function validateHost(host: string): string | null {
   const parsed = hostSchema.safeParse(host.trim());
   return parsed.success ? parsed.data : null;
-}
-
-// Edge resolver no longer supports cookie fallback; header only.
-export function resolveOllamaHost(req?: NextRequest): string | null {
-  const header = req?.headers.get('x-ollama-host');
-  if (header) {
-    const v = validateHost(header);
-    if (v) return v;
-  }
-  return null;
 }
