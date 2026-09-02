@@ -40,13 +40,22 @@ function tokenize(expr: string): Token[] {
   return tokens;
 }
 
-// Recursive-descent parser, standard precedence: ^ (right-assoc) > unary +/-
-// > * / % > + -. Grammar:
+// Recursive-descent parser, standard precedence: ^ (right-assoc) binds
+// TIGHTER than unary +/-, which binds tighter than * / %, then + -. Grammar:
 //   addSub  := mulDiv (('+'|'-') mulDiv)*
-//   mulDiv  := power (('*'|'/'|'%') power)*
-//   power   := unary ('^' power)?
-//   unary   := ('-'|'+') unary | primary
+//   mulDiv  := unary (('*'|'/'|'%') unary)*
+//   unary   := ('-'|'+') unary | power
+//   power   := primary ('^' unary)?
 //   primary := number | '(' addSub ')'
+//
+// The unary/power nesting order matters and used to be inverted (`power`
+// parsed a full `unary` as its base), which made `-2^2` evaluate to 4
+// instead of -4: the minus was absorbed into the base before exponentiation
+// instead of applying to its result. Every calculator and maths convention
+// reads -2^2 as -(2^2), and a *silently* wrong number is the worst possible
+// failure for a tool whose entire purpose is to stop the model doing
+// arithmetic in its head. Having `power` recurse into `unary` on its
+// right-hand side keeps both `2^-3` and right-associative `2^3^2` working.
 export function evaluateExpression(expr: string): number {
   if (expr.length > MAX_EXPRESSION_LENGTH) {
     throw new Error(`Expression too long (max ${MAX_EXPRESSION_LENGTH} characters)`);
@@ -84,24 +93,27 @@ export function evaluateExpression(expr: string): number {
       pos++;
       return parseUnary();
     }
-    return parsePrimary();
+    return parsePower();
   }
 
   function parsePower(): number {
-    const base = parseUnary();
+    const base = parsePrimary();
     if (isOp(peek(), '^')) {
       pos++;
-      return Math.pow(base, parsePower()); // right-associative
+      // Right-hand side goes through parseUnary, not parsePower, so both
+      // `2^-3` (unary minus in the exponent) and `2^3^2` (right-associative
+      // chaining, via parseUnary falling through to parsePower) work.
+      return Math.pow(base, parseUnary());
     }
     return base;
   }
 
   function parseMulDiv(): number {
-    let v = parsePower();
+    let v = parseUnary();
     while (isOp(peek(), '*', '/', '%')) {
       const op = (peek() as { type: 'op'; value: string }).value;
       pos++;
-      const rhs = parsePower();
+      const rhs = parseUnary();
       if (op === '*') v *= rhs;
       else if (op === '/') {
         if (rhs === 0) throw new Error('Division by zero');

@@ -11,7 +11,7 @@ export async function POST(req: NextRequest) {
       return new Response(JSON.stringify({ error: 'Missing model name' }), { status: 400 });
     }
 
-    const base = resolveOllamaHostServer(req);
+    const base = resolveOllamaHostServer();
     if (!base) {
       return new Response(JSON.stringify({ error: 'No host configured', code: 'NO_HOST' }), {
         status: 428,

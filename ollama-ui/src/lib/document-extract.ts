@@ -1,7 +1,8 @@
-// Extracts plain text from an uploaded document (currently only Telegram —
-// see src/lib/telegram-bridge.ts) so its content can be fed into the model
-// as context, the same way a transcribed voice message or an image already
-// is. PDF text extraction goes through `pdftotext` (part of poppler-utils,
+// Extracts plain text from an uploaded document so its content can be fed
+// into the model as context, the same way a transcribed voice message or an
+// image already is. Used by both entry points: the Telegram bridge
+// (src/lib/telegram-bridge.ts) and the web chat's attach button, via
+// src/app/api/documents/extract/route.ts. PDF text extraction goes through `pdftotext` (part of poppler-utils,
 // same "shell out to a well-established CLI tool" pattern already used for
 // audio via `ffmpeg`/whisper.cpp) — needs to be installed on the host
 // (bundled in the combined Docker image; locally, `brew install poppler` on
@@ -75,4 +76,16 @@ export async function extractDocumentText(
     text = `${text.slice(0, MAX_CHARS)}\n\n[... truncated, document was ${text.length} characters]`;
   }
   return text;
+}
+
+/*
+Wraps extracted text in the labelled block that goes into the conversation.
+
+Kept here, next to the extraction, so the browser and the Telegram bridge
+present a document to the model identically — a model that has learned what
+"[Document: x]" means in one entry point should not meet a different
+convention in the other.
+*/
+export function formatDocumentContext(fileName: string, text: string): string {
+  return `[Document: ${fileName}]\n${text}`;
 }

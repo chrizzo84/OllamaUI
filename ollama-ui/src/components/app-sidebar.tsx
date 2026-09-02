@@ -18,6 +18,7 @@ import {
   Gauge,
   CalendarClock,
   Send,
+  ClipboardCheck,
 } from 'lucide-react';
 import { useSessionsStore } from '@/store/sessions';
 import { HostIndicator } from './header-brand';
@@ -53,6 +54,12 @@ const NAV_ITEMS: NavItem[] = [
     label: 'Benchmarks',
     icon: Gauge,
     match: (p) => p.startsWith('/benchmarks'),
+  },
+  {
+    href: '/evals',
+    label: 'Evaluations',
+    icon: ClipboardCheck,
+    match: (p) => p.startsWith('/evals'),
   },
   {
     href: '/schedule',

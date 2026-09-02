@@ -5,6 +5,9 @@
 // Telegram specifically.
 import { resolveOllamaHostServer } from '@/lib/host-resolve-server';
 import { getWhisperHost } from '@/lib/whisper';
+import { listBackups, backupsDisabled } from '@/lib/db/backup';
+import { dataDir } from '@/lib/db/connection';
+import path from 'path';
 
 const CHECK_TIMEOUT_MS = 5000;
 
@@ -73,4 +76,30 @@ export async function checkWhisper(): Promise<ServiceStatus> {
       error: e instanceof Error ? e.message : String(e),
     };
   }
+}
+
+/*
+Backup state for the Settings status panel.
+
+Surfaced because an automatic backup nobody can see is one nobody trusts —
+and because the failure mode that matters (backups quietly not happening,
+e.g. a read-only volume) is invisible by definition until you need one.
+*/
+export interface BackupStatus {
+  enabled: boolean;
+  directory: string;
+  count: number;
+  newestAt: number | null;
+  newestBytes: number | null;
+}
+
+export function checkBackups(): BackupStatus {
+  const all = listBackups(dataDir);
+  return {
+    enabled: !backupsDisabled(),
+    directory: path.join(dataDir, 'backups'),
+    count: all.length,
+    newestAt: all[0]?.createdAt ?? null,
+    newestBytes: all[0]?.byteSize ?? null,
+  };
 }

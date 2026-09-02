@@ -1,11 +1,8 @@
-
-
 <p align="center">
   <img src="./ollama-ui/public/ollama-ui.ico" alt="Ollama UI Icon" width="80" />
 </p>
 
 <h1 align="center">🦙 Ollama UI 🦙</h1>
-
 
 <p align="center">
   <b>Modern, reactive web interface for exploring Ollama models, browsing a scraped public catalog, pulling variants with streaming progress, and managing locally installed models.</b>
@@ -15,7 +12,6 @@
 	<em>What exactly is this? You’ll find a short, visual explanation in <a href="./what_is/WHAT_IS.md"><code>what_is/WHAT_IS.md</code></a> (incl. Screenshots). 👈</em>
 </p>
 
-
 ## Table of Contents
 
 1. [Features](#1-features-)
@@ -23,6 +19,8 @@
 3. [Prerequisites](#3-prerequisites-)
 4. [Quick Start (UI Only)](#4-quick-start-ui-only-)
 5. [Host Resolution Logic](#5-host-resolution-logic-)
+   5b. [Access Control](#5b-access-control-)
+   5c. [Backups](#5c-backups-)
 6. [API Routes Overview](#6-api-routes-overview-)
 7. [Frontend Architecture](#7-frontend-architecture-)
 8. [Python Scraper](#8-python-scraper-)
@@ -38,7 +36,6 @@
 
 ## 1. Features ✨
 
-
 - 🦙 Browse locally installed Ollama models (name, size, digest, modified date)
 - ⏬ Pull / re-pull models (streamed NDJSON progress with derived percentage)
 - 🗑️ Delete installed models
@@ -52,7 +49,14 @@
 - 🧠 Persistent memory — the assistant saves durable facts about you and recalls them automatically in future chats; on by default, toggle globally or per-chat
 - ⏰ Scheduled tasks — recurring prompts that run automatically at a set time/days, no tab needed; each run lands as a new session with the usual background-job notification. One-off reminders can also be set directly from chat ("remind me tomorrow at 9...") via `create_reminder`; a footer clock shows the server's own time since schedules run on it
 - 📱 Telegram bridge (opt-in) — chat with the app from your phone through a Telegram bot, using the same tool-calling/memory engine as the web UI, including sending photos to a vision model, voice messages (transcribed via a local `whisper.cpp` server), documents (PDF/text/code — attach one to summarize or ask about it), tap-to-cancel buttons on `/tasks`, and `/info`/`/tasks`/`/new`/`/help` slash commands. Locked to a single allowlisted Telegram user id; set `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_USER_ID` and `TELEGRAM_MODEL` in `.env.local` to enable it (unset = bridge stays off), plus `TELEGRAM_VISION_MODEL` for photos and `WHISPER_HOST` for voice messages — the combined Docker image bundles `whisper-server` + a model automatically, so `WHISPER_HOST` there just defaults to it. Scheduled tasks and reminders push their result to Telegram too, not just into a new chat session, so they still reach you with no tab open — toggle this specifically under Settings → Telegram (on by default, independent of the bridge's own configuration). The polling loop backs off exponentially on a Telegram-side outage and auto-restarts if it ever crashes, with a "reconnected" notice once it recovers. The bridge's one persistent conversation is marked in the web UI's session list with a small paper-plane icon so it's not mistaken for an ordinary web chat
-- 🔁 `create_recurring_task`, `list_scheduled_tasks`, `cancel_scheduled_task` tools — manage scheduled tasks and reminders entirely from chat (Telegram or web), no need to open the Scheduled page; in Telegram, `/tasks` also offers a tap-to-cancel button per task. Every schedule-related claim (created, cancelled, or listed) gets verified against the actual tool-call trace instead of trusting the model's own "done" claim — a fabricated *list* is replaced outright with the real data rather than just flagged, since it's misinformation about your own data, not just an unconfirmed action
+- 🔁 `create_recurring_task`, `list_scheduled_tasks`, `cancel_scheduled_task` tools — manage scheduled tasks and reminders entirely from chat (Telegram or web), no need to open the Scheduled page; in Telegram, `/tasks` also offers a tap-to-cancel button per task. Every schedule-related claim (created, cancelled, or listed) gets verified against the actual tool-call trace instead of trusting the model's own "done" claim — a fabricated _list_ is replaced outright with the real data rather than just flagged, since it's misinformation about your own data, not just an unconfirmed action
+- 💾 Automatic database backups — a snapshot is taken before the one-way messages migration (and the migration is _refused_ if one can't be written), plus a daily one on startup, kept 7 deep in `data/backups/`. Taken with SQLite's `VACUUM INTO`, so they're consistent rather than a copy of a file being written to. Settings → Status shows when the last one happened
+- 🔒 Optional password gate — set `APP_PASSWORD` and every page and API route requires a login (30-day session cookie, HMAC-signed, `HttpOnly`). Unset = off, so an existing localhost-only install is unaffected. Settings → Access shows which state you're in and warns when the instance is open
+- 📎 Attach documents in the web chat — PDF, text, Markdown, CSV, JSON and source files are extracted to text server-side the moment you pick them (a file that can't be read fails right there, not at send time) and go into the message as readable context. Same extraction the Telegram bridge already used
+- 🌿 Branching conversations — Regenerate and editing a message no longer delete what they replace: the new version is stored beside the old one and a `‹ 2 / 3 ›` switcher on the message moves between them, restoring that branch's whole continuation
+- 🔌 MCP client — connect Model Context Protocol servers (stdio or HTTP) under Settings → MCP Servers and their tools appear alongside the built-in ones in every chat, in Telegram and in scheduled tasks, with no code change. The list shows what each server actually advertises right now, so a misconfiguration is visible immediately
+- 🧪 Evaluations — save the prompts you actually use, run them across several models sequentially, and score the answers side by side with tokens/second shown alongside. Benchmarks tell you which model is fastest; this tells you which is better at your work
+- 🗄️ Per-message storage with SQLite FTS5 search — messages live in their own table instead of one JSON blob per session, attachments are stored on disk and content-addressed, and search runs against a real full-text index rather than scanning every conversation in memory
 - 🩺 Settings → Status panel — live reachability check for Ollama, the Whisper voice server and the Telegram bridge in one place, including a real Telegram `getMe` call so a revoked/rotated bot token (which otherwise fails silently forever) shows up immediately instead of only as "nothing happens" when you message the bot
 - 📈 Model benchmark history — every real chat logs its speed automatically, plus an on-demand fixed-prompt benchmark across all installed models, with a trend chart
 - 🗜️ Context compaction — summarize older chat history into a dense context note via the model itself (with undo)
@@ -66,22 +70,28 @@
 
 ---
 
-
 ## 2. Repository Layout 🗂️
 
 ```
 ollama-ui/        # Next.js (App Router) application
 	src/app/        # Pages & API routes
-	src/lib/        # Environment + utility helpers
+	src/proxy.ts    # Password gate (Next 16's renamed middleware)
+	src/lib/        # Server logic: generation, tools, MCP, Telegram, ...
+	src/lib/db/     # SQLite: connection.ts owns schema+migrations,
+	                #   one module per entity, re-exported by src/lib/db.ts
+	src/hooks/      # Client hooks (chat column, attachments, voice input)
 	src/store/      # Zustand stores (pull logs, toast, etc.)
 	models.json     # Scraped catalog file (copied/updated manually)
+	data/           # SQLite database, uploads and backups (gitignored)
 Scraper/          # Python async scraper producing models.json
 ```
+
+`data/` can be moved with `OLLAMA_UI_DATA_DIR` (useful for a Docker volume, and
+what the tests use to stay away from the real database).
 
 You run / build only inside `ollama-ui/`. The Python scraper is optional and only needed when you want to regenerate the catalog file.
 
 ---
-
 
 ## 3. Prerequisites 🛠️
 
@@ -90,8 +100,16 @@ You run / build only inside `ollama-ui/`. The Python scraper is optional and onl
 - Python 3.11+ (only if you run the scraper)
 - A reachable Ollama server (local or remote) exposing its HTTP API (`/api/pull`, `/api/tags`, etc.)
 
----
+Optional, per feature — each is unnecessary until you use the feature it backs:
 
+| For                                       | Needs                                                    | Install                                                                                                                                         |
+| ----------------------------------------- | -------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| Attaching **PDFs** (web chat or Telegram) | `pdftotext` from poppler-utils                           | macOS `brew install poppler`, Debian/Ubuntu `apt install poppler-utils`. Bundled in the Docker image. Text/Markdown/CSV/code files need nothing |
+| **Voice** messages                        | a running `whisper.cpp` server (`WHISPER_HOST`)          | Bundled in the combined Docker image; see §10                                                                                                   |
+| **Web search** tool                       | a SearXNG instance (`SEARXNG_HOST`, or Settings → Tools) | Self-hosted; the tool degrades to no results without it                                                                                         |
+| **MCP servers**                           | whatever the server itself needs (often `npx`)           | Configured under Settings → MCP Servers                                                                                                         |
+
+---
 
 ## 4. Quick Start (UI Only) 🚦
 
@@ -105,90 +123,222 @@ Open http://localhost:3000
 
 If you already have an Ollama instance running locally at the default fallback (see below) the Installed Models list should populate. Otherwise set the host in the UI or via environment.
 
----
+Nothing works until a host is added and activated — do that first, under
+**Settings → Ollama Host**. **Settings → Status** will tell you whether it is
+actually reachable.
 
+### Upgrading an existing install
+
+Just start it. Chat messages move out of the per-session JSON blob into their
+own table on first start, and inline base64 images move to `data/uploads/` —
+automatically, once, reclaiming the freed space (`VACUUM`).
+
+**A snapshot of the database is taken immediately before that migration**, into
+`data/backups/`, and if one cannot be written the migration is refused rather
+than run unprotected — see [Backups](#backups). So the old advice to copy
+`app.db` by hand is no longer necessary; it does no harm if you prefer to
+anyway.
+
+Two things are worth setting while you're there: `APP_PASSWORD` (see §5b) if the
+instance is reachable from anywhere but localhost, and `pdftotext` (see §3) if
+you want to attach PDFs.
+
+---
 
 ## 5. Host Resolution Logic 🌐
 
-Order of precedence (first valid wins):
-1. Request header: `x-ollama-host`
-2. Browser cookie: `ollama_host` (set via the Host form)
-3. Environment: `OLLAMA_HOST` or `NEXT_PUBLIC_OLLAMA_HOST`
-4. Hardcoded fallback in `src/lib/env.ts`
+The active host from the `hosts` table is the only source. Add and activate
+it under **Settings → Ollama Host** (the green dot marks the active one);
+it's stored server-side, so it's the same host for every browser and for the
+Telegram bridge and scheduler, which have no request to read a header from.
 
 Validation enforces a full `http://` or `https://` URL.
 
-### Set via UI
-Use the Host box on the Models page, enter full URL (e.g. `http://localhost:11434`) and press “Set host”. Cookie persists for 7 days.
+> An `x-ollama-host` request header used to override this. Nothing in the app
+> ever sent one — the host is chosen in the Host Manager — and all it actually
+> did was let any request that reached the server point it at an arbitrary URL
+> and read the response back through the chat and model routes. It was removed
+> along with the unused `/api/config/ollama-host` route and its cookie.
 
-### Set via Env
-Create `.env.local` in `ollama-ui/`:
-```
-OLLAMA_HOST=http://localhost:11434
-```
+### Environment
 
-Restart dev server.
-
-### Override Per Request
-Send a custom header (useful for testing):
-```
-curl -H "x-ollama-host: http://other-host:11434" http://localhost:3000/api/models
-```
+`OLLAMA_HOST` / `NEXT_PUBLIC_OLLAMA_HOST` are only read by
+`getDefaultOllamaHost()` — they seed a suggestion, they don't override the
+configured host.
 
 ---
 
+## 5b. Access Control 🔒
+
+By default the app is **unauthenticated**: anyone who can reach the port can
+read your chats and memories, pull and delete models, and drive your Ollama
+host. That's fine bound to localhost, and not fine the moment it's reachable
+from anywhere else — which is the normal case for the Docker image and the
+whole point of the Telegram bridge.
+
+Set a password to turn on the gate:
+
+```bash
+# ollama-ui/.env.local  (or the container environment)
+APP_PASSWORD=something-long-and-not-guessable
+```
+
+With it set, `src/proxy.ts` requires a valid session for every page and every
+API route; a browser is redirected to `/login`, an API call gets a `401`.
+Sessions last 30 days and live in an HMAC-signed, `HttpOnly` cookie — the
+token is never readable from JavaScript. Login attempts are rate-limited per
+IP. Leave `APP_PASSWORD` unset and nothing changes from before.
+
+`AUTH_SECRET` is optional: the signing key is derived from the password by
+default, so changing the password signs everyone out. Set `AUTH_SECRET`
+explicitly if you'd rather sessions survive a password change.
+
+**Settings → Access** shows which state the instance is in, and offers a sign-out.
+
+> ⚠️ **Build requirement:** the password gate lives in `src/proxy.ts`
+> (Next 16's renamed middleware). Turbopack compiles it and even lists it in
+> the build summary, but does **not** wire it into an `output: standalone`
+> server — every request then bypasses it and the gate is silently a no-op.
+> `pnpm build` therefore pins `next build --webpack`. Don't run
+> `next build` directly without that flag.
+
+---
+
+## 5c. Backups 💾
+
+The database is snapshotted automatically into `data/backups/`. Two triggers,
+for two different problems:
+
+| When                                       | Why                                                                                                                                        | On failure                                                                                                                                                                 |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Immediately before a **one-way migration** | The messages migration drops the old column afterwards, deliberately, so there is exactly one source of truth — that step cannot be undone | **Fatal.** The migration is refused, the database is left exactly as it was, and the app reports why. Fix the disk/permissions and restart; the migration simply runs then |
+| **Daily**, on the first start of a new day | The slow kind of data loss: a mis-clicked "delete session", a scheduled task that went wrong overnight, filesystem corruption              | Logged and ignored — insurance should never stop the app from starting                                                                                                     |
+
+Snapshots are taken with SQLite's `VACUUM INTO`, not a file copy: a copy of a
+live database can miss whatever is still in the write-ahead log, or catch a
+write mid-flight. The result is a consistent, already-compact `.db` file.
+
+The newest **7** are kept; older ones are pruned. The restart-in-a-crash-loop
+case is handled by the once-a-day rule, so the retained set is never seven
+snapshots from the same minute.
+
+**Settings → Status** shows the snapshot count, when the newest was taken and
+where they live — an automatic backup nobody can see is one nobody trusts, and
+the failure that matters (a read-only volume, so nothing is ever written) is
+invisible by definition until you need one.
+
+### Restoring
+
+A snapshot is an ordinary SQLite database. Stop the app, then:
+
+```bash
+cd ollama-ui/data
+cp app.db app.db.broken            # keep the bad one, just in case
+cp backups/app-<timestamp>-<reason>.db app.db
+rm -f app.db-wal app.db-shm        # stale journal from the replaced database
+```
+
+Start the app again. Note that `data/uploads/` is **not** in the snapshot —
+attachments are content-addressed files that are only ever added, never
+rewritten, so an older database paired with the current uploads directory is
+consistent. Back that directory up separately if you want the images too.
+
+### Settings
+
+| Variable                    | Default | Effect                                                                                                                                                      |
+| --------------------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `OLLAMA_UI_BACKUP_KEEP`     | `7`     | How many snapshots to retain                                                                                                                                |
+| `OLLAMA_UI_BACKUP_DISABLED` | unset   | `1` turns snapshots off entirely, including the pre-migration one. Only sensible with a read-only volume or an external backup system already covering this |
+
+---
 
 ## 6. API Routes Overview 📡
 
 Base path: `/api`
 
-| Route | Method | Purpose | Notes |
-|-------|--------|---------|-------|
-| `/api/models` | GET | List installed models + tags | Wraps Ollama `/api/tags` (server side implementation not shown here) |
-| `/api/models/pull` | POST | Stream pull of a model or model:variant | Returns NDJSON, enriches lines with `percentage` when possible |
-| `/api/models/delete` | POST | Remove a model | Body: `{ model: "name" }` |
-| `/api/models/catalog` | GET | Filtered catalog from `models.json` | Query: `q`, `limit` (0 = all) |
-| `/api/config/ollama-host` | GET/POST | Get or set resolved host | POST body: `{ host: string }` |
-| Other routes (`chat`, `stream`, `lamas`, `ps`, `tools/*`) | — | Additional functionality (not all documented yet) | Future docs TBD |
+| Route                                                     | Method         | Purpose                                           | Notes                                                                |
+| --------------------------------------------------------- | -------------- | ------------------------------------------------- | -------------------------------------------------------------------- |
+| `/api/models`                                             | GET            | List installed models + tags                      | Wraps Ollama `/api/tags` (server side implementation not shown here) |
+| `/api/models/pull`                                        | POST           | Stream pull of a model or model:variant           | Returns NDJSON, enriches lines with `percentage` when possible       |
+| `/api/models/delete`                                      | POST           | Remove a model                                    | Body: `{ model: "name" }`                                            |
+| `/api/models/catalog`                                     | GET            | Filtered catalog from `models.json`               | Query: `q`, `limit` (0 = all)                                        |
+| `/api/auth/login`                                         | POST/DELETE    | Sign in / sign out                                | Only route reachable without a session                               |
+| `/api/attachments/[id]`                                   | GET            | Serve an uploaded file                            | Content-addressed (SHA-256), immutable, cached                       |
+| `/api/documents/extract`                                  | POST           | Extract text from an uploaded document            | `multipart/form-data`, field `file`; PDF via `pdftotext`             |
+| `/api/sessions/search`                                    | GET            | Full-text search over titles and messages         | Backed by SQLite FTS5                                                |
+| `/api/sessions/[id]/branch`                               | POST           | Switch to another version of a message            | Body: `{ messageId }`                                                |
+| `/api/sessions/[id]/messages/[messageId]`                 | DELETE         | Delete a message and its subtree                  | Leaves sibling branches intact                                       |
+| `/api/settings/mcp`                                       | GET/PUT        | Configured MCP servers                            | GET connects and reports each server's live tools                    |
+| `/api/evals/sets`                                         | GET/PUT/DELETE | Saved prompt sets                                 |                                                                      |
+| `/api/evals/runs`                                         | GET/POST       | Start and list evaluation runs                    | POST returns immediately; the run outlives the request               |
+| `/api/evals/runs/[id]`                                    | GET            | One run with results so far                       | Poll while `status` is `running`                                     |
+| `/api/evals/results`                                      | PATCH          | Score one answer                                  | Body: `{ id, rating }`; `null` clears                                |
+| Other routes (`chat`, `lamas`, `ps`, `status`, `tools/*`) | —              | Additional functionality (not all documented yet) | Future docs TBD                                                      |
+
+Every route above is behind the password gate when `APP_PASSWORD` is set — see
+[Access Control](#5b-access-control-).
 
 ### Pull Streaming Contract
+
 `/api/models/pull` emits newline‑delimited JSON objects. Each line may contain:
+
 ```
 { status, digest?, total?, completed?, percentage? }
 ```
+
 If `total` & `completed` exist but `percentage` is missing, the proxy computes and injects it.
 
 Client logic (React) merges these events into a progress bar; a final `{ done: true }` is appended.
 
 ---
 
-
 ## 7. Frontend Architecture 🏗️
 
-- **Next.js App Router**: Server + edge runtime mixing (pull uses Edge for low latency, catalog read uses Node for FS access).
+- **Next.js App Router**: mostly the Node runtime — anything touching the database (which is most of it) cannot run on Edge, since `node:sqlite` isn't available there. `src/proxy.ts` gates every request when a password is configured.
 - **React Query**: Data caching & stale control for models and catalog.
-- **Zustand Stores**: Lightweight stores for pull logs & toast queue.
-- **Streaming**: Manual `ReadableStream` consumption with incremental parsing of NDJSON lines.
+- **Zustand Stores**: Lightweight stores for chat messages, sessions, pull logs & toast queue.
+- **Hooks**: `use-column-chat` (one chat column's generation lifecycle, including reconnecting to a job started in another tab), `use-attachments` (images + documents in the composer), `use-voice-input` (record → transcribe → fill the composer).
+- **Streaming**: Manual `ReadableStream` consumption with incremental parsing of NDJSON lines (`src/lib/chat-stream.ts`).
 - **Styling**: Tailwind CSS (v4) + theme-adaptive glass design system (accent-driven aurora background, glass cards, scrollbars) with 5 color themes.
 - **Components**: Reusable `<Button />` with variants (`primary`, `outline`, `danger`, etc.).
 
 State highlights:
+
 - `anyPullActive` prevents concurrent pulls.
 - `expandedVariants[slug]` toggles full variant list per model.
 - Progress derived from last event for the active model.
 
----
+### Where a chat message actually lives
 
+Worth knowing before changing anything in this area, because the ownership
+moved and the old shape is the intuitive-but-wrong one:
+
+1. The browser POSTs to `/api/chat` with the user message and an empty
+   assistant placeholder.
+2. **The server writes both to the database before contacting Ollama**, then
+   runs the generation as a detached job and writes the final content itself.
+   That is what lets a reply survive closing the tab.
+3. The browser therefore does **not** PATCH the conversation back. A
+   full-history write means "this is the conversation now" and would delete
+   every branch the tab cannot see — it is used only where that is genuinely
+   intended (compaction, undo, clearing).
+4. History is a tree, not a list: each message has a `parent_id`, and the
+   session points at the active leaf per column. A conversation with no
+   branches is just a tree where every node has one child.
+
+---
 
 ## 8. Python Scraper 🐍
 
 Location: `Scraper/`
 
 Purpose: Crawl public model pages, produce `models.json` with:
+
 - `scraped_at`
 - For each model: `slug`, `name`, `pulls`, `pulls_text`, `capabilities[]`, `blurb`, `description`, `tags_count`, `variants[]` (each variant: tag, size, size_text, context tokens, input tokens)
 
 ### Run
+
 ```bash
 cd Scraper
 python -m venv .venv && source .venv/bin/activate   # one time
@@ -200,33 +350,58 @@ python ollama_scraper.py --limit 50  # first 50 models for quick test
 Output: `out/models.json`. Copy or move that file into `ollama-ui/models.json` (overwrite existing) so the catalog endpoint serves it.
 
 ### Schedule (Optional)
+
 Use `cron` or a CI workflow to periodically update the file. Example cron entry (daily at 02:30):
+
 ```
 30 2 * * * /usr/bin/bash -lc 'cd /path/to/repo/Scraper && source .venv/bin/activate && python ollama_scraper.py && cp out/models.json ../ollama-ui/models.json'
 ```
 
 ---
 
-
 ## 9. Development Workflow 🧑‍💻
 
 Common scripts:
+
 ```bash
-pnpm dev     # start dev w/ Turbopack
-pnpm build   # production build
-pnpm start   # run built app
-pnpm lint    # eslint (uses flat config)
-pnpm format  # prettier write
+pnpm dev        # start dev server (webpack, not Turbopack — see below)
+pnpm build      # production build (next build --webpack)
+pnpm start      # run built app
+pnpm lint       # eslint (uses flat config)
+pnpm typecheck  # tsc --noEmit
+pnpm test       # vitest run
+pnpm test:watch # vitest in watch mode
+pnpm format     # prettier write
 ```
+
+**Why webpack, not Turbopack.** Two independent reasons, both of which fail
+quietly rather than loudly:
+
+- `next dev --turbopack` cannot load `node:sqlite` at all (see the note at the
+  top of `src/lib/db/connection.ts`).
+- Turbopack does not wire `src/proxy.ts` into an `output: standalone` build, so
+  the password gate silently stops running. `pnpm build` pins `--webpack` for
+  exactly this reason.
+
+### Tests
+
+`pnpm test` runs the unit suite (Vitest, node environment, no jsdom) — 391
+tests over the pure logic and the database layer. The database tests run
+against a real SQLite file in a temp directory (`OLLAMA_UI_DATA_DIR`), never
+`data/`, because what's worth testing there — the FTS triggers, the branch
+walk, attachment content-addressing — is SQLite's behaviour, not something a
+mock would exercise. The MCP tests spawn an actual MCP server process.
+
+Lint, typecheck and tests all run in CI on every push and pull request.
 
 After updating `models.json`, no restart is strictly required (catalog route reads file each request) but browser cache is bypassed anyway (`cache: 'no-store'`). Just refresh.
 
 ---
 
-
 ## 10. Deployment 🚀
 
 You can deploy like any standard Next.js app (Vercel, Docker, etc.). Requirements:
+
 - Ensure `models.json` is present in the build output (it is read at runtime, so keep it in project root of the app).
 - Provide `OLLAMA_HOST` environment variable or rely on user-set cookie.
 - If deploying serverless, note: the catalog route uses Node runtime (filesystem). Ensure hosting platform supports reading that static file at runtime.
@@ -234,6 +409,7 @@ You can deploy like any standard Next.js app (Vercel, Docker, etc.). Requirement
 ### Docker (Combined Ollama + UI)
 
 This repository now includes a multi‑stage `Dockerfile` at repo root that:
+
 1. Builds the Next.js app (standalone) with Node 20.
 2. Compiles `whisper.cpp`'s `whisper-server` from source in its own stage (speech-to-text for Telegram voice messages — Ollama has no audio-input support of its own) and downloads a multilingual model (~465MB; override with `--build-arg WHISPER_MODEL_URL=...` for a smaller/larger one, e.g. `ggml-base.bin` or `ggml-medium.bin` — avoid the `.en`-suffixed variants unless you only ever speak English to it).
 3. Uses the official `ollama/ollama:latest` image as the final base.
@@ -242,6 +418,7 @@ This repository now includes a multi‑stage `Dockerfile` at repo root that:
 6. Also installs `ffmpeg` (audio conversion for voice messages) and `poppler-utils` (`pdftotext`, for reading PDF documents sent to the Telegram bridge) via apt-get in the final image.
 
 Build & run:
+
 ```bash
 docker build -t ollama-ui:latest .
 docker run --rm -p 11434:11434 -p 3000:3000 ollama-ui:latest
@@ -264,6 +441,7 @@ docker run --rm -p 11434:11434 -p 3000:3000 \
 - `/app/data`: stores the SQLite database (`app.db`) for UI state (profiles, logs, etc.)
 
 **Docker Compose Example:**
+
 ```yaml
 services:
 	ollama-ui:
@@ -279,6 +457,7 @@ volumes: {}
 ```
 
 Override default host the UI uses:
+
 ```bash
 docker run --rm -e OLLAMA_HOST=http://localhost:11434 -p 11434:11434 -p 3000:3000 ollama-ui:latest
 ```
@@ -298,6 +477,7 @@ docker run --rm -p 11434:11434 -p 3000:3000 \
 ```
 
 Same idea in Docker Compose — add them under `environment:` (or `env_file:` pointing at a local file kept out of version control, so the token isn't sitting in `docker-compose.yml` itself):
+
 ```yaml
 services:
 	ollama-ui:
@@ -308,7 +488,20 @@ services:
 			- TELEGRAM_MODEL=llama3.1:8b
 ```
 
-**On Unraid**: edit the container → *Add another Path, Port, Variable* → type **Variable**, with `TELEGRAM_BOT_TOKEN` etc. as Key and the value as Value — no file involved, same as any other env var on that screen (this is also how `OLLAMA_HOST` gets set on Unraid).
+**Password protection in Docker**: set `APP_PASSWORD` as a container
+environment variable exactly like `OLLAMA_HOST`. This matters more here than
+for a local `pnpm dev` — a container is usually reachable from the rest of the
+network, and without it every chat, memory and model operation is open to
+anyone who can reach the port. Optionally add `AUTH_SECRET` to keep sessions
+valid across a password change, and `OLLAMA_UI_DATA_DIR` to point the database
+and uploads at a mounted volume.
+
+**Backups in Docker**: snapshots land in `data/backups/` inside the container,
+so they only survive a container rebuild if `data/` is a **mounted volume** —
+which it should be anyway, since the database lives there. `OLLAMA_UI_BACKUP_KEEP`
+and `OLLAMA_UI_BACKUP_DISABLED` are ordinary environment variables like the rest.
+
+**On Unraid**: edit the container → _Add another Path, Port, Variable_ → type **Variable**, with `TELEGRAM_BOT_TOKEN` etc. as Key and the value as Value — no file involved, same as any other env var on that screen (this is also how `OLLAMA_HOST` gets set on Unraid).
 
 Optional additions, same mechanism: `TELEGRAM_VISION_MODEL` (photos, only if `TELEGRAM_MODEL` itself doesn't already report vision support) and `TELEGRAM_MODEL`'s tool-calling requirement carries over unchanged. Voice messages need nothing extra in the combined image — `WHISPER_HOST` already defaults to the bundled `whisper-server` (`http://localhost:8790`, see the Dockerfile section above); only set it yourself to point at a different/external Whisper server instead.
 
@@ -321,6 +514,7 @@ You can use prebuilt images from GitHub Container Registry (GHCR):
 - [ghcr.io/chrizzo84/ollamaui](https://github.com/chrizzo84/OllamaUI/pkgs/container/ollamaui)
 
 Pull and run:
+
 ```bash
 docker pull ghcr.io/chrizzo84/ollamaui:latest
 docker run --rm -p 11434:11434 -p 3000:3000 ghcr.io/chrizzo84/ollamaui:latest
@@ -334,6 +528,7 @@ Ollama can leverage GPUs inside the same container. Usage differs by platform:
 
 **NVIDIA (Linux)**
 Prerequisites: Install the NVIDIA Container Toolkit on the host.
+
 ```bash
 docker run --rm \
 	--gpus=all \
@@ -341,12 +536,15 @@ docker run --rm \
 	-v ollama_models:/root/.ollama \
 	ollama-ui:latest
 ```
+
 Limit GPU visibility (e.g. only GPU 0):
+
 ```bash
 docker run --rm --gpus 'device=0' -p 11434:11434 -p 3000:3000 ollama-ui:latest
 ```
 
 **Docker Compose Example** (`docker-compose.yml` at repo root):
+
 ```yaml
 services:
 	ollama-ui:
@@ -370,6 +568,7 @@ volumes:
 
 **Apple Silicon (Metal)**
 Metal acceleration is available natively when running Ollama directly on macOS. Docker GPU passthrough for Metal is not currently supported in the same way; prefer running Ollama on the host and pointing the container UI to it:
+
 ```bash
 docker run --rm -e OLLAMA_HOST=http://host.docker.internal:11434 -p 3000:3000 ollama-ui:latest
 ```
@@ -378,24 +577,33 @@ docker run --rm -e OLLAMA_HOST=http://host.docker.internal:11434 -p 3000:3000 ol
 If your base image / host supports ROCm and `ollama/ollama` adds ROCm builds in future, you would expose the devices similarly (e.g. `--device=/dev/dri`); consult upstream Ollama documentation.
 
 Verify GPU usage after starting:
+
 ```bash
 docker exec -it <container> ollama ps
 ```
+
 Or on host: `nvidia-smi` (NVIDIA) while a model runs.
 
 ---
 
-
 ## 11. Troubleshooting 🕵️‍♂️
 
-| Symptom | Cause | Fix |
-|---------|-------|-----|
-| Installed list empty | Wrong host / unreachable Ollama | Set correct host; test `curl <host>/api/tags` |
-| Pull stuck at 0% | Upstream not streaming `completed/total` yet | Wait; incomplete events still appear in log |
-| Host not persisting | Cookies blocked | Allow site cookies or set via env variable |
+| Symptom                                                  | Cause                                                                         | Fix                                                                                                                                                                                                                                       |
+| -------------------------------------------------------- | ----------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Installed list empty                                     | Wrong host / unreachable Ollama                                               | Set correct host; test `curl <host>/api/tags`. **Settings → Status** reports this directly                                                                                                                                                |
+| Pull stuck at 0%                                         | Upstream not streaming `completed/total` yet                                  | Wait; incomplete events still appear in log                                                                                                                                                                                               |
+| Host not persisting                                      | —                                                                             | Hosts are stored server-side in the `hosts` table, not in a cookie. If one doesn't stick, check that `data/` is writable (and, in Docker, that it's a mounted volume rather than container-local)                                         |
+| Login page never appears, everything is open             | Built with Turbopack                                                          | `pnpm build` must run `next build --webpack`. Turbopack does not wire `src/proxy.ts` into a standalone build, so the gate silently does nothing. Verify with `curl -o /dev/null -w '%{http_code}' <host>/api/sessions` — it must be `401` |
+| Password set but you're signed out constantly            | `APP_PASSWORD` changed                                                        | The signing key is derived from the password, so changing it invalidates every session. Set `AUTH_SECRET` explicitly if sessions should survive a password change                                                                         |
+| `401` on every API call from an open tab                 | Session expired (30 days)                                                     | Reload; the browser is redirected to `/login`                                                                                                                                                                                             |
+| "PDF text extraction needs poppler-utils"                | `pdftotext` not installed                                                     | See §3. Text/Markdown/CSV/code attachments work without it                                                                                                                                                                                |
+| An MCP server shows an error under Settings              | Command not found, wrong args, or the server crashed on start                 | The message is the server's own. Its stderr is also logged to the app's console prefixed `[mcp:<id>]`. Other servers keep working                                                                                                         |
+| Model tools missing in Telegram or a scheduled task      | A tool is turned off globally                                                 | Settings → Tools applies everywhere, not just the web chat                                                                                                                                                                                |
+| App won't start: "Refusing to run the one-way migration" | The pre-migration snapshot couldn't be written (full disk, read-only `data/`) | Intentional — your data is untouched and the migration is still pending. Free space or fix permissions on `data/backups/` and restart. `OLLAMA_UI_BACKUP_DISABLED=1` proceeds without one                                                 |
+| Settings → Status says no snapshots                      | Backups disabled, or `data/` not writable                                     | Check `OLLAMA_UI_BACKUP_DISABLED` and that `data/` is a writable volume                                                                                                                                                                   |
+| `next dev` fails on `node:sqlite`                        | Turbopack                                                                     | Use `pnpm dev` (webpack). Turbopack cannot load `node:sqlite` at all                                                                                                                                                                      |
 
 ---
-
 
 ## 12. Roadmap / Ideas 🗺️
 
@@ -404,9 +612,13 @@ Or on host: `nvidia-smi` (NVIDIA) while a model runs.
 - Multi-pull queue (sequential)
 - Download speed & ETA estimation
 - Keyboard shortcuts (focus search, abort pull)
+- RAG over a local folder — embeddings via Ollama's `/api/embed`, alongside the
+  existing memory feature
+- Modelfile editor — build a model from a base + system prompt + parameters, so
+  a persona can become a real Ollama model usable outside this app
+- MCP: resources and prompts (only tools are implemented today)
 
 ---
-
 
 ## 13. Contributing 🤝
 
@@ -418,24 +630,26 @@ Or on host: `nvidia-smi` (NVIDIA) while a model runs.
 
 ---
 
-
 ## 14. License 📜
 
 Distributed under the MIT License. See the `LICENSE` file for full text.
 
 ---
 
-
 ## 15. At A Glance 👀
 
-| Stack | Key Tools |
-|-------|-----------|
-| Framework | Next.js App Router (Edge + Node runtime) |
-| Data | React Query, NDJSON streaming |
-| State | Zustand |
-| Styling | Tailwind CSS v4, theme-adaptive glass design system, motion via Framer Motion |
-| Backend Integrations | Ollama HTTP API |
-| Scraping | Python (httpx, BeautifulSoup, tenacity) |
+| Stack                | Key Tools                                                                                                                     |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| Framework            | Next.js App Router (Node runtime; webpack build, see §9)                                                                      |
+| Backups              | `VACUUM INTO` snapshots in `data/backups/`, pre-migration + daily, 7 retained                                                 |
+| Persistence          | SQLite via `node:sqlite` — messages, sessions, memories, evals; FTS5 full-text search; attachments on disk, content-addressed |
+| Auth                 | Optional single-user password gate in `src/proxy.ts`, Web Crypto HMAC sessions                                                |
+| Data                 | React Query, NDJSON streaming                                                                                                 |
+| State                | Zustand                                                                                                                       |
+| Styling              | Tailwind CSS v4, theme-adaptive glass design system, motion via Framer Motion                                                 |
+| Backend Integrations | Ollama HTTP API, MCP (stdio + HTTP), SearXNG, Open-Meteo, whisper.cpp, Telegram Bot API                                       |
+| Testing              | Vitest (391 unit tests), run in CI with lint + typecheck                                                                      |
+| Scraping             | Python (httpx, BeautifulSoup, tenacity)                                                                                       |
 
 ---
 
@@ -443,13 +657,13 @@ Distributed under the MIT License. See the `LICENSE` file for full text.
   🚀 Happy hacking! Pull, explore, iterate. 🦙
 </p>
 
-
 ## 16. Disclaimer / Infos
 
 <details>
 <summary><strong>⚡️ Disclaimer: Vibe Coding & Copilot ⚡️</strong></summary>
 
 ---
+
 <p>
 <em>
 🚀 This app was created exclusively through <strong>Vibe Coding</strong> – basically just as a test of GPT-5 via GitHub Copilot.<br>
@@ -462,6 +676,7 @@ Distributed under the MIT License. See the `LICENSE` file for full text.
 </details>
 
 ---
+
 ---
 
 <details>
@@ -496,15 +711,8 @@ addon to compile per platform anymore — the whole class of problem above no lo
 
 </details>
 
-
-
 ---
-
 
 ### 17. Release Notes
 
 See the latest changes and release notes [here](./ollama-ui/public/news/News.md)
-
-
-
-

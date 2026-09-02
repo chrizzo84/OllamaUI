@@ -24,7 +24,15 @@ import {
   listScheduledTasks,
   deleteScheduledTask,
   type MemoryRow,
+  attachmentsAsBase64,
 } from '@/lib/db';
+import {
+  callTool as callMcpTool,
+  listAllTools,
+  parseNamespacedToolName,
+  toOllamaTool,
+} from '@/lib/mcp';
+import { listMcpServers } from '@/lib/mcp-settings';
 import { computeNextRunAt } from '@/lib/schedule-time';
 import type { TraceEvent } from '@/store/chat';
 import type { ChatStats } from '@/lib/chat-stream';
@@ -50,6 +58,9 @@ export interface ChatMessageIn {
   tool_calls?: OllamaToolCall[];
   name?: string;
   images?: string[]; // raw base64, no data: prefix — passed straight through to Ollama
+  // Attachment ids, resolved to base64 `images` just before the upstream
+  // request (see runGeneration). Set on messages loaded from the database.
+  attachments?: string[];
 }
 
 // Bounds how many times the model may call tools in a single request before
@@ -291,7 +302,11 @@ const REMEMBER_FACT_TOOL = {
 // testing: llama3.1:8b did this on 2/2 runs, either leaking the resulting
 // tool error into the visible reply or silently mis-calling the tool before
 // recovering).
-function buildTools(toolsEnabled: boolean, memoryEnabled: boolean, excludeNames: string[] = []) {
+function buildBuiltinTools(
+  toolsEnabled: boolean,
+  memoryEnabled: boolean,
+  excludeNames: string[] = [],
+) {
   return [
     ...(toolsEnabled
       ? [
@@ -309,6 +324,38 @@ function buildTools(toolsEnabled: boolean, memoryEnabled: boolean, excludeNames:
   ].filter((t) => !excludeNames.includes(t.function.name));
 }
 
+/*
+Everything the model may call this turn: the built-in tools above plus
+whatever the configured MCP servers currently advertise.
+
+MCP tools are only offered when tool calling is on at all — memory alone
+(memoryEnabled without toolsEnabled) should not quietly pull in external
+servers. A server that is unreachable contributes nothing and logs why;
+listAllTools never throws, so one broken server cannot cost the user their
+reply.
+*/
+async function buildTools(
+  toolsEnabled: boolean,
+  memoryEnabled: boolean,
+  excludeNames: string[] = [],
+) {
+  const builtin = buildBuiltinTools(toolsEnabled, memoryEnabled, excludeNames);
+  if (!toolsEnabled) return builtin;
+
+  const servers = listMcpServers();
+  if (servers.every((s) => !s.enabled)) return builtin;
+
+  const perServer = await listAllTools(servers);
+  const mcpTools = perServer.flatMap((entry) => {
+    if (entry.error) {
+      console.error(`[mcp:${entry.serverId}] unavailable: ${entry.error}`);
+      return [];
+    }
+    return entry.tools.map((t) => toOllamaTool(entry.serverId, t));
+  });
+  return [...builtin, ...mcpTools.filter((t) => !excludeNames.includes(t.function.name))];
+}
+
 async function executeTool(
   name: string,
   args: unknown,
@@ -316,6 +363,12 @@ async function executeTool(
   sessionId: string,
   model: string,
 ): Promise<{ result?: unknown; error?: string }> {
+  // Anything namespaced belongs to an MCP server, not to this file — see
+  // namespacedToolName in src/lib/mcp.ts for the naming scheme.
+  const mcp = parseNamespacedToolName(name);
+  if (mcp) {
+    return callMcpTool(listMcpServers(), mcp.serverId, mcp.toolName, args);
+  }
   if (name === 'get_current_date') {
     const now = new Date();
     return {
@@ -550,13 +603,20 @@ export interface GenerationParams {
 export async function runGeneration(job: Job, params: GenerationParams): Promise<void> {
   const { base, model, think, options, toolsEnabled, memoryEnabled, searxngTemplate } = params;
   const excludeTools = params.excludeTools ?? [];
-  const messages: ChatMessageIn[] = params.messages.map((m) => ({
-    role: m.role,
-    content: m.content,
-    ...(m.tool_calls ? { tool_calls: m.tool_calls } : {}),
-    ...(m.name ? { name: m.name } : {}),
-    ...(m.images?.length ? { images: m.images } : {}),
-  }));
+  const messages: ChatMessageIn[] = params.messages.map((m) => {
+    // Ollama wants the image bytes inline as base64. They are stored as
+    // attachment ids (see src/lib/db.ts), so they are read back here, at
+    // the one moment they're actually needed, rather than being carried
+    // through the app as multi-megabyte strings.
+    const images = m.images?.length ? m.images : attachmentsAsBase64(m.attachments);
+    return {
+      role: m.role,
+      content: m.content,
+      ...(m.tool_calls ? { tool_calls: m.tool_calls } : {}),
+      ...(m.name ? { name: m.name } : {}),
+      ...(images.length ? { images } : {}),
+    };
+  });
 
   // Heads-up only, checked once at the start — not a promise either way.
   // Whether this job actually runs alongside the other one is entirely up to
@@ -686,7 +746,7 @@ export async function runGeneration(job: Job, params: GenerationParams): Promise
           // requesting one more tool call that we'd have to drop; it's
           // forced to answer in plain text instead.
           ...((toolsEnabled || memoryEnabled) && !isLastIteration
-            ? { tools: buildTools(toolsEnabled, memoryEnabled, excludeTools) }
+            ? { tools: await buildTools(toolsEnabled, memoryEnabled, excludeTools) }
             : {}),
         }),
       });
