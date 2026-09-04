@@ -408,11 +408,21 @@ export function useColumnChat(column: 'A' | 'B', sessionId: string | null): Colu
             : []),
           ...current
             .filter((m) => m.role !== 'assistant' || m.content)
-            .map((m) => ({
-              role: m.role as 'user' | 'assistant' | 'system',
-              content: m.content,
-              ...(m.images?.length ? { images: m.images } : {}),
-            })),
+            .map((m) => {
+              // Only the tool entries of the trace go back to the server —
+              // it replays them so the model can see the calls its earlier
+              // replies actually made (replayToolTrace in
+              // generation-runner.ts). Thinking entries are deliberately
+              // left out: they're the largest part of a trace and are not
+              // part of the tool-use precedent this is here to preserve.
+              const toolTrace = m.trace?.filter((t) => t.type === 'tool');
+              return {
+                role: m.role as 'user' | 'assistant' | 'system',
+                content: m.content,
+                ...(m.images?.length ? { images: m.images } : {}),
+                ...(toolTrace?.length ? { trace: toolTrace } : {}),
+              };
+            }),
         ];
         const payload = {
           model,

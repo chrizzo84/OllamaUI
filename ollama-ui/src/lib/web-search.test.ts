@@ -143,17 +143,67 @@ describe('performWebSearch', () => {
     expect(fetchMock).toHaveBeenCalledTimes(5);
   });
 
-  it('returns an empty result set instead of throwing when the backend is down', async () => {
+  /*
+  These used to assert the opposite — that a dead backend quietly produced
+  an empty result set. That is indistinguishable from "the web genuinely
+  had no hits", and a model handed `{results: []}` answers from memory
+  instead, inventing figures while the chat shows a tool call that
+  apparently worked. Every page failing is now an error the caller has to
+  see.
+  */
+  it('throws when the backend is unreachable, rather than reporting no hits', async () => {
     fetchMock.mockRejectedValue(new Error('ECONNREFUSED'));
-    const out = await performWebSearch({ query: 'q', endpointTemplate: null });
-    expect(out.results).toEqual([]);
-    expect(out.total).toBe(0);
+    await expect(performWebSearch({ query: 'q', endpointTemplate: null })).rejects.toThrow(
+      /ECONNREFUSED/,
+    );
   });
 
-  it('returns an empty result set on a non-OK response', async () => {
-    fetchMock.mockResolvedValue({ ok: false, json: async () => ({}) });
+  it('throws on a non-OK response, naming the status and the host', async () => {
+    fetchMock.mockResolvedValue({ ok: false, status: 403, statusText: 'Forbidden' });
+    await expect(performWebSearch({ query: 'q', endpointTemplate: null })).rejects.toThrow(
+      /localhost:8080.*HTTP 403 Forbidden/,
+    );
+  });
+
+  it('throws when the endpoint answers with something that is not JSON', async () => {
+    // A SearXNG without its `json` format enabled serves the HTML page, as
+    // does any unrelated service that happens to sit on that port.
+    fetchMock.mockResolvedValue({
+      ok: true,
+      headers: { get: () => 'text/html; charset=utf-8' },
+      json: async () => {
+        throw new SyntaxError('Unexpected token <');
+      },
+    });
+    await expect(performWebSearch({ query: 'q', endpointTemplate: null })).rejects.toThrow(
+      /not JSON.*text\/html/,
+    );
+  });
+
+  it('keeps the results of the pages that worked, and warns about the ones that did not', async () => {
+    fetchMock
+      .mockRejectedValueOnce(new Error('ECONNREFUSED'))
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ results: [r('a.com')] }) });
+    const out = await performWebSearch({
+      query: 'q',
+      concurrency: 2,
+      endpointTemplate: 'http://s.local/?q=<query>&p=<page>',
+    });
+    expect(out.results).toHaveLength(1);
+    expect(out.warnings).toEqual([expect.stringMatching(/ECONNREFUSED/)]);
+  });
+
+  it('leaves warnings unset when every page succeeds', async () => {
+    respondWith([r('a.com')]);
     const out = await performWebSearch({ query: 'q', endpointTemplate: null });
-    expect(out.results).toEqual([]);
+    expect(out.warnings).toBeUndefined();
+  });
+
+  it('keeps the search terms out of the error message', async () => {
+    fetchMock.mockRejectedValue(new Error('ECONNREFUSED'));
+    await expect(
+      performWebSearch({ query: 'my-secret-search', endpointTemplate: null }),
+    ).rejects.toThrow(expect.not.stringContaining('my-secret-search'));
   });
 
   it('bounds each fetch with a timeout signal', async () => {

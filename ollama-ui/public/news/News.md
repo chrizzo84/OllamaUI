@@ -1,5 +1,12 @@
 Chronological list of notable changes to Ollama UI.
 
+## 2026-09-04
+
+- **Web search no longer fails silently** — every failure mode of a SearXNG request (unreachable host, HTTP error, a reply that isn't JSON) was caught and turned into `null`, so `web_search` returned a perfectly successful-looking `{results: [], total: 0}`. That is indistinguishable from "the web genuinely has nothing on this", and a model handed an empty result set answers from memory instead — confidently, often with invented figures, while the chat shows a tool call that apparently worked. Found while investigating a model that seemed to refuse tool calls: the search backend on the configured port was a different service entirely, answering `200 OK` with HTML. When every page of a search fails the tool now reports an error naming the reason and the host, and a partial failure returns the results that did arrive plus a `warnings` list. The "not JSON" case says so explicitly, because a SearXNG without its `json` output format enabled is the single most common way to get here. Search terms are kept out of the message — only the host is named.
+- **Tool calls split across stream chunks are no longer dropped** — the streaming reader assigned each chunk's `tool_calls` over the previous ones instead of appending, so a turn whose calls arrived in more than one chunk kept only the last batch. Ollama currently sends them together for the models tested here, which is why this never surfaced; it was a silent data loss waiting for a model/template combination that splits them.
+- **The model can see the tool calls its own earlier replies made** — only a reply's final text is persisted as a message; the calls themselves live in that message's trace and were dropped when the history went back upstream. The model was therefore shown a conversation in which it had apparently answered every "look this up" without ever touching a tool, which is precedent to skip the tool next time and answer from memory. The stored trace is now expanded back into the assistant/`tool` message pair it came from, with results capped so a long chat can't be flooded by replays. Applies to the web chat, Telegram and scheduled tasks alike, since all three run through the same engine.
+- **Tests** — 403 now, up from 395. The two that asserted web search's old silent-failure behaviour were rewritten to the new contract, and the trace replay has its own suite.
+
 ## 2026-09-02
 
 - **Automatic database backups**
