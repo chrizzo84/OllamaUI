@@ -17,6 +17,23 @@ function buildUrl(template: string, query: string) {
   return template.replace('<query>', encodeURIComponent(query));
 }
 
+// Host only — the full URL carries the user's search terms, which have no
+// business in an error string that ends up in a chat reply or a log line.
+function endpointLabel(template: string): string {
+  try {
+    return new URL(template.replace('<query>', 'x').replace('<page>', '1')).host;
+  } catch {
+    return 'the configured endpoint';
+  }
+}
+
+// One page fetch's outcome. `error` is set instead of `data` when the page
+// could not be turned into a SearXNG response at all.
+interface PageOutcome {
+  data: SearxngResponse | null;
+  error?: string;
+}
+
 interface SearxngResultItem {
   title?: string;
   url?: string;
@@ -48,6 +65,13 @@ export interface WebSearchResponse {
   results: WebSearchResultItem[];
   total: number;
   filtered: number;
+  /*
+  Set only when SOME pages failed while others succeeded — the results are
+  usable but incomplete. A run where every page failed never gets here:
+  performWebSearch throws instead, so a broken backend can't masquerade as
+  a genuinely empty result set.
+  */
+  warnings?: string[];
 }
 
 export interface WebSearchOptions {
@@ -85,14 +109,47 @@ export async function performWebSearch(opts: WebSearchOptions): Promise<WebSearc
       cache: 'no-store',
       signal: AbortSignal.timeout(SEARCH_TIMEOUT_MS),
     })
-      .then((r) => (r.ok ? r.json() : null))
-      .catch(() => null);
+      .then(async (r): Promise<PageOutcome> => {
+        if (!r.ok)
+          return { data: null, error: `HTTP ${r.status}${r.statusText ? ' ' + r.statusText : ''}` };
+        try {
+          return { data: (await r.json()) as SearxngResponse };
+        } catch {
+          // Reached a server, but it didn't answer with JSON. Overwhelmingly
+          // this is either a SearXNG whose `json` output format isn't
+          // enabled in settings.yml (it serves the HTML page instead), or a
+          // completely different service listening on that port.
+          const ct = r.headers.get('content-type') || 'unknown';
+          return {
+            data: null,
+            error: `response was not JSON (content-type: ${ct}) — check that this is a SearXNG instance and that its JSON format is enabled`,
+          };
+        }
+      })
+      .catch((e: unknown) => ({
+        data: null,
+        error: e instanceof Error ? e.message : 'request failed',
+      }));
   });
 
-  const pageData = (await Promise.all(pageFetches)) as (SearxngResponse | null)[];
+  const outcomes = await Promise.all(pageFetches);
+  const errors = outcomes.flatMap((o) => (o.error ? [o.error] : []));
+  /*
+  Every page failed. This is a broken/misconfigured search backend, NOT an
+  empty result set, and the difference matters enormously: returning
+  `{results: []}` here reads to the model as "the web has nothing on this",
+  which it then answers from memory — confidently and often with invented
+  figures, while the user sees a tool call that apparently succeeded.
+  Throwing turns it into a tool error the model is explicitly told about
+  (executeTool in generation-runner.ts wraps it as `{error}`), and gives
+  whoever is debugging the actual reason instead of silence.
+  */
+  if (outcomes.length > 0 && errors.length === outcomes.length) {
+    throw new Error(`SearXNG request to ${endpointLabel(template)} failed: ${errors[0]}`);
+  }
   const gathered: SearxngResultItem[] = [];
-  for (const d of pageData) {
-    if (d?.results) gathered.push(...d.results);
+  for (const { data } of outcomes) {
+    if (data?.results) gathered.push(...data.results);
   }
   // basic dedupe by URL
   const seen = new Set<string>();
@@ -125,5 +182,11 @@ export async function performWebSearch(opts: WebSearchOptions): Promise<WebSearc
     engine: r.engine,
   }));
 
-  return { query: q, results, total: gathered.length, filtered: results.length };
+  return {
+    query: q,
+    results,
+    total: gathered.length,
+    filtered: results.length,
+    ...(errors.length ? { warnings: errors } : {}),
+  };
 }

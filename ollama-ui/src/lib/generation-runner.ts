@@ -57,6 +57,13 @@ export interface ChatMessageIn {
   content: string;
   tool_calls?: OllamaToolCall[];
   name?: string;
+  /*
+  The stored trace of a past assistant reply, when this message was loaded
+  from the database. Never sent upstream as-is — runGeneration expands its
+  tool entries back into the assistant/tool message pair they came from
+  (see replayToolTrace).
+  */
+  trace?: TraceEvent[];
   images?: string[]; // raw base64, no data: prefix — passed straight through to Ollama
   // Attachment ids, resolved to base64 `images` just before the upstream
   // request (see runGeneration). Set on messages loaded from the database.
@@ -593,6 +600,53 @@ export interface GenerationParams {
   }) => string | void | Promise<string | void>;
 }
 
+/*
+Caps how much of a replayed tool result is re-sent. A single stored
+web_search result set is several KB and a long chat holds many of them;
+what the model needs from its own history is that the call happened and
+roughly what came back, not the full payload a second time.
+*/
+const REPLAYED_TOOL_RESULT_LIMIT = 600;
+
+/*
+Rebuilds the tool calls a stored assistant reply actually made.
+
+Only the final answer text is persisted as a message; the calls themselves
+live in that message's `trace` (TraceEvent in store/chat.ts), and used to be
+dropped entirely when the history went back upstream. The model was
+therefore shown a conversation in which it had apparently answered every
+"look this up" without ever touching a tool — precedent that pushes it to
+skip the tool next time and answer from memory instead. Models with a weak
+tool-calling prior follow that precedent readily.
+
+Emitted in the shape Ollama expects: one assistant message carrying
+`tool_calls`, then one `tool` message per result.
+*/
+export function replayToolTrace(trace: TraceEvent[] | undefined): ChatMessageIn[] {
+  const toolEvents = (trace ?? []).filter((t): t is Extract<TraceEvent, { type: 'tool' }> => {
+    return t.type === 'tool';
+  });
+  if (toolEvents.length === 0) return [];
+  const truncate = (s: string) =>
+    s.length > REPLAYED_TOOL_RESULT_LIMIT
+      ? s.slice(0, REPLAYED_TOOL_RESULT_LIMIT) + '… [truncated]'
+      : s;
+  return [
+    {
+      role: 'assistant' as const,
+      content: '',
+      tool_calls: toolEvents.map((t) => ({
+        function: { name: t.name, arguments: t.arguments },
+      })),
+    },
+    ...toolEvents.map((t) => ({
+      role: 'tool' as const,
+      content: truncate(JSON.stringify(t.error ? { error: t.error } : (t.result ?? null))),
+      name: t.name,
+    })),
+  ];
+}
+
 // Runs the actual Ollama tool-calling loop independently of any HTTP
 // response — this is what lets generation survive the browser tab closing
 // (and, for a scheduled task, run without any tab ever having existed at
@@ -603,19 +657,24 @@ export interface GenerationParams {
 export async function runGeneration(job: Job, params: GenerationParams): Promise<void> {
   const { base, model, think, options, toolsEnabled, memoryEnabled, searxngTemplate } = params;
   const excludeTools = params.excludeTools ?? [];
-  const messages: ChatMessageIn[] = params.messages.map((m) => {
+  const messages: ChatMessageIn[] = params.messages.flatMap((m) => {
     // Ollama wants the image bytes inline as base64. They are stored as
     // attachment ids (see src/lib/db.ts), so they are read back here, at
     // the one moment they're actually needed, rather than being carried
     // through the app as multi-megabyte strings.
     const images = m.images?.length ? m.images : attachmentsAsBase64(m.attachments);
-    return {
-      role: m.role,
-      content: m.content,
-      ...(m.tool_calls ? { tool_calls: m.tool_calls } : {}),
-      ...(m.name ? { name: m.name } : {}),
-      ...(images.length ? { images } : {}),
-    };
+    return [
+      // The tool calls this reply made come first, in the order they
+      // originally happened: they led to the answer text below them.
+      ...replayToolTrace(m.trace),
+      {
+        role: m.role,
+        content: m.content,
+        ...(m.tool_calls ? { tool_calls: m.tool_calls } : {}),
+        ...(m.name ? { name: m.name } : {}),
+        ...(images.length ? { images } : {}),
+      },
+    ];
   });
 
   // Heads-up only, checked once at the start — not a promise either way.
@@ -775,7 +834,7 @@ export async function runGeneration(job: Job, params: GenerationParams): Promise
     const decoder = new TextDecoder();
     let buffer = '';
     let turnContent = '';
-    let turnToolCalls: OllamaToolCall[] = [];
+    const turnToolCalls: OllamaToolCall[] = [];
     let turnPromptTokens: number | undefined;
     let turnEvalCount = 0;
     let turnEvalDurationNs = 0;
@@ -807,7 +866,11 @@ export async function runGeneration(job: Job, params: GenerationParams): Promise
           publish(job.id, { token: contentDelta, model });
         }
         if (parsed.message.tool_calls?.length) {
-          turnToolCalls = parsed.message.tool_calls;
+          // Append, don't replace: Ollama is free to split a turn's tool
+          // calls across chunks (and does, for some model/template
+          // combinations), in which case assigning here would keep only
+          // whichever batch arrived last and silently drop the rest.
+          turnToolCalls.push(...parsed.message.tool_calls);
         }
       } else if (typeof parsed.response === 'string') {
         // fallback: generate-style (delta)
