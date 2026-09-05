@@ -38,6 +38,7 @@ import {
   getEffectiveSearxngTemplate,
 } from '@/lib/tool-settings-server';
 import { resolveOllamaHostServer } from '@/lib/host-resolve-server';
+import { withDefaultNumCtx } from '@/lib/generation-settings-server';
 import { safeUuid, deriveSessionTitle } from '@/lib/utils';
 import type { ChatMessage } from '@/store/chat';
 // The Telegram wire protocol lives in telegram-api.ts and the slash commands
@@ -214,7 +215,11 @@ async function runTurn(
       model,
       messages,
       think: false,
-      options: undefined,
+      // Telegram used to send no options at all, so every reply here ran at
+      // Ollama's own default context window regardless of what the web UI's
+      // per-model pill said — that pill is browser-local and never reached
+      // this path. The global default (Settings → Generation) does.
+      options: withDefaultNumCtx(undefined),
       toolsEnabled: true,
       memoryEnabled,
       searxngTemplate: getEffectiveSearxngTemplate(),

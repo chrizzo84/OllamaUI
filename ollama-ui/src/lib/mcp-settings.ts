@@ -45,8 +45,15 @@ export function validateMcpServer(input: Partial<McpServerConfig>): {
   to what a function name may contain. Derived from the display name when
   not supplied, which keeps the tool names readable ("mcp__github__search")
   instead of showing the model a UUID.
+
+  "Not supplied" has to include a blank string, not just a missing key: the
+  Add form posts `id: ''` and expects the name to be used (McpServer types
+  `id` as required, so it cannot simply omit it). With `??` that empty
+  string was kept, sanitized to nothing, and every attempt to add a server
+  through the UI failed with an error blaming the name the user had in fact
+  filled in.
   */
-  const id = (input.id ?? name)
+  const id = ((input.id ?? '').trim() || name)
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')

@@ -27,6 +27,7 @@ import {
   getEffectiveSearxngTemplate,
 } from '@/lib/tool-settings-server';
 import { resolveOllamaHostServer } from '@/lib/host-resolve-server';
+import { withDefaultNumCtx } from '@/lib/generation-settings-server';
 import { notifyTelegram } from '@/lib/telegram-bridge';
 import { safeUuid } from '@/lib/utils';
 import type { ChatMessage } from '@/store/chat';
@@ -103,7 +104,10 @@ async function runScheduledTask(task: ScheduledTaskRow): Promise<void> {
       ? injectMemories([{ role: 'user', content: promptForModel }])
       : [{ role: 'user', content: promptForModel }],
     think: false,
-    options: undefined,
+    // Same reasoning as the Telegram bridge: a scheduled run has no browser
+    // behind it, so the global default (Settings → Generation) is the only
+    // context-window setting that can reach it.
+    options: withDefaultNumCtx(undefined),
     toolsEnabled: task.toolsEnabled,
     memoryEnabled,
     searxngTemplate: getEffectiveSearxngTemplate(),

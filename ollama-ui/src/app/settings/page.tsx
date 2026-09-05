@@ -4,7 +4,9 @@ import { useThemeStore } from '@/store/theme';
 import { usePrefsStore } from '@/store/prefs';
 import { useToolsStore, useAnyToolEnabled } from '@/store/tools';
 import { TOOL_KEYS, TOOL_LABELS } from '@/lib/tool-settings';
+import { MIN_NUM_CTX, MAX_NUM_CTX, parseNumCtx } from '@/lib/generation-settings';
 import { useMemoryStore } from '@/store/memory';
+import { useGenerationSettingsStore } from '@/store/generation-settings';
 import { useTelegramSettingsStore } from '@/store/telegram';
 import { useEffect } from 'react';
 import { LocalStorageInfo } from '@/components/local-storage-info';
@@ -31,6 +33,9 @@ export default function SettingsPage() {
   const anyToolEnabled = useAnyToolEnabled();
   const searxngTemplate = useToolsStore((s) => s.searxngTemplate);
   const setSearxngTemplate = useToolsStore((s) => s.setSearxngTemplate);
+  const hydrateGeneration = useGenerationSettingsStore((s) => s.hydrate);
+  const defaultNumCtx = useGenerationSettingsStore((s) => s.defaultNumCtx);
+  const setDefaultNumCtx = useGenerationSettingsStore((s) => s.setDefaultNumCtx);
   const hydrateMemory = useMemoryStore((s) => s.hydrate);
   const memoryEnabled = useMemoryStore((s) => s.memoryEnabled);
   const setMemoryEnabled = useMemoryStore((s) => s.setMemoryEnabled);
@@ -41,9 +46,10 @@ export default function SettingsPage() {
   useEffect(() => {
     hydratePrefs();
     hydrateTools();
+    hydrateGeneration();
     hydrateMemory();
     hydrateTelegramSettings();
-  }, [hydratePrefs, hydrateTools, hydrateMemory, hydrateTelegramSettings]);
+  }, [hydratePrefs, hydrateTools, hydrateGeneration, hydrateMemory, hydrateTelegramSettings]);
 
   return (
     <div className="p-6 flex flex-col gap-8 max-w-3xl mx-auto items-center">
@@ -225,6 +231,53 @@ export default function SettingsPage() {
                 of these.
               </p>
             )}
+          </div>
+        </section>
+        <section className="glass-card p-5 flex flex-col gap-4">
+          <div>
+            <h2 className="text-lg font-semibold text-white/90 mb-1">Generation</h2>
+            <p className="text-xs text-white/50 mb-3">
+              Context window (<code className="text-white/70">num_ctx</code>) requested from Ollama
+              by default. Applies everywhere a reply is generated — the web chat, the Telegram
+              bridge and scheduled tasks — because it is stored on the server rather than in this
+              browser. The <code className="text-white/70">num_ctx</code> pill next to a chat&apos;s
+              model still overrides it for that one model, and the web chat additionally caps the
+              value at whatever the model itself advertises. Raise it when a large tool catalog (an
+              MCP server can contribute tens of thousands of tokens of definitions) no longer fits;
+              a bigger window costs memory on the machine running Ollama.
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                type="number"
+                min={MIN_NUM_CTX}
+                max={MAX_NUM_CTX}
+                step={1024}
+                value={defaultNumCtx}
+                onChange={(e) => {
+                  const parsed = parseNumCtx(Number(e.target.value));
+                  if (parsed !== null) setDefaultNumCtx(parsed);
+                }}
+                className="w-32 rounded-md border border-white/10 bg-black/30 px-2 py-1 text-xs text-white/80 focus:border-white/25 focus:outline-none"
+                aria-label="Default context window in tokens"
+              />
+              <span className="text-xs text-white/40">tokens</span>
+              <div className="flex flex-wrap gap-1">
+                {[8192, 16384, 32768, 65536, 131072].map((preset) => (
+                  <button
+                    key={preset}
+                    type="button"
+                    onClick={() => setDefaultNumCtx(preset)}
+                    className={`rounded-md border px-2 py-1 text-[11px] transition ${
+                      defaultNumCtx === preset
+                        ? 'border-white/25 bg-white/15 text-white'
+                        : 'border-white/10 bg-white/5 text-white/60 hover:bg-white/10'
+                    }`}
+                  >
+                    {preset >= 1024 ? `${Math.round(preset / 1024)}K` : preset}
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
         </section>
         <section className="glass-card p-5 flex flex-col gap-4">
