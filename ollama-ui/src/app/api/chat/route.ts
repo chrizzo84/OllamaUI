@@ -9,6 +9,7 @@ import {
   getEffectiveSearxngTemplate,
   getGloballyDisabledToolNames,
 } from '@/lib/tool-settings-server';
+import { withDefaultNumCtx } from '@/lib/generation-settings-server';
 import type { ChatMessage } from '@/store/chat';
 
 export const runtime = 'nodejs';
@@ -40,7 +41,14 @@ export async function POST(req: NextRequest) {
     const model = (body.model as string | undefined)?.trim();
     const clientMessages: ChatMessageIn[] = Array.isArray(body.messages) ? body.messages : [];
     const think = body.think === true; // only enable if client explicitly requests it
-    const options = typeof body.options === 'object' && body.options ? body.options : undefined;
+    /*
+    The browser sends a num_ctx only when the per-model pill is set for this
+    model; anything else picks up the global default (Settings → Generation)
+    here rather than silently falling back to Ollama's own.
+    */
+    const options = withDefaultNumCtx(
+      typeof body.options === 'object' && body.options ? body.options : undefined,
+    );
     const toolsEnabled = body.toolsEnabled === true;
     const searxngTemplate = getEffectiveSearxngTemplate();
     const sessionId = (body.sessionId as string | undefined)?.trim();

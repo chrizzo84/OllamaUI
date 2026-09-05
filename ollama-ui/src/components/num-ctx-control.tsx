@@ -3,7 +3,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Gauge, RotateCcw } from 'lucide-react';
 import { usePrefsStore } from '@/store/prefs';
-import { DEFAULT_MIN_NUM_CTX } from '@/lib/utils';
+import { useGenerationSettingsStore } from '@/store/generation-settings';
 
 const MIN_CTX = 2048;
 const STEP = 1024;
@@ -37,6 +37,13 @@ export function NumCtxControl({
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
+
+  // The global default this control falls back to (Settings → Generation).
+  const globalDefaultNumCtx = useGenerationSettingsStore((s) => s.defaultNumCtx);
+  const hydrateGeneration = useGenerationSettingsStore((s) => s.hydrate);
+  useEffect(() => {
+    hydrateGeneration();
+  }, [hydrateGeneration]);
 
   const numCtx = usePrefsStore((s) => (model ? s.numCtxByModel[model] : undefined));
   const setNumCtxForModel = usePrefsStore((s) => s.setNumCtxForModel);
@@ -89,8 +96,9 @@ export function NumCtxControl({
 
   const active = numCtx != null;
   // Mirrors the fallback the app actually sends when there's no override
-  // (see DEFAULT_MIN_NUM_CTX / chat-panel.tsx) — never exceeds the model max.
-  const defaultValue = Math.min(DEFAULT_MIN_NUM_CTX, maxContext);
+  // (the global default from Settings → Generation, see chat-panel.tsx) —
+  // never exceeds the model max.
+  const defaultValue = Math.min(globalDefaultNumCtx, maxContext);
   const sliderValue = numCtx ?? defaultValue;
   const presets = PRESETS.filter((p) => p <= maxContext);
   if (presets[presets.length - 1] !== maxContext) presets.push(maxContext);

@@ -6,6 +6,7 @@ import { useToastStore } from '@/store/toast';
 import { useSystemPromptStore } from '@/store/system-prompt';
 import { useToolsStore, useAnyToolEnabled } from '@/store/tools';
 import { useMemoryStore } from '@/store/memory';
+import { useGenerationSettingsStore } from '@/store/generation-settings';
 import { useSessionsStore, loadSessionMessages, persistSessionMessages } from '@/store/sessions';
 import { usePrefsStore } from '@/store/prefs';
 import { useColumnChat } from '@/hooks/use-column-chat';
@@ -29,7 +30,7 @@ import {
   Mic,
 } from 'lucide-react';
 import { Button } from './ui/button';
-import { DEFAULT_MIN_NUM_CTX, hasCapability, safeUuid } from '@/lib/utils';
+import { hasCapability, safeUuid } from '@/lib/utils';
 import { buildSessionMarkdown, downloadTextFile, slugifyFilename } from '@/lib/export-session';
 
 interface ModelTag {
@@ -150,6 +151,7 @@ function ContextBadge({
   effectiveContext: number | undefined;
   usedTokens: number | undefined;
 }) {
+  const badgeDefaultNumCtx = useGenerationSettingsStore((s) => s.defaultNumCtx);
   // Prefer the runtime window (/api/ps); the tags value is only the model max.
   const limit = effectiveContext ?? maxContext;
   if (!limit) return null;
@@ -163,7 +165,7 @@ function ContextBadge({
       titleParts.push(`Model maximum: ${maxContext} tokens`);
   } else {
     titleParts.push(
-      `Model maximum: ${maxContext} tokens — the app requests at least ${DEFAULT_MIN_NUM_CTX} tokens by default (see the num_ctx control). Load the model to see the actual runtime value.`,
+      `Model maximum: ${maxContext} tokens — the app requests ${badgeDefaultNumCtx} tokens by default (Settings → Generation, or the num_ctx control for this model alone). Load the model to see the actual runtime value.`,
     );
   }
   return (
@@ -328,6 +330,15 @@ export function ChatPanel() {
   useEffect(() => {
     hydrateMemory();
   }, [hydrateMemory]);
+
+  // Global default context window (Settings → Generation). Backstops the
+  // per-model pill below, and is what Telegram and scheduled tasks use —
+  // see src/lib/generation-settings.ts.
+  const defaultNumCtx = useGenerationSettingsStore((s) => s.defaultNumCtx);
+  const hydrateGeneration = useGenerationSettingsStore((s) => s.hydrate);
+  useEffect(() => {
+    hydrateGeneration();
+  }, [hydrateGeneration]);
   // null = this session has no override, follows the global setting above —
   // see SessionMeta.memoryEnabled in store/sessions.ts.
   const sessionMemoryOverride = activeSession?.memoryEnabled ?? null;
@@ -361,16 +372,15 @@ export function ChatPanel() {
   const numCtxOverrideB = usePrefsStore((s) =>
     columnB.model ? s.numCtxByModel[columnB.model] : undefined,
   );
+  // Per-model override wins; otherwise the global default, capped at what
+  // the model actually advertises so a large global value can't ask a small
+  // model for a window it doesn't have.
   const numCtxA =
     numCtxOverrideA ??
-    (columnA.model
-      ? Math.min(DEFAULT_MIN_NUM_CTX, contextLengthA ?? DEFAULT_MIN_NUM_CTX)
-      : undefined);
+    (columnA.model ? Math.min(defaultNumCtx, contextLengthA ?? defaultNumCtx) : undefined);
   const numCtxB =
     numCtxOverrideB ??
-    (columnB.model
-      ? Math.min(DEFAULT_MIN_NUM_CTX, contextLengthB ?? DEFAULT_MIN_NUM_CTX)
-      : undefined);
+    (columnB.model ? Math.min(defaultNumCtx, contextLengthB ?? defaultNumCtx) : undefined);
   const lastPromptTokensA = useMemo(
     () => findLastPromptTokens(columnA.messages),
     [columnA.messages],
