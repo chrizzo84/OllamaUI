@@ -392,6 +392,24 @@ separate list instead of bracketing them inline, which is the part models
 drop first — every fact it produced in testing had a usable subject and no
 brackets at all.
 
+**Reading past conversations.** Both passes above only see messages as they
+arrive, so everything said before the memory existed is unexamined — and that
+is where the durable facts usually are, since people explain their setup
+once, early, and never repeat it. The Memory page offers a run over them
+(`/api/memories/backfill`), and it reads a **conversation at a time** rather
+than a message at a time. That was measured, not assumed: on the same
+ten-turn conversation, message-by-message found one fact in five model calls;
+the whole transcript in a single call found three, with entities. The extra
+facts come from context a single message cannot carry, at a fifth of the
+cost.
+
+The run is resumable — `memory_scans` records which messages have been read,
+so a stopped or crashed pass never repeats work — sequential, so it cannot
+saturate the GPU the chat is using, and oldest-first, so a later fact
+supersedes an earlier one exactly as it would have live. A conversation that
+grows afterwards comes back for its new messages only, with the whole
+transcript still given as context. Everything it finds lands as a draft.
+
 The second look reads an answer together with the question it answers. Asked
 where he lived, the reply "Musterstadt!" contains no "ich"
 and no "mein" — the subject is in the question — so the first-person gate

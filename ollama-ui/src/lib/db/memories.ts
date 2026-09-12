@@ -900,6 +900,162 @@ export function listEntitiesWithCounts(): (EntityRow & { memoryCount: number })[
     .all() as unknown as (EntityRow & { memoryCount: number })[];
 }
 
+// --- The backfill over past conversations ----------------------------------
+
+export interface ScanCandidate {
+  messageId: string;
+  sessionId: string;
+  content: string;
+  /** The reply immediately before it — an answer needs its question to mean anything. */
+  priorAssistantText: string | null;
+  created_at: number;
+}
+
+/**
+ * User messages the fact extractor has never looked at, oldest first.
+ *
+ * The per-reply pass only sees the message it is answering, so everything
+ * said before the memory existed is unexamined — and that is usually where
+ * the durable facts are, since people explain their setup once, early.
+ *
+ * Oldest first on purpose: facts arrive in the order they were true, so
+ * processing them in order lets a later fact supersede an earlier one
+ * exactly as it would have live. Running newest-first would leave the
+ * outdated version as the active one.
+ */
+export function listUnscannedMessages(limit = 500): ScanCandidate[] {
+  const rows = db
+    .prepare(
+      `SELECT m.id, m.session_id, m.content, m.created_at, m.parent_id
+       FROM messages m
+       LEFT JOIN memory_scans s ON s.message_id = m.id
+       WHERE m.role = 'user' AND s.message_id IS NULL AND TRIM(m.content) != ''
+       ORDER BY m.created_at ASC
+       LIMIT ?`,
+    )
+    .all(limit) as unknown as {
+    id: string;
+    session_id: string;
+    content: string;
+    created_at: number;
+    parent_id: string | null;
+  }[];
+
+  const priorStmt = db.prepare("SELECT content FROM messages WHERE id = ? AND role = 'assistant'");
+  return rows.map((r) => {
+    const prior = r.parent_id
+      ? (priorStmt.get(r.parent_id) as { content?: string } | undefined)
+      : undefined;
+    return {
+      messageId: r.id,
+      sessionId: r.session_id,
+      content: r.content,
+      // History is a tree: the message a user message hangs off *is* the
+      // reply it followed, which is more reliable than "the previous row by
+      // timestamp" once a conversation has branches.
+      priorAssistantText: prior?.content?.trim() ? prior.content : null,
+      created_at: r.created_at,
+    };
+  });
+}
+
+export interface ScanConversation {
+  sessionId: string;
+  /** Every turn of the conversation, for context. */
+  turns: { role: 'user' | 'assistant'; content: string }[];
+  /** Only the user messages that still need marking — the ones this run is for. */
+  messageIds: string[];
+  created_at: number;
+}
+
+/**
+ * Unexamined user messages grouped into the conversations they belong to,
+ * oldest conversation first.
+ *
+ * Reading a whole conversation at once rather than message by message was
+ * worth measuring: on the same ten-turn conversation a local 35B model found
+ * one fact in five calls message-by-message, and three in a single call from
+ * the transcript. The extra facts come from context a single message cannot
+ * carry, and one call per conversation instead of one per message is the
+ * difference between minutes and an hour over a long history.
+ *
+ * The full turn list is returned for context; only `messageIds` gets marked,
+ * so a conversation that grows later is picked up again for its new messages
+ * alone.
+ */
+export function listUnscannedConversations(limit = 50): ScanConversation[] {
+  const pending = listUnscannedMessages(2000);
+  if (!pending.length) return [];
+
+  const bySession = new Map<string, ScanCandidate[]>();
+  for (const c of pending) {
+    const list = bySession.get(c.sessionId) ?? [];
+    list.push(c);
+    bySession.set(c.sessionId, list);
+  }
+
+  const conversations: ScanConversation[] = [];
+  for (const [sessionId, candidates] of bySession) {
+    const rows = db
+      .prepare(
+        `SELECT role, content FROM messages
+         WHERE session_id = ? AND role IN ('user','assistant') AND TRIM(content) != ''
+         ORDER BY created_at ASC`,
+      )
+      .all(sessionId) as unknown as { role: string; content: string }[];
+    conversations.push({
+      sessionId,
+      turns: rows.map((r) => ({ role: r.role as 'user' | 'assistant', content: r.content })),
+      messageIds: candidates.map((c) => c.messageId),
+      created_at: Math.min(...candidates.map((c) => c.created_at)),
+    });
+  }
+  return conversations.sort((a, b) => a.created_at - b.created_at).slice(0, limit);
+}
+
+export function countUnscannedConversations(): number {
+  const row = db
+    .prepare(
+      `SELECT COUNT(DISTINCT m.session_id) AS c FROM messages m
+       LEFT JOIN memory_scans s ON s.message_id = m.id
+       WHERE m.role = 'user' AND s.message_id IS NULL AND TRIM(m.content) != ''`,
+    )
+    .get() as { c: number };
+  return row?.c ?? 0;
+}
+
+export function countUnscannedMessages(): number {
+  const row = db
+    .prepare(
+      `SELECT COUNT(*) AS c FROM messages m
+       LEFT JOIN memory_scans s ON s.message_id = m.id
+       WHERE m.role = 'user' AND s.message_id IS NULL AND TRIM(m.content) != ''`,
+    )
+    .get() as { c: number };
+  return row?.c ?? 0;
+}
+
+/** Marks a message as examined, whatever the outcome — including "nothing found". */
+export function markMessageScanned(messageId: string, found: number, now = Date.now()): void {
+  db.prepare(
+    'INSERT OR REPLACE INTO memory_scans (message_id, scanned_at, found) VALUES (?, ?, ?)',
+  ).run(messageId, now, found);
+}
+
+export function countScannedMessages(): number {
+  const row = db.prepare('SELECT COUNT(*) AS c FROM memory_scans').get() as { c: number };
+  return row?.c ?? 0;
+}
+
+/**
+ * Forgets that anything was scanned, so the next run re-reads everything.
+ * For when the extraction itself has changed and old verdicts are worth
+ * revisiting — the drafts it produced are not touched.
+ */
+export function clearScanHistory(): void {
+  db.prepare('DELETE FROM memory_scans').run();
+}
+
 // --- Retrieval -------------------------------------------------------------
 
 export interface RecallOptions {

@@ -240,6 +240,26 @@ function initDb(): DatabaseSync {
     put all 50 into every prompt regardless of what was being discussed.
     Same external-content FTS5 setup as messages_fts above.
     */
+    /*
+    Which messages the fact extractor has already looked at.
+
+    The per-reply pass only ever sees the message being answered, so every
+    conversation from before the memory existed is unexamined — and re-reading
+    them costs one model call each, which is minutes of GPU time, not
+    something to repeat on every run. This table is what makes the backfill
+    resumable and idempotent: a message is scanned once, and a later run
+    picks up where the last one stopped.
+
+    The found column records how many drafts that message produced, so the Memory page
+    can say what a run actually yielded rather than only that it finished.
+    */
+    CREATE TABLE IF NOT EXISTS memory_scans (
+      message_id TEXT PRIMARY KEY,
+      scanned_at INTEGER NOT NULL,
+      found INTEGER NOT NULL DEFAULT 0,
+      FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE
+    );
+
     CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
       content,
       content='memories',

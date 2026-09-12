@@ -18,6 +18,7 @@ import { Button } from '@/components/ui/button';
 import { useToastStore } from '@/store/toast';
 import { Pin, PinOff, Archive, Trash2, Plus, History, GitBranch, Check } from 'lucide-react';
 import { MemoryGraph, type GraphNode, type GraphEdge } from '@/components/memory-graph';
+import { MemoryBackfill } from '@/components/memory-backfill-panel';
 
 type MemoryType = 'identity' | 'state' | 'preference' | 'episodic' | 'procedural' | 'unsorted';
 type MemoryStatus = 'active' | 'superseded' | 'archived' | 'draft';
@@ -581,6 +582,11 @@ export default function MemoryPage() {
           ))}
         </section>
       )}
+
+      {/* Reading the past conversations — offered here rather than hidden in
+          settings, because what it produces lands in the review queue right
+          above. */}
+      {tab === 'facts' && <MemoryBackfill onFinished={load} />}
 
       {/* --- Add ------------------------------------------------------------ */}
       {tab === 'facts' && (
