@@ -14,7 +14,7 @@ import { sendMessage, callTelegram, type InlineKeyboard } from '@/lib/telegram-a
 import { resolveOllamaHostServer } from '@/lib/host-resolve-server';
 import { fetchModelCapabilities } from '@/lib/model-capabilities';
 import { createNewTelegramSession } from '@/lib/telegram-session';
-import telegramifyMarkdown from 'telegramify-markdown';
+import { renderTelegramMarkdown } from '@/lib/telegram-markdown';
 
 // Registered with Telegram once at startup (setMyCommands) so they show up
 // as autocomplete in the client, in addition to just working when typed.
@@ -71,7 +71,7 @@ async function editTasksMessage(token: string, chatId: number, messageId: number
     await callTelegram(token, 'editMessageText', {
       chat_id: chatId,
       message_id: messageId,
-      text: telegramifyMarkdown(text, 'escape'),
+      text: renderTelegramMarkdown(text),
       parse_mode: 'MarkdownV2',
       reply_markup: replyMarkup,
     });

@@ -9,13 +9,9 @@ it is — receive an update, decide, reply — and that the awkward parts of
 Telegram (the 4096-character cap, MarkdownV2 escaping, the two-step file
 download) are stated once, in the place that owns them.
 */
-import telegramifyMarkdown from 'telegramify-markdown';
+import { renderTelegramMarkdown, splitForTelegram, chunkPlainText } from '@/lib/telegram-markdown';
 
 const API_BASE = 'https://api.telegram.org';
-
-// Telegram's real cap is 4096 UTF-16 code units; leave headroom rather than
-// cut it exactly at the limit.
-const TELEGRAM_MESSAGE_LIMIT = 3500;
 
 export type InlineKeyboard = {
   inline_keyboard: { text: string; callback_data: string }[][];
@@ -78,13 +74,10 @@ export async function downloadTelegramPhoto(token: string, fileId: string): Prom
   return (await downloadTelegramFileBytes(token, fileId)).toString('base64');
 }
 
-export function chunkText(text: string): string[] {
-  const chunks: string[] = [];
-  for (let i = 0; i < text.length; i += TELEGRAM_MESSAGE_LIMIT) {
-    chunks.push(text.slice(i, i + TELEGRAM_MESSAGE_LIMIT));
-  }
-  return chunks.length ? chunks : ['(empty reply)'];
-}
+// Kept as the plain-text splitter only. It used to slice *rendered*
+// MarkdownV2 at a fixed offset, which cut entities and escape sequences in
+// half and cost the whole reply its formatting — see telegram-markdown.ts.
+export const chunkText = chunkPlainText;
 
 // Reply markup (inline keyboard) is only attached to the final chunk — a
 // multi-chunk reply is rare in practice (only a very long list/reply hits
@@ -111,12 +104,15 @@ export async function sendChunks(
 }
 
 // Sends `text` as Telegram MarkdownV2 (so the model's normal **bold**/`code`/
-// lists render instead of showing as raw asterisks/backticks). LLM markdown
-// isn't guaranteed to be valid MarkdownV2 — telegramify-markdown handles the
-// escaping, but a chunk boundary can still split an entity in two on a long,
-// multi-chunk reply — so on any failure this resends the whole thing as
-// plain text instead. A rare double-send (some chunks already went out
-// formatted) is the accepted cost of never silently dropping a reply.
+// tables render instead of showing as raw asterisks and pipes). Splitting
+// happens on the *source* Markdown (splitForTelegram), so every message is a
+// complete, independently valid document rather than a slice through the
+// middle of an entity — the old behaviour, which made Telegram reject the
+// message and cost the entire reply its formatting.
+//
+// The fallback is now per message: if one still fails to parse, only that
+// one is resent as plain text, instead of re-sending the whole reply and
+// duplicating everything that already arrived correctly.
 // Returns the last sent message's id (used to attach/edit an inline
 // keyboard later), or undefined if replyMarkup wasn't requested.
 export async function sendMessage(
@@ -125,17 +121,36 @@ export async function sendMessage(
   text: string,
   replyMarkup?: InlineKeyboard,
 ): Promise<number | undefined> {
-  try {
-    return await sendChunks(
-      token,
-      chatId,
-      chunkText(telegramifyMarkdown(text, 'escape')),
-      'MarkdownV2',
-      replyMarkup,
-    );
-  } catch {
-    return await sendChunks(token, chatId, chunkText(text), undefined, replyMarkup);
+  const messages = splitForTelegram(text);
+  if (!messages.length) {
+    return await sendChunks(token, chatId, ['(empty reply)'], undefined, replyMarkup);
   }
+  let lastId: number | undefined;
+  for (let i = 0; i < messages.length; i++) {
+    const isLast = i === messages.length - 1;
+    const markup = isLast ? replyMarkup : undefined;
+    try {
+      lastId = await sendChunks(token, chatId, [messages[i]], 'MarkdownV2', markup);
+    } catch {
+      // Rendered but unparseable: send this piece unformatted rather than
+      // lose it. The source text for this piece isn't recoverable from the
+      // rendered form, so the escapes are stripped instead.
+      lastId = await sendChunks(
+        token,
+        chatId,
+        chunkText(stripMarkdownV2Escapes(messages[i])),
+        undefined,
+        markup,
+      );
+    }
+  }
+  return lastId;
+}
+
+// `\.` → `.`, so a message that has to fall back to plain text doesn't show
+// the escaping machinery to the reader.
+function stripMarkdownV2Escapes(text: string): string {
+  return text.replace(/\\([_*[\]()~`>#+\-=|{}.!\\])/g, '$1');
 }
 
 export async function sendStatusMessage(
@@ -146,7 +161,7 @@ export async function sendStatusMessage(
   try {
     const result = await callTelegram<{ message_id: number }>(token, 'sendMessage', {
       chat_id: chatId,
-      text: telegramifyMarkdown(text, 'escape'),
+      text: renderTelegramMarkdown(text),
       parse_mode: 'MarkdownV2',
     });
     return result.message_id;
@@ -171,7 +186,7 @@ export function editStatusMessage(
   void callTelegram(token, 'editMessageText', {
     chat_id: chatId,
     message_id: messageId,
-    text: telegramifyMarkdown(text, 'escape'),
+    text: renderTelegramMarkdown(text),
     parse_mode: 'MarkdownV2',
   }).catch(() => {});
 }

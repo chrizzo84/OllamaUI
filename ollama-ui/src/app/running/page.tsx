@@ -5,6 +5,8 @@ import { motion } from 'framer-motion';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { isStopSupported } from '@/lib/version';
+import { memoryTotals, processorSplit } from '@/lib/processor-split';
+import type { GpuDevice, GpuSource } from '@/lib/gpu-devices';
 import { useToastStore } from '@/store/toast';
 
 interface PsModelDetails {
@@ -36,6 +38,29 @@ async function fetchPs(): Promise<PsResponse> {
   return { models: Array.isArray(j.models) ? j.models : [] };
 }
 
+interface GpuResponse {
+  devices: GpuDevice[];
+  source: GpuSource | null;
+  reason?: string;
+  probed: boolean;
+}
+
+// Per-card usage, which `/api/ps` cannot provide (it reports one VRAM total
+// per model, summed over every GPU). Never throws a "no GPUs" case into the
+// UI as an error: that is the normal answer for a remote Ollama host or a
+// machine without vendor tooling, and the `reason` is what gets shown.
+async function fetchGpus(): Promise<GpuResponse> {
+  const r = await fetch('/api/gpu', { cache: 'no-store' });
+  if (!r.ok) return { devices: [], source: null, probed: false };
+  const j = await r.json();
+  return {
+    devices: Array.isArray(j.devices) ? j.devices : [],
+    source: j.source ?? null,
+    reason: typeof j.reason === 'string' ? j.reason : undefined,
+    probed: !!j.probed,
+  };
+}
+
 async function fetchVersion(): Promise<string | null> {
   const r = await fetch('/api/version', { cache: 'no-store' });
   if (!r.ok) return null;
@@ -53,19 +78,6 @@ function formatSize(bytes?: number): string {
     i++;
   }
   return `${val.toFixed(val >= 10 || i === 0 ? 0 : 1)} ${units[i]}`;
-}
-
-// Mirrors Ollama's own `ollama ps` PROCESSOR column: how much of the model
-// currently sits in VRAM vs. system RAM.
-function processorSplit(m: PsModel): { cpuPct: number; gpuPct: number; label: string } {
-  const size = m.size || 0;
-  const vram = m.size_vram || 0;
-  if (size <= 0) return { cpuPct: 0, gpuPct: 0, label: '—' };
-  const gpuPct = Math.max(0, Math.min(100, Math.round((vram / size) * 100)));
-  const cpuPct = 100 - gpuPct;
-  if (gpuPct >= 100) return { cpuPct: 0, gpuPct: 100, label: '100% GPU' };
-  if (gpuPct <= 0) return { cpuPct: 100, gpuPct: 0, label: '100% CPU' };
-  return { cpuPct, gpuPct, label: `${cpuPct}% CPU / ${gpuPct}% GPU` };
 }
 
 function useNow(intervalMs: number): number {
@@ -116,6 +128,13 @@ export default function RunningPage() {
     refetchOnWindowFocus: true,
   });
 
+  const { data: gpu } = useQuery({
+    queryKey: ['gpu-devices'],
+    queryFn: fetchGpus,
+    refetchInterval: 4000,
+    refetchOnWindowFocus: true,
+  });
+
   const { data: version } = useQuery({
     queryKey: ['ollama-version'],
     queryFn: fetchVersion,
@@ -147,6 +166,9 @@ export default function RunningPage() {
     function onActiveChange() {
       loadActiveHost();
       queryClient.invalidateQueries({ queryKey: ['ollama-ps-page'] });
+      // Whether per-card data is available at all depends on the host (only a
+      // local one is probed), so this has to be re-asked, not just the list.
+      queryClient.invalidateQueries({ queryKey: ['gpu-devices'] });
     }
     window.addEventListener('active-host-changed', onActiveChange as EventListener);
     return () => window.removeEventListener('active-host-changed', onActiveChange as EventListener);
@@ -154,11 +176,12 @@ export default function RunningPage() {
 
   const models = ps?.models ?? [];
   const stopSupported = version ? isStopSupported(version) : false;
-  const totalVram = models.reduce((sum, m) => sum + (m.size_vram || 0), 0);
-  const totalRam = models.reduce(
-    (sum, m) => sum + Math.max(0, (m.size || 0) - (m.size_vram || 0)),
-    0,
-  );
+  const { vram: totalVram, ram: totalRam, unknownModels } = memoryTotals(models);
+  const devices = gpu?.devices ?? [];
+  // Only meaningful with dedicated VRAM: on Apple Silicon the "total" is the
+  // machine's whole RAM, so adding it up as GPU capacity would be nonsense.
+  const dedicated = devices.filter((d) => !d.unified);
+  const vramCapacity = dedicated.reduce((sum, d) => sum + (d.memoryTotal || 0), 0);
 
   async function handleStop(modelName: string) {
     setStopping((prev) => new Set(prev).add(modelName));
@@ -245,12 +268,21 @@ export default function RunningPage() {
               </span>
               <span className="text-2xl font-bold tabular-nums text-white/90">{models.length}</span>
             </div>
-            <div className="glass-card p-4 flex flex-col gap-1">
+            <div
+              className="glass-card p-4 flex flex-col gap-1"
+              title="Sum of every loaded model's size_vram — Ollama reports that as one figure across all GPUs, so a model spread over several cards is fully counted here."
+            >
               <span className="text-[10px] font-mono uppercase tracking-wider text-white/30">
-                VRAM in use
+                VRAM in use{dedicated.length > 1 ? ` · ${dedicated.length} GPUs` : ''}
               </span>
               <span className="text-2xl font-bold tabular-nums text-white/90">
                 {formatSize(totalVram)}
+                {vramCapacity > 0 && (
+                  <span className="text-sm font-normal text-white/40">
+                    {' '}
+                    / {formatSize(vramCapacity)}
+                  </span>
+                )}
               </span>
             </div>
             <div className="glass-card p-4 flex flex-col gap-1">
@@ -262,6 +294,15 @@ export default function RunningPage() {
               </span>
             </div>
           </div>
+
+          {unknownModels > 0 && (
+            <div className="text-[11px] text-yellow-400/70">
+              {unknownModels} model{unknownModels > 1 ? 's' : ''} reported more VRAM than total size
+              — left out of the totals above, same as `ollama ps` showing “Unknown”.
+            </div>
+          )}
+
+          <GpuPanel gpu={gpu} />
 
           {models.length === 0 ? (
             <div className="rounded-lg border border-white/10 bg-white/5 p-6 text-center text-white/50">
@@ -275,7 +316,7 @@ export default function RunningPage() {
               className="flex flex-col gap-3"
             >
               {models.map((m) => {
-                const split = processorSplit(m);
+                const split = processorSplit(m.size, m.size_vram);
                 const isStopping = stopping.has(m.name);
                 return (
                   <li
@@ -315,10 +356,21 @@ export default function RunningPage() {
                       </div>
                       <div className="flex items-center gap-3 shrink-0">
                         <div className="text-right">
-                          <div className="text-xs font-mono text-white/60">{split.label}</div>
+                          <div
+                            className={`text-xs font-mono ${split.known ? 'text-white/60' : 'text-yellow-400/70'}`}
+                            title={
+                              split.known
+                                ? 'Share of this model’s resident memory in VRAM vs. system RAM. The VRAM figure is Ollama’s total across every GPU it placed the model on.'
+                                : 'Ollama reported more VRAM than total size for this model — no split can be derived (`ollama ps` prints “Unknown” here too).'
+                            }
+                          >
+                            {split.label}
+                          </div>
                           <div className="text-[10px] text-white/30">
                             {formatSize(m.size)}
-                            {m.size_vram ? ` · VRAM ${formatSize(m.size_vram)}` : ''}
+                            {m.size_vram
+                              ? ` · VRAM ${formatSize(m.size_vram)}${dedicated.length > 1 ? ' (all GPUs)' : ''}`
+                              : ''}
                           </div>
                         </div>
                         {stopSupported ? (
@@ -344,11 +396,18 @@ export default function RunningPage() {
                     </div>
 
                     <div className="mt-3 flex items-center gap-2">
-                      <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-white/10">
+                      {/* Stacked: the CPU remainder is drawn too, so a model
+                          that is 97% offloaded is visibly not 100%. */}
+                      <div className="flex h-1.5 flex-1 overflow-hidden rounded-full bg-white/10">
                         <div
                           className="h-full bg-[rgb(var(--accent-glow))] shadow-[0_0_8px_rgb(var(--accent-glow)/0.6)] transition-[width]"
                           style={{ width: `${split.gpuPct}%` }}
-                          title={`${split.gpuPct}% GPU`}
+                          title={`${split.gpuPct.toFixed(1)}% GPU (VRAM, all cards)`}
+                        />
+                        <div
+                          className="h-full bg-amber-400/50 transition-[width]"
+                          style={{ width: `${split.cpuPct}%` }}
+                          title={`${split.cpuPct.toFixed(1)}% CPU (system RAM)`}
                         />
                       </div>
                       <span className="text-[10px] font-mono text-white/30 shrink-0">
@@ -362,6 +421,100 @@ export default function RunningPage() {
           )}
         </>
       )}
+    </div>
+  );
+}
+
+/**
+ * Per-card VRAM, read from the machine this UI runs on — see
+ * src/lib/gpu-devices.ts. Ollama's API gives one VRAM total per model summed
+ * over all GPUs, so without this there is no way to tell an even spread
+ * across two cards from one card nearly full and the other idle, which is
+ * precisely what decides whether the next model will fit.
+ *
+ * When no per-card data is available (remote Ollama host, no vendor tool,
+ * probe switched off) this renders the reason rather than nothing: a missing
+ * panel looks like a broken feature, and "the API only reports a total" is
+ * the actual answer.
+ */
+function GpuPanel({ gpu }: { gpu: GpuResponse | undefined }) {
+  if (!gpu) return null;
+  const { devices, source, reason } = gpu;
+
+  if (devices.length === 0) {
+    if (!reason) return null;
+    return (
+      <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3 text-[11px] leading-relaxed text-white/40">
+        <span className="font-mono uppercase tracking-wider text-white/30">Per-GPU usage</span> —{' '}
+        {reason}
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex items-baseline gap-2">
+        <span className="text-[10px] font-mono uppercase tracking-wider text-white/30">
+          {devices.length === 1 ? 'GPU' : `${devices.length} GPUs`}
+        </span>
+        <span className="text-[10px] font-mono text-white/25">
+          via {source} · whole device, not just Ollama
+        </span>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2">
+        {devices.map((d) => {
+          const total = d.memoryTotal || 0;
+          const used = d.memoryUsed;
+          const pct = total > 0 && used !== undefined ? Math.min(100, (used / total) * 100) : null;
+          return (
+            <div
+              key={`${d.index}-${d.name}`}
+              className="rounded-xl border border-white/10 bg-white/[0.04] p-4"
+            >
+              <div className="flex items-baseline justify-between gap-2">
+                <span className="truncate text-sm font-semibold text-white/80" title={d.name}>
+                  <span className="font-mono text-white/35">#{d.index}</span> {d.name}
+                </span>
+                {d.utilization !== undefined && (
+                  <span
+                    className="shrink-0 text-[10px] font-mono text-white/40"
+                    title="GPU core utilization"
+                  >
+                    {Math.round(d.utilization)}% busy
+                  </span>
+                )}
+              </div>
+              <div className="mt-2 text-[11px] font-mono text-white/50">
+                {used !== undefined ? formatSize(used) : '—'}
+                {total > 0 ? ` / ${formatSize(total)}` : ''}
+                {d.unified && (
+                  <span
+                    className="ml-1 text-white/30"
+                    title="Unified memory: this GPU shares one pool with the CPU, so there is no separate VRAM figure — the total is the machine's RAM."
+                  >
+                    unified memory
+                  </span>
+                )}
+              </div>
+              {pct !== null && (
+                <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/10">
+                  <div
+                    className={`h-full transition-[width] ${
+                      pct > 92
+                        ? 'bg-red-400/70'
+                        : pct > 75
+                          ? 'bg-amber-400/70'
+                          : 'bg-emerald-400/60'
+                    }`}
+                    style={{ width: `${pct}%` }}
+                    title={`${pct.toFixed(1)}% of this card's VRAM in use`}
+                  />
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
