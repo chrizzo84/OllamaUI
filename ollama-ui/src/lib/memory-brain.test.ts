@@ -98,6 +98,89 @@ describe('remember: duplicates and contradictions', () => {
   });
 });
 
+describe('resolving a contradiction', () => {
+  function conflict() {
+    const older = db.remember({ content: '[[Ollama Host]] läuft auf dem NUC' });
+    const newer = db.remember({ content: '[[Ollama Host]] läuft auf dem großen Server' });
+    return { older: older.memory, newer: newer.memory, edge: db.listContradictions()[0].edge };
+  }
+
+  it('keeping the newer one just settles it', () => {
+    const { older, newer, edge } = conflict();
+    db.resolveContradiction(edge.id, 'newer');
+    expect(db.getMemory(newer.id)?.status).toBe('active');
+    expect(db.getMemory(older.id)?.status).toBe('superseded');
+    expect(db.listContradictions()).toHaveLength(0);
+  });
+
+  /**
+   * The correction path: the replacement was simply wrong. The two swap
+   * roles rather than the bad write being deleted, so the record that the
+   * mistake happened survives.
+   */
+  it('keeping the older one swaps the roles', () => {
+    const { older, newer, edge } = conflict();
+    db.resolveContradiction(edge.id, 'older');
+    expect(db.getMemory(older.id)?.status).toBe('active');
+    expect(db.getMemory(older.id)?.supersededBy).toBeNull();
+    expect(db.getMemory(newer.id)?.status).toBe('superseded');
+    expect(db.getMemory(newer.id)?.supersededBy).toBe(older.id);
+    expect(db.recallMemories({ query: 'Ollama Host NUC' }).map((m) => m.id)).toContain(older.id);
+  });
+
+  it('re-points the history so it reads as what actually happened', () => {
+    const { older, newer, edge } = conflict();
+    db.resolveContradiction(edge.id, 'older');
+    const supersedes = db.listEdgesForMemory(older.id).filter((e) => e.kind === 'supersedes');
+    expect(supersedes.some((e) => e.fromId === older.id && e.toId === newer.id)).toBe(true);
+    expect(supersedes.some((e) => e.fromId === newer.id && e.toId === older.id)).toBe(false);
+  });
+
+  /**
+   * "They were never the same question": both stay, but the older one loses
+   * its subject so it stops competing for the single active slot — otherwise
+   * the next write would silently displace only one of the two.
+   */
+  it('keeping both takes the older one out of the competition', () => {
+    const { older, newer, edge } = conflict();
+    db.resolveContradiction(edge.id, 'both');
+    expect(db.getMemory(older.id)?.status).toBe('active');
+    expect(db.getMemory(older.id)?.subject).toBeNull();
+    expect(db.getMemory(newer.id)?.status).toBe('active');
+
+    // A third fact on the subject must now displace only the newer one.
+    db.remember({ content: '[[Ollama Host]] ist jetzt ein Mac Mini' });
+    expect(db.getMemory(older.id)?.status).toBe('active');
+    expect(db.getMemory(newer.id)?.status).toBe('superseded');
+  });
+
+  it('ignores an edge that is not a contradiction', () => {
+    const { older, newer } = conflict();
+    const supersedes = db.listEdgesForMemory(newer.id).find((e) => e.kind === 'supersedes');
+    db.resolveContradiction(supersedes!.id, 'older');
+    expect(db.getMemory(older.id)?.status).toBe('superseded');
+  });
+});
+
+describe('re-classifying by hand', () => {
+  it('sets the type a person knows better than the model does', () => {
+    const r = db.remember({ content: 'heißt [[Alex]]' });
+    db.updateMemoryClassification(r.memory.id, { type: 'identity' });
+    expect(db.getMemory(r.memory.id)?.type).toBe('identity');
+    expect(db.recallMemories({ query: 'irgendwas anderes' }).map((m) => m.id)).toContain(
+      r.memory.id,
+    );
+  });
+
+  it('giving a fact a subject makes it take part in displacement', () => {
+    const loose = db.remember({ content: 'nutzt gerne Docker', subject: null });
+    db.updateMemoryClassification(loose.memory.id, { subject: 'Container Setup' });
+    expect(db.getMemory(loose.memory.id)?.subject).toBe('container-setup');
+    db.remember({ content: 'nutzt jetzt Podman', subject: 'container-setup' });
+    expect(db.getMemory(loose.memory.id)?.status).toBe('superseded');
+  });
+});
+
 describe('remember: the write gate', () => {
   it('parks a low-confidence fact as a draft, out of every prompt', () => {
     const r = db.remember({ content: 'heißt vielleicht [[Chris]]', confidence: 0.3 });

@@ -421,6 +421,59 @@ export function remember(input: RememberInput): RememberResult {
   return { memory: row, superseded, duplicate: false, contradicted };
 }
 
+/**
+ * How a contradiction is settled. The three answers a person actually has
+ * when shown two facts that disagree:
+ *
+ *  - `newer` — what the store already assumed. The edge is just marked
+ *    resolved.
+ *  - `older` — the replacement was wrong. The two swap roles: the older fact
+ *    becomes active again and the newer one is superseded by it. Without
+ *    this, correcting a bad write means deleting it, which loses the record
+ *    that the mistake happened.
+ *  - `both` — they were never the same question. The older fact keeps its
+ *    content but loses its subject, so it stops competing for the one active
+ *    slot and simply stands on its own. Leaving both active *with* the same
+ *    subject would mean the next write silently displaces only one of them.
+ */
+export type ContradictionResolution = 'newer' | 'older' | 'both';
+
+export function resolveContradiction(
+  edgeId: string,
+  keep: ContradictionResolution,
+  now = Date.now(),
+): void {
+  const edge = db.prepare('SELECT * FROM memory_edges WHERE id = ?').get(edgeId) as unknown as
+    EdgeDbRow | undefined;
+  if (!edge || edge.kind !== 'contradicts') return;
+  const newerId = edge.from_id;
+  const olderId = edge.to_id;
+
+  if (keep === 'older') {
+    db.prepare(
+      "UPDATE memories SET status = 'active', superseded_by = NULL, valid_until = NULL, updated_at = ? WHERE id = ?",
+    ).run(now, olderId);
+    db.prepare(
+      "UPDATE memories SET status = 'superseded', superseded_by = ?, valid_until = ?, updated_at = ? WHERE id = ?",
+    ).run(olderId, now, now, newerId);
+    // The supersedes edge pointed the wrong way round; re-point it so the
+    // history reads as what actually happened.
+    db.prepare(
+      "DELETE FROM memory_edges WHERE kind = 'supersedes' AND from_id = ? AND to_id = ?",
+    ).run(newerId, olderId);
+    addEdge(olderId, 'memory', newerId, 'supersedes', now);
+  } else if (keep === 'both') {
+    db.prepare(
+      "UPDATE memories SET status = 'active', superseded_by = NULL, valid_until = NULL, subject = NULL, updated_at = ? WHERE id = ?",
+    ).run(now, olderId);
+    db.prepare(
+      "DELETE FROM memory_edges WHERE kind = 'supersedes' AND from_id = ? AND to_id = ?",
+    ).run(newerId, olderId);
+  }
+
+  resolveEdge(edgeId, now);
+}
+
 /** Promotes a draft into the active store (the Memory page's approve button). */
 export function approveMemory(id: string): MemoryRow | undefined {
   const now = Date.now();
@@ -440,6 +493,31 @@ export function archiveMemory(id: string): void {
     Date.now(),
     id,
   );
+}
+
+/**
+ * Re-classifies a fact from the Memory page — the one thing a person can do
+ * that the model cannot do well: say what kind of fact this is. Setting a
+ * subject makes it participate in displacement from then on; clearing it
+ * takes it out of that competition.
+ */
+export function updateMemoryClassification(
+  id: string,
+  patch: { type?: MemoryType; subject?: string | null },
+): MemoryRow | undefined {
+  const now = Date.now();
+  if (patch.type) {
+    db.prepare('UPDATE memories SET type = ?, updated_at = ? WHERE id = ?').run(
+      patch.type,
+      now,
+      id,
+    );
+  }
+  if (patch.subject !== undefined) {
+    const slug = patch.subject ? slugifyEntity(patch.subject) : null;
+    db.prepare('UPDATE memories SET subject = ?, updated_at = ? WHERE id = ?').run(slug, now, id);
+  }
+  return getMemory(id);
 }
 
 export function setMemoryPinned(id: string, pinned: boolean): void {

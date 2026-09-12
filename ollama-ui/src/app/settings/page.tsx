@@ -11,6 +11,7 @@ import { useTelegramSettingsStore } from '@/store/telegram';
 import { useEffect } from 'react';
 import { LocalStorageInfo } from '@/components/local-storage-info';
 import { HostManagerPanel } from '@/components/host-manager-panel';
+import Link from 'next/link';
 import { MemoryPanel } from '@/components/memory-panel';
 import { StatusPanel } from '@/components/status-panel';
 import { AuthPanel } from '@/components/auth-panel';
@@ -299,7 +300,22 @@ export default function SettingsPage() {
               />
               <span className="text-xs text-white/70">Enable memory globally</span>
             </label>
+            {/* The quick list stays here for a fast look and a fast delete;
+                anything that needs context — what kind of fact it is, what it
+                replaced, which facts disagree with each other — belongs on the
+                Memory page, which is built for exactly that. Two surfaces, one
+                of them deliberately shallow. */}
             <MemoryPanel />
+            <Link
+              href="/memory"
+              className="mt-3 inline-flex items-center gap-1.5 text-xs text-[rgb(var(--accent-glow))] hover:underline"
+            >
+              Open the knowledge base →
+            </Link>
+            <p className="mt-1 text-[11px] text-white/35">
+              Types and history, what the assistant is unsure about, and the facts that contradict
+              each other.
+            </p>
           </div>
         </section>
         <section className="glass-card p-5 flex flex-col gap-4">

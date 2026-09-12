@@ -39,7 +39,13 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
         data-size={size}
         disabled={disabled || loading}
         className={cn(
-          'relative inline-flex items-center justify-center font-medium transition-all duration-150 outline-none focus-visible:ring-2 ring-offset-2 ring-offset-background ring-indigo-500 disabled:opacity-60 disabled:cursor-not-allowed select-none will-change-transform',
+          // whitespace-nowrap: a button has a fixed height, so a label that
+          // wraps doesn't grow the button — it overflows it. Inside a flex
+          // row a button can be squeezed below its content width, which put
+          // the icon on one line and the label on the next (seen on the
+          // Memory page's "Übernehmen"). Not wrapping also makes the button's
+          // min-content width its real width, so it stops being squeezed.
+          'relative inline-flex items-center justify-center whitespace-nowrap font-medium transition-all duration-150 outline-none focus-visible:ring-2 ring-offset-2 ring-offset-background ring-indigo-500 disabled:opacity-60 disabled:cursor-not-allowed select-none will-change-transform',
           variantClasses[variant],
           sizeClasses[size],
           className,
@@ -49,7 +55,12 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
         {loading && (
           <span className="absolute left-2 inline-flex h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" />
         )}
-        <span className={cn(loading && 'opacity-0')}>{children}</span>
+        {/* inline-flex so an icon and its label sit on one baseline-aligned
+            row; the gap is small enough that existing call sites writing
+            `<Icon /> Label` with a literal space still look right. */}
+        <span className={cn('inline-flex items-center gap-1.5', loading && 'opacity-0')}>
+          {children}
+        </span>
       </button>
     );
   },
