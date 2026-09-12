@@ -18,11 +18,17 @@
  * cross-platform/Docker build problems that came with `better-sqlite3`
  * (removed in an earlier revision) apply here. Requires Node >= 22.5.
  *
- * NOTE: `next dev` must run without `--turbopack` — Turbopack's dev bundler
- * (as of Next.js 16.2.4) cannot load `node:sqlite` at all, whether via a
- * static `import`, `require()`, or a dynamically-built module name (all
- * three fail with different errors). `next build`/`next start` already use
- * webpack, which handles it fine, so this only affects local dev.
+ * NOTE: Turbopack could not load `node:sqlite` at all as of Next.js 16.2.4 —
+ * not via a static `import`, `require()`, or a dynamically-built module name
+ * (all three failed differently) — which is why `next dev` was run without
+ * it. That is fixed: under 16.3.3 the default Turbopack dev server serves
+ * database-backed routes normally (checked against a running dev server:
+ * /api/hosts and /api/memories both answer from SQLite). The note stays
+ * because the symptom is worth recognising if it ever returns.
+ *
+ * `next build` is a separate matter and still pins `--webpack`: Turbopack
+ * compiles src/proxy.ts but does not wire it into an `output: standalone`
+ * server, which silently disables the password gate. See the build script.
  *
  * The actual DB connection/schema/migration is created LAZILY (see `db`
  * below), not at module top-level: `next build`'s "Collecting page data"

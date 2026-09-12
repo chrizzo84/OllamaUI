@@ -1,36 +1,48 @@
 import type { NextConfig } from 'next';
 import os from 'os';
 
-// Dynamisch alle lokalen IPv4 Interfaces sammeln, um Dev-Origin-Warnung zu vermeiden.
-// DISCLAIMER: Das wirkt nur in Entwicklung; in Production ignoriert Next dieses Feld.
-function collectLocalOrigins(port = 3000): string[] {
+/*
+Next blocks requests for /_next/* dev resources whose Origin isn't allowlisted.
+Reaching a dev server from another device on the LAN — a phone, or just the
+machine's own address rather than localhost — therefore serves the HTML and
+then blocks every chunk behind it. The page loads and nothing on it works,
+which looks like the app is broken rather than like a bundler policy.
+
+The entries are HOSTNAMES, not origins: "192.168.1.5", not
+"http://192.168.1.5:3000". The previous version stored full URLs with a
+hard-coded port, so nothing ever matched and the allowlist had no effect —
+the warning Next prints names exactly the form it wants.
+*/
+function localHostnames(): string[] {
   try {
-    const ifaces = os.networkInterfaces();
-    const ips = Object.values(ifaces)
+    return Object.values(os.networkInterfaces())
       .flat()
       .filter((i): i is NonNullable<typeof i> => !!i && i.family === 'IPv4' && !i.internal)
-      .map((i) => `http://${i.address}:${port}`);
-    return ips;
+      .map((i) => i.address);
   } catch {
     return [];
   }
 }
 
+// Anything else that should reach the dev server: a hostname per entry,
+// comma-separated (ALLOWED_DEV_ORIGINS=mac.local,192.168.1.20).
 const envOrigins = (process.env.ALLOWED_DEV_ORIGINS || '')
   .split(',')
-  .map((s) => s.trim())
+  .map((s) =>
+    s
+      .trim()
+      .replace(/^https?:\/\//, '')
+      .replace(/:\d+$/, ''),
+  )
   .filter(Boolean);
 
-const baseOrigins = ['http://localhost:3000', 'http://127.0.0.1:3000'];
-
-const autoOrigins = collectLocalOrigins(3000);
-const allowedDevOrigins = Array.from(new Set([...baseOrigins, ...autoOrigins, ...envOrigins]));
+const allowedDevOrigins = Array.from(
+  new Set(['localhost', '127.0.0.1', ...localHostnames(), ...envOrigins]),
+);
 
 const nextConfig: NextConfig = {
   output: 'standalone',
-  // Offizielle Lösung für die Warnung: explizit die erlaubten Dev-Origns setzen.
-  // Wildcards sind NICHT erlaubt; deshalb enumerieren wir dynamisch.
-  // Entferne/vereinfachen, falls zu großzügig.
+  // Development only — Next ignores this in a production build.
   allowedDevOrigins,
 };
 
