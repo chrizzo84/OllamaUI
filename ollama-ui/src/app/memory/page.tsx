@@ -17,6 +17,7 @@ import { motion } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { useToastStore } from '@/store/toast';
 import { Pin, PinOff, Archive, Trash2, Plus, History, GitBranch, Check } from 'lucide-react';
+import { MemoryGraph, type GraphNode, type GraphEdge } from '@/components/memory-graph';
 
 type MemoryType = 'identity' | 'state' | 'preference' | 'episodic' | 'procedural' | 'unsorted';
 type MemoryStatus = 'active' | 'superseded' | 'archived' | 'draft';
@@ -50,6 +51,14 @@ interface Contradiction {
   newer: ContradictionSide | null;
   older: ContradictionSide | null;
 }
+
+interface EntitySummary {
+  id: string;
+  label: string;
+  memoryCount: number;
+}
+
+type Tab = 'facts' | 'graph';
 
 const TYPE_LABELS: Record<MemoryType, string> = {
   identity: 'About you',
@@ -121,6 +130,15 @@ export default function MemoryPage() {
   const [adding, setAdding] = useState(false);
   const [busy, setBusy] = useState<Set<string>>(new Set());
   const [history, setHistory] = useState<{ subject: string; items: MemoryItem[] } | null>(null);
+  const [tab, setTab] = useState<Tab>('facts');
+  const [graph, setGraph] = useState<{ nodes: GraphNode[]; edges: GraphEdge[]; truncated: number }>(
+    { nodes: [], edges: [], truncated: 0 },
+  );
+  const [entities, setEntities] = useState<EntitySummary[]>([]);
+  const [focus, setFocus] = useState<string | undefined>();
+  const [selected, setSelected] = useState<GraphNode | null>(null);
+  const [selectedFacts, setSelectedFacts] = useState<MemoryItem[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -142,6 +160,61 @@ export default function MemoryPage() {
   useEffect(() => {
     load();
   }, [load]);
+
+  // The graph is only fetched while its tab is open: it is the one query here
+  // that walks the whole edge table, and nobody looking at the fact list
+  // needs it.
+  useEffect(() => {
+    if (tab !== 'graph') return;
+    const params = new URLSearchParams();
+    if (focus) params.set('focus', focus);
+    if (showHistory) params.set('history', '1');
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch(`/api/memories/graph?${params}`, { cache: 'no-store' });
+        if (!r.ok || cancelled) return;
+        const j = await r.json();
+        setGraph({ nodes: j.nodes ?? [], edges: j.edges ?? [], truncated: j.truncated ?? 0 });
+        setEntities(j.entities ?? []);
+      } catch {
+        /* the empty state in the canvas says enough */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [tab, focus, showHistory]);
+
+  // What is known about the selected node — the backlink view for an entity,
+  // the fact itself for a fact. This is the part that makes the graph useful
+  // rather than pretty: a dot you can't read is just a dot.
+  useEffect(() => {
+    if (!selected) {
+      setSelectedFacts([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      if (selected.kind === 'entity') {
+        const id = selected.id.slice('entity:'.length);
+        // Follows the canvas: with history drawn, the panel shows it too, so
+        // the two halves of the view never disagree about what is current.
+        const r = await fetch(
+          `/api/memories?entity=${encodeURIComponent(id)}${showHistory ? '&history=1' : ''}`,
+          { cache: 'no-store' },
+        );
+        if (r.ok && !cancelled) setSelectedFacts((await r.json()).items ?? []);
+      } else {
+        const id = selected.id.slice('memory:'.length);
+        const r = await fetch(`/api/memories?id=${encodeURIComponent(id)}`, { cache: 'no-store' });
+        if (r.ok && !cancelled) setSelectedFacts((await r.json()).items ?? []);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [selected, showHistory]);
 
   const mark = (id: string, on: boolean) =>
     setBusy((prev) => {
@@ -287,8 +360,55 @@ export default function MemoryPage() {
         </div>
       </div>
 
+      <div className="flex items-center gap-1 border-b border-white/10">
+        {(
+          [
+            ['facts', 'Fakten'],
+            ['graph', 'Graph'],
+          ] as const
+        ).map(([key, label]) => (
+          <button
+            key={key}
+            onClick={() => setTab(key)}
+            className={`-mb-px border-b-2 px-3 py-2 text-sm transition ${
+              tab === key
+                ? 'border-[rgb(var(--accent-glow))] text-white/90'
+                : 'border-transparent text-white/45 hover:text-white/70'
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+        {tab === 'graph' && (
+          <label className="ml-auto flex cursor-pointer select-none items-center gap-2 pb-2 text-[11px] text-white/45">
+            <input
+              type="checkbox"
+              className="accent-violet-500"
+              checked={showHistory}
+              onChange={(e) => setShowHistory(e.target.checked)}
+            />
+            Historie mitzeichnen
+          </label>
+        )}
+      </div>
+
+      {/* The inbox is the work queue, so it stays in reach from either tab —
+          but in the graph view it collapses to one line rather than pushing
+          the canvas below the fold, where a graph nobody scrolls to is a
+          graph nobody looks at. */}
+      {tab === 'graph' && contradictions.length > 0 && (
+        <button
+          onClick={() => setTab('facts')}
+          className="flex items-center gap-2 self-start rounded-lg border border-amber-400/30 bg-amber-400/[0.06] px-3 py-1.5 text-xs text-amber-200/90 hover:bg-amber-400/[0.12]"
+        >
+          <GitBranch className="h-3.5 w-3.5" />
+          {contradictions.length} {contradictions.length === 1 ? 'Widerspruch' : 'Widersprüche'}{' '}
+          offen — entscheiden
+        </button>
+      )}
+
       {/* --- Contradiction inbox ------------------------------------------- */}
-      {contradictions.length > 0 && (
+      {tab === 'facts' && contradictions.length > 0 && (
         <motion.section
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
@@ -383,7 +503,7 @@ export default function MemoryPage() {
       )}
 
       {/* --- Drafts --------------------------------------------------------- */}
-      {drafts.length > 0 && (
+      {tab === 'facts' && drafts.length > 0 && (
         <section className="flex flex-col gap-3">
           <div className="flex items-baseline gap-2">
             <h2 className="text-sm font-semibold text-white/80">Saved for review</h2>
@@ -421,133 +541,239 @@ export default function MemoryPage() {
       )}
 
       {/* --- Add ------------------------------------------------------------ */}
-      <div className="flex gap-2">
-        <input
-          value={newFact}
-          onChange={(e) => setNewFact(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') handleAdd();
-          }}
-          placeholder="Fakt hinzufügen — [[doppelte Klammern]] verlinken Dinge im Graphen"
-          className="flex-1 rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-sm text-white/85 placeholder:text-white/25 focus:border-[rgb(var(--accent-glow)/0.5)] focus:outline-none"
-        />
-        <Button onClick={handleAdd} loading={adding} disabled={!newFact.trim()}>
-          <Plus className="h-4 w-4" /> Merken
-        </Button>
-      </div>
+      {tab === 'facts' && (
+        <div className="flex gap-2">
+          <input
+            value={newFact}
+            onChange={(e) => setNewFact(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') handleAdd();
+            }}
+            placeholder="Fakt hinzufügen — [[doppelte Klammern]] verlinken Dinge im Graphen"
+            className="flex-1 rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-sm text-white/85 placeholder:text-white/25 focus:border-[rgb(var(--accent-glow)/0.5)] focus:outline-none"
+          />
+          <Button onClick={handleAdd} loading={adding} disabled={!newFact.trim()}>
+            <Plus className="h-4 w-4" /> Merken
+          </Button>
+        </div>
+      )}
+
+      {/* --- Graph ---------------------------------------------------------- */}
+      {tab === 'graph' && (
+        <div className="flex flex-col gap-4 lg:flex-row">
+          <div className="min-w-0 flex-1">
+            <MemoryGraph
+              nodes={graph.nodes}
+              edges={graph.edges}
+              focus={focus}
+              onFocus={setFocus}
+              onSelect={setSelected}
+            />
+            {graph.truncated > 0 && !focus && (
+              <p className="mt-2 text-[11px] text-white/35">
+                {graph.truncated} weitere Knoten nicht gezeichnet — die Übersicht zeigt die am
+                stärksten verknüpften und am häufigsten benutzten. Ein Klick auf einen Knoten
+                zentriert auf dessen Nachbarschaft.
+              </p>
+            )}
+          </div>
+
+          <aside className="flex w-full shrink-0 flex-col gap-3 lg:w-80">
+            {selected ? (
+              <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+                <div className="mb-2 text-[10px] font-mono uppercase tracking-wider text-white/30">
+                  {selected.kind === 'entity' ? 'Entität' : 'Fakt'}
+                </div>
+                <h3 className="text-sm font-semibold text-white/90">{selected.label}</h3>
+                {selected.kind === 'entity' && (
+                  <p className="mt-1 text-[11px] text-white/40">
+                    {selectedFacts.length} {selectedFacts.length === 1 ? 'Fakt' : 'Fakten'} handeln
+                    davon
+                  </p>
+                )}
+                <ul className="mt-3 flex flex-col gap-2">
+                  {selectedFacts.map((f) => (
+                    <li
+                      key={f.id}
+                      className="rounded-lg border border-white/10 bg-white/[0.02] p-2.5"
+                    >
+                      <p className="text-xs leading-relaxed text-white/80">
+                        <LinkedContent text={f.content} />
+                      </p>
+                      <div className="mt-1 flex flex-wrap gap-2 text-[10px] text-white/30">
+                        <span>{f.type}</span>
+                        <span>{formatWhen(f.createdAt)}</span>
+                        <span>{f.useCount}× benutzt</span>
+                        {f.sourceSessionId && (
+                          <Link
+                            href={`/chat?session=${f.sourceSessionId}`}
+                            className="underline decoration-dotted hover:text-white/60"
+                          >
+                            Quelle
+                          </Link>
+                        )}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : (
+              <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4 text-[11px] leading-relaxed text-white/40">
+                Ein Knoten zeigt hier, was dahintersteckt — bei einer Entität alles, was über sie
+                bekannt ist. Klicken zentriert den Graphen auf die Nachbarschaft.
+              </div>
+            )}
+
+            <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+              <div className="mb-2 text-[10px] font-mono uppercase tracking-wider text-white/30">
+                Entitäten
+              </div>
+              {entities.length === 0 ? (
+                <p className="text-[11px] text-white/35">
+                  Noch keine — [[Klammern]] in einem Fakt legen sie an.
+                </p>
+              ) : (
+                <ul className="flex flex-col gap-1">
+                  {entities.slice(0, 40).map((e) => (
+                    <li key={e.id}>
+                      <button
+                        onClick={() => {
+                          setFocus(`entity:${e.id}`);
+                          setSelected({ id: `entity:${e.id}`, kind: 'entity', label: e.label });
+                        }}
+                        className={`flex w-full items-center justify-between gap-2 rounded px-2 py-1 text-left text-xs transition hover:bg-white/[0.06] ${
+                          focus === `entity:${e.id}`
+                            ? 'bg-white/[0.08] text-white/90'
+                            : 'text-white/60'
+                        }`}
+                      >
+                        <span className="truncate">{e.label}</span>
+                        <span className="shrink-0 font-mono text-[10px] text-white/30">
+                          {e.memoryCount}
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </aside>
+        </div>
+      )}
 
       {/* --- The facts ------------------------------------------------------ */}
-      {loading ? (
-        <div className="animate-pulse text-white/50">Lade…</div>
-      ) : items.length === 0 ? (
-        <div className="rounded-lg border border-white/10 bg-white/5 p-6 text-center text-white/50">
-          Noch nichts gemerkt. Fakten entstehen im Chat, sobald etwas Dauerhaftes gesagt wird — oder
-          oben von Hand.
-        </div>
-      ) : (
-        grouped.map(([type, list]) => (
-          <section key={type} className="flex flex-col gap-2">
-            <div className="flex items-baseline gap-2">
-              <h2 className="text-sm font-semibold text-white/80">{TYPE_LABELS[type]}</h2>
-              <span className="text-[10px] text-white/30">{TYPE_HINTS[type]}</span>
-            </div>
-            <ul className="flex flex-col gap-2">
-              {list.map((m) => (
-                <li
-                  key={m.id}
-                  className="group flex flex-wrap items-start justify-between gap-3 rounded-xl border border-white/10 bg-white/[0.03] p-4 transition hover:border-white/20"
-                >
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm leading-relaxed text-white/85">
-                      <LinkedContent text={m.content} />
-                    </p>
-                    <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[10px] text-white/30">
-                      {m.pinned && (
-                        <span className="text-[rgb(var(--accent-glow))]">angepinnt</span>
-                      )}
-                      <span>{formatWhen(m.createdAt)}</span>
-                      <span title="How often retrieval actually picked this fact — what earns its place in the context window.">
-                        {m.useCount}× benutzt
-                      </span>
-                      {m.subject && (
-                        <button
-                          onClick={() => openHistory(m.subject!)}
-                          className="inline-flex items-center gap-1 underline decoration-dotted hover:text-white/60"
-                          title="Was hierzu früher galt"
-                        >
-                          <History className="h-3 w-3" />
-                          {m.subject}
-                        </button>
-                      )}
-                      {m.sourceSessionId && (
-                        <Link
-                          href={`/chat?session=${m.sourceSessionId}`}
-                          className="underline decoration-dotted hover:text-white/60"
-                        >
-                          Quelle
-                        </Link>
-                      )}
+      {tab === 'facts' &&
+        (loading ? (
+          <div className="animate-pulse text-white/50">Lade…</div>
+        ) : items.length === 0 ? (
+          <div className="rounded-lg border border-white/10 bg-white/5 p-6 text-center text-white/50">
+            Noch nichts gemerkt. Fakten entstehen im Chat, sobald etwas Dauerhaftes gesagt wird —
+            oder oben von Hand.
+          </div>
+        ) : (
+          grouped.map(([type, list]) => (
+            <section key={type} className="flex flex-col gap-2">
+              <div className="flex items-baseline gap-2">
+                <h2 className="text-sm font-semibold text-white/80">{TYPE_LABELS[type]}</h2>
+                <span className="text-[10px] text-white/30">{TYPE_HINTS[type]}</span>
+              </div>
+              <ul className="flex flex-col gap-2">
+                {list.map((m) => (
+                  <li
+                    key={m.id}
+                    className="group flex flex-wrap items-start justify-between gap-3 rounded-xl border border-white/10 bg-white/[0.03] p-4 transition hover:border-white/20"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm leading-relaxed text-white/85">
+                        <LinkedContent text={m.content} />
+                      </p>
+                      <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[10px] text-white/30">
+                        {m.pinned && (
+                          <span className="text-[rgb(var(--accent-glow))]">angepinnt</span>
+                        )}
+                        <span>{formatWhen(m.createdAt)}</span>
+                        <span title="How often retrieval actually picked this fact — what earns its place in the context window.">
+                          {m.useCount}× benutzt
+                        </span>
+                        {m.subject && (
+                          <button
+                            onClick={() => openHistory(m.subject!)}
+                            className="inline-flex items-center gap-1 underline decoration-dotted hover:text-white/60"
+                            title="Was hierzu früher galt"
+                          >
+                            <History className="h-3 w-3" />
+                            {m.subject}
+                          </button>
+                        )}
+                        {m.sourceSessionId && (
+                          <Link
+                            href={`/chat?session=${m.sourceSessionId}`}
+                            className="underline decoration-dotted hover:text-white/60"
+                          >
+                            Quelle
+                          </Link>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                  <div className="flex shrink-0 items-center gap-1 opacity-60 transition group-hover:opacity-100">
-                    <select
-                      value={m.type}
-                      onChange={(e) => act(m.id, 'classify', { type: e.target.value })}
-                      disabled={busy.has(m.id)}
-                      className="rounded border border-white/10 bg-white/[0.04] px-1.5 py-1 text-[10px] text-white/60 focus:outline-none"
-                      title="Art des Fakts — bestimmt, ob er immer mitgeschickt wird und ob er verdrängen kann"
-                    >
-                      {TYPE_ORDER.map((t) => (
-                        <option key={t} value={t} className="bg-neutral-900">
-                          {t}
-                        </option>
-                      ))}
-                    </select>
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      onClick={() => act(m.id, m.pinned ? 'unpin' : 'pin')}
-                      disabled={busy.has(m.id)}
-                      title={m.pinned ? 'Nicht mehr immer mitschicken' : 'Immer mitschicken'}
-                    >
-                      {m.pinned ? (
-                        <PinOff className="h-3.5 w-3.5" />
-                      ) : (
-                        <Pin className="h-3.5 w-3.5" />
-                      )}
-                    </Button>
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      onClick={() => act(m.id, 'archive')}
-                      disabled={busy.has(m.id)}
-                      title="Archivieren — bleibt als Historie erhalten"
-                    >
-                      <Archive className="h-3.5 w-3.5" />
-                    </Button>
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      onClick={async () => {
-                        mark(m.id, true);
-                        await fetch(`/api/memories?id=${encodeURIComponent(m.id)}`, {
-                          method: 'DELETE',
-                        }).catch(() => {});
-                        await load();
-                        mark(m.id, false);
-                      }}
-                      disabled={busy.has(m.id)}
-                      title="Endgültig löschen — im Zweifel lieber archivieren"
-                    >
-                      <Trash2 className="h-3.5 w-3.5 text-red-400/70" />
-                    </Button>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          </section>
-        ))
-      )}
+                    <div className="flex shrink-0 items-center gap-1 opacity-60 transition group-hover:opacity-100">
+                      <select
+                        value={m.type}
+                        onChange={(e) => act(m.id, 'classify', { type: e.target.value })}
+                        disabled={busy.has(m.id)}
+                        className="rounded border border-white/10 bg-white/[0.04] px-1.5 py-1 text-[10px] text-white/60 focus:outline-none"
+                        title="Art des Fakts — bestimmt, ob er immer mitgeschickt wird und ob er verdrängen kann"
+                      >
+                        {TYPE_ORDER.map((t) => (
+                          <option key={t} value={t} className="bg-neutral-900">
+                            {t}
+                          </option>
+                        ))}
+                      </select>
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        onClick={() => act(m.id, m.pinned ? 'unpin' : 'pin')}
+                        disabled={busy.has(m.id)}
+                        title={m.pinned ? 'Nicht mehr immer mitschicken' : 'Immer mitschicken'}
+                      >
+                        {m.pinned ? (
+                          <PinOff className="h-3.5 w-3.5" />
+                        ) : (
+                          <Pin className="h-3.5 w-3.5" />
+                        )}
+                      </Button>
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        onClick={() => act(m.id, 'archive')}
+                        disabled={busy.has(m.id)}
+                        title="Archivieren — bleibt als Historie erhalten"
+                      >
+                        <Archive className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        onClick={async () => {
+                          mark(m.id, true);
+                          await fetch(`/api/memories?id=${encodeURIComponent(m.id)}`, {
+                            method: 'DELETE',
+                          }).catch(() => {});
+                          await load();
+                          mark(m.id, false);
+                        }}
+                        disabled={busy.has(m.id)}
+                        title="Endgültig löschen — im Zweifel lieber archivieren"
+                      >
+                        <Trash2 className="h-3.5 w-3.5 text-red-400/70" />
+                      </Button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ))
+        ))}
 
       {/* --- History ------------------------------------------------------- */}
       {history && (

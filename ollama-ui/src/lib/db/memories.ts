@@ -189,16 +189,31 @@ export function listEntities(): EntityRow[] {
     .all() as unknown as EntityRow[];
 }
 
-/** Everything said about one entity — the backlink view that makes this a knowledge base. */
-export function listMemoriesForEntity(entityId: string): MemoryRow[] {
+/**
+ * Everything currently said about one entity — the backlink view that makes
+ * this a knowledge base.
+ *
+ * Active only by default, and that default matters: a superseded fact listed
+ * next to the one that replaced it reads as two competing truths, which is
+ * exactly the impression this whole design exists to remove. `includeHistory`
+ * is for the views that are explicitly about history.
+ */
+export function listMemoriesForEntity(
+  entityId: string,
+  options: { includeHistory?: boolean } = {},
+): MemoryRow[] {
+  const statuses = options.includeHistory
+    ? ['active', 'draft', 'superseded', 'archived']
+    : ['active'];
   const rows = db
     .prepare(
       `SELECT m.* FROM memories m
        JOIN memory_edges e ON e.from_id = m.id
        WHERE e.kind = 'about' AND e.to_kind = 'entity' AND e.to_id = ?
+         AND m.status IN (${statuses.map(() => '?').join(',')})
        ORDER BY m.created_at DESC`,
     )
-    .all(entityId);
+    .all(entityId, ...statuses);
   return (rows as unknown as MemoryDbRow[]).map(rowToMemory);
 }
 
@@ -568,6 +583,200 @@ export function createMemory(data: {
   sourceSessionId?: string | null;
 }): MemoryRow {
   return remember({ content: data.content, sourceSessionId: data.sourceSessionId }).memory;
+}
+
+// --- The graph -------------------------------------------------------------
+
+export interface GraphNode {
+  id: string;
+  kind: 'memory' | 'entity';
+  label: string;
+  /** memory only */
+  type?: MemoryType;
+  status?: MemoryStatus;
+  useCount?: number;
+  pinned?: boolean;
+  /** entity only: how many memories point at it */
+  degree?: number;
+}
+
+export interface GraphEdge {
+  id: string;
+  source: string;
+  target: string;
+  kind: EdgeKind;
+  resolved: boolean;
+}
+
+export interface GraphData {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  /** Nodes left out because the neighbourhood was capped. */
+  truncated: number;
+}
+
+export interface GraphOptions {
+  /** Node id to centre on. Without one, the whole (capped) graph is returned. */
+  focus?: string;
+  /** How far from the focus to walk. */
+  hops?: number;
+  /** Include superseded and archived memories — the history, greyed out in the UI. */
+  includeHistory?: boolean;
+  /** Hard ceiling, because a hairball is not a view. */
+  limit?: number;
+}
+
+/**
+ * The knowledge graph, as nodes and edges.
+ *
+ * Deliberately neighbourhood-first rather than "render everything": a
+ * force-directed picture of a few hundred nodes is famously pretty and
+ * famously useless, and the questions actually worth asking here are local
+ * ones — what does this fact connect to, what disagrees with what, what do
+ * we know about this thing. Without a focus it still returns a capped
+ * overview, so the first look isn't an empty canvas.
+ *
+ * `derived_from` edges (fact → session) are left out: a session is not a
+ * node in this graph, and drawing one per fact would double the node count
+ * with nothing to learn from it. The source conversation is a link on the
+ * fact instead.
+ */
+export function buildGraph(options: GraphOptions = {}): GraphData {
+  const limit = options.limit ?? 250;
+  const hops = Math.max(1, Math.min(3, options.hops ?? 2));
+  const statuses = options.includeHistory
+    ? ['active', 'draft', 'superseded', 'archived']
+    : ['active', 'draft'];
+
+  const memories = new Map(
+    (
+      db
+        .prepare(`${SELECT_MEMORY} WHERE status IN (${statuses.map(() => '?').join(',')})`)
+        .all(...statuses) as unknown as MemoryDbRow[]
+    )
+      .map(rowToMemory)
+      .map((m) => [m.id, m] as const),
+  );
+  const entities = new Map(listEntities().map((e) => [e.id, e] as const));
+
+  // Only edges whose endpoints both survived the status filter — a
+  // supersedes edge pointing at a hidden历史 row would otherwise render as a
+  // line into nowhere.
+  const allEdges = listEdges().filter((e) => {
+    if (e.kind === 'derived_from') return false;
+    if (!memories.has(e.fromId)) return false;
+    return e.toKind === 'entity' ? entities.has(e.toId) : memories.has(e.toId);
+  });
+
+  const nodeId = (kind: 'memory' | 'entity', id: string) => `${kind}:${id}`;
+  const adjacency = new Map<string, Set<string>>();
+  const link = (a: string, b: string) => {
+    if (!adjacency.has(a)) adjacency.set(a, new Set());
+    if (!adjacency.has(b)) adjacency.set(b, new Set());
+    adjacency.get(a)!.add(b);
+    adjacency.get(b)!.add(a);
+  };
+  for (const e of allEdges) {
+    link(nodeId('memory', e.fromId), nodeId(e.toKind === 'entity' ? 'entity' : 'memory', e.toId));
+  }
+
+  let keep: Set<string>;
+  if (options.focus && adjacency.has(options.focus)) {
+    keep = new Set([options.focus]);
+    let frontier = [options.focus];
+    for (let i = 0; i < hops && keep.size < limit; i++) {
+      const next: string[] = [];
+      for (const id of frontier) {
+        for (const neighbour of adjacency.get(id) ?? []) {
+          if (keep.has(neighbour) || keep.size >= limit) continue;
+          keep.add(neighbour);
+          next.push(neighbour);
+        }
+      }
+      frontier = next;
+    }
+  } else if (options.focus) {
+    // A node with no edges at all is still a valid focus — it just has an
+    // empty neighbourhood, which is itself worth seeing.
+    keep = new Set([options.focus]);
+  } else {
+    /*
+    No focus: prefer what the graph is actually about. Entities with the most
+    connections and memories that retrieval actually uses say more than the
+    newest rows, which on a big store are mostly trivia.
+    */
+    const ranked = [
+      ...[...entities.keys()].map((id) => ({
+        id: nodeId('entity', id),
+        weight: (adjacency.get(nodeId('entity', id))?.size ?? 0) * 10,
+      })),
+      ...[...memories.values()].map((m) => ({
+        id: nodeId('memory', m.id),
+        weight:
+          m.useCount + (m.pinned ? 5 : 0) + (adjacency.get(nodeId('memory', m.id))?.size ?? 0),
+      })),
+    ].sort((a, b) => b.weight - a.weight);
+    keep = new Set(ranked.slice(0, limit).map((r) => r.id));
+  }
+
+  const nodes: GraphNode[] = [];
+  for (const id of keep) {
+    const [kind, rest] = [id.slice(0, id.indexOf(':')), id.slice(id.indexOf(':') + 1)];
+    if (kind === 'entity') {
+      const entity = entities.get(rest);
+      if (!entity) continue;
+      nodes.push({
+        id,
+        kind: 'entity',
+        label: entity.label,
+        degree: adjacency.get(id)?.size ?? 0,
+      });
+    } else {
+      const memory = memories.get(rest);
+      if (!memory) continue;
+      nodes.push({
+        id,
+        kind: 'memory',
+        label: stripWikiLinks(memory.content),
+        type: memory.type,
+        status: memory.status,
+        useCount: memory.useCount,
+        pinned: memory.pinned,
+      });
+    }
+  }
+
+  const edges: GraphEdge[] = allEdges
+    .map((e) => ({
+      id: e.id,
+      source: nodeId('memory', e.fromId),
+      target: nodeId(e.toKind === 'entity' ? 'entity' : 'memory', e.toId),
+      kind: e.kind,
+      resolved: e.resolvedAt !== null,
+    }))
+    .filter((e) => keep.has(e.source) && keep.has(e.target));
+
+  const total = memories.size + entities.size;
+  return { nodes, edges, truncated: Math.max(0, total - nodes.length) };
+}
+
+export function getEntity(id: string): EntityRow | undefined {
+  return db.prepare('SELECT * FROM entities WHERE id = ?').get(id) as EntityRow | undefined;
+}
+
+/** Entities with how much is known about each — the list view's ordering. */
+export function listEntitiesWithCounts(): (EntityRow & { memoryCount: number })[] {
+  return db
+    .prepare(
+      `SELECT e.*, COUNT(DISTINCT m.id) AS memoryCount
+       FROM entities e
+       LEFT JOIN memory_edges edge
+         ON edge.to_kind = 'entity' AND edge.to_id = e.id AND edge.kind = 'about'
+       LEFT JOIN memories m ON m.id = edge.from_id AND m.status = 'active'
+       GROUP BY e.id
+       ORDER BY memoryCount DESC, e.label COLLATE NOCASE ASC`,
+    )
+    .all() as unknown as (EntityRow & { memoryCount: number })[];
 }
 
 // --- Retrieval -------------------------------------------------------------

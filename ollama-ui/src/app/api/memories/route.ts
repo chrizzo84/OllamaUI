@@ -3,6 +3,7 @@ import { z } from 'zod';
 import {
   listMemories,
   listMemoryHistory,
+  listMemoriesForEntity,
   remember,
   deleteMemory,
   archiveMemory,
@@ -54,6 +55,22 @@ export async function GET(req: NextRequest) {
   const subject = searchParams.get('subject');
   if (subject) {
     return Response.json({ items: listMemoryHistory(subject).map(toApi) });
+  }
+
+  // ?entity= is the backlink view: everything said about one thing. ?id= is
+  // one fact, for the graph's detail panel.
+  const entity = searchParams.get('entity');
+  if (entity) {
+    return Response.json({
+      items: listMemoriesForEntity(entity, {
+        includeHistory: searchParams.get('history') === '1',
+      }).map(toApi),
+    });
+  }
+  const id = searchParams.get('id');
+  if (id) {
+    const one = listMemories().find((m) => m.id === id);
+    return Response.json({ items: one ? [toApi(one)] : [] });
   }
 
   const requested = searchParams.get('status');

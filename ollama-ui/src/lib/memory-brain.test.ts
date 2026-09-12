@@ -221,6 +221,21 @@ describe('the graph', () => {
     expect(about).toHaveLength(2);
   });
 
+  /**
+   * A superseded fact listed beside the one that replaced it reads as two
+   * competing truths — exactly the impression the whole design removes.
+   * Caught in the browser: the graph's detail panel showed "Server is a NUC"
+   * next to "Server is a big box", both looking current.
+   */
+  it('leaves replaced facts out of the backlinks unless asked for', () => {
+    db.remember({ content: '[[Server]] ist ein NUC', subject: 'server-hw' });
+    db.remember({ content: '[[Server]] ist eine große Kiste', subject: 'server-hw' });
+    const current = db.listMemoriesForEntity('server');
+    expect(current).toHaveLength(1);
+    expect(current[0].content).toContain('große Kiste');
+    expect(db.listMemoriesForEntity('server', { includeHistory: true })).toHaveLength(2);
+  });
+
   it('links a fact back to the conversation it came from', () => {
     const session = db.createSession({});
     const r = db.remember({ content: 'mag [[Tee]]', sourceSessionId: session.id });
@@ -249,6 +264,87 @@ describe('the graph', () => {
     const [oldest] = db.listMemoryHistory('ollama-host');
     expect(oldest.status).toBe('superseded');
     expect(db.listEntities().map((e) => e.id)).toContain('ollama-host');
+  });
+});
+
+describe('the graph view', () => {
+  it('returns facts and entities as nodes, with the edges between them', () => {
+    db.remember({ content: 'Auf [[Homeserver]] läuft [[Plex]]' });
+    const g = db.buildGraph();
+    expect(
+      g.nodes
+        .filter((n) => n.kind === 'entity')
+        .map((n) => n.label)
+        .sort(),
+    ).toEqual(['Plex', 'Homeserver']);
+    expect(g.edges.filter((e) => e.kind === 'about')).toHaveLength(2);
+  });
+
+  // A session is not a node in this picture; drawing one per fact would
+  // double the node count with nothing to learn from it.
+  it('leaves derived_from edges out', () => {
+    const session = db.createSession({});
+    db.remember({ content: 'etwas über [[Docker]]', sourceSessionId: session.id });
+    expect(db.buildGraph().edges.some((e) => e.kind === 'derived_from')).toBe(false);
+  });
+
+  it('hides history unless asked for it', () => {
+    db.remember({ content: '[[Host]] ist A' });
+    db.remember({ content: '[[Host]] ist B' });
+    expect(db.buildGraph().nodes.filter((n) => n.kind === 'memory')).toHaveLength(1);
+    const withHistory = db.buildGraph({ includeHistory: true });
+    expect(withHistory.nodes.filter((n) => n.kind === 'memory')).toHaveLength(2);
+    expect(withHistory.edges.some((e) => e.kind === 'supersedes')).toBe(true);
+  });
+
+  // An edge whose other end was filtered out would render as a line into
+  // nowhere.
+  it('never returns an edge with a missing endpoint', () => {
+    db.remember({ content: '[[Host]] ist A' });
+    db.remember({ content: '[[Host]] ist B' });
+    const g = db.buildGraph();
+    const ids = new Set(g.nodes.map((n) => n.id));
+    for (const e of g.edges) {
+      expect(ids.has(e.source), e.kind).toBe(true);
+      expect(ids.has(e.target), e.kind).toBe(true);
+    }
+  });
+
+  it('walks only the neighbourhood around a focus', () => {
+    db.remember({ content: 'Auf [[Homeserver]] läuft [[Plex]]' });
+    db.remember({ content: 'weit weg von allem [[Anderes]]', subject: 'anderes' });
+    const g = db.buildGraph({ focus: 'entity:plex', hops: 1 });
+    const labels = g.nodes.map((n) => n.label);
+    expect(labels).toContain('Plex');
+    expect(labels.some((l) => l.includes('Homeserver läuft'))).toBe(true);
+    expect(labels).not.toContain('Anderes');
+  });
+
+  it('accepts a focus with no edges at all', () => {
+    const lonely = db.remember({ content: 'ganz ohne Verlinkung', subject: 'einsam' });
+    const g = db.buildGraph({ focus: `memory:${lonely.memory.id}` });
+    expect(g.nodes).toHaveLength(1);
+    expect(g.edges).toHaveLength(0);
+  });
+
+  // A hairball is not a view: without a focus the cap keeps what the graph is
+  // actually about rather than whatever was written last.
+  it('caps the overview and says how much it left out', () => {
+    for (let i = 0; i < 60; i++) {
+      db.remember({ content: `Fakt ${i} über [[Ding${i}]]`, subject: `ding-${i}` });
+    }
+    const g = db.buildGraph({ limit: 20 });
+    expect(g.nodes.length).toBeLessThanOrEqual(20);
+    expect(g.truncated).toBeGreaterThan(0);
+  });
+
+  it('counts what is known per entity', () => {
+    db.remember({ content: '[[Homeserver]] läuft auf der großen Kiste' });
+    db.remember({ content: 'Backups liegen auf [[Homeserver]]', subject: 'backups' });
+    db.remember({ content: 'etwas über [[Plex]]', subject: 'plex-info' });
+    const counts = db.listEntitiesWithCounts();
+    expect(counts[0].id).toBe('homeserver');
+    expect(counts[0].memoryCount).toBe(2);
   });
 });
 
