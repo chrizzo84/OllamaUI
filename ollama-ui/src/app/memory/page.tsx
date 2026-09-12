@@ -58,7 +58,35 @@ interface EntitySummary {
   memoryCount: number;
 }
 
-type Tab = 'facts' | 'graph';
+type Tab = 'facts' | 'graph' | 'timeline';
+
+type TimelineKind = 'learned' | 'replaced' | 'archived' | 'drafted';
+
+interface TimelineEvent {
+  at: number;
+  kind: TimelineKind;
+  memoryId: string;
+  content: string;
+  type: MemoryType;
+  subject: string | null;
+  sourceSessionId: string | null;
+  sourceSessionTitle: string | null;
+  replacedBy?: { id: string; content: string };
+}
+
+const EVENT_LABEL: Record<TimelineKind, string> = {
+  learned: 'gelernt',
+  drafted: 'zur Prüfung gemerkt',
+  replaced: 'ersetzt',
+  archived: 'archiviert',
+};
+
+const EVENT_COLOUR: Record<TimelineKind, string> = {
+  learned: 'bg-emerald-400/70',
+  drafted: 'bg-white/30',
+  replaced: 'bg-amber-400/70',
+  archived: 'bg-white/20',
+};
 
 const TYPE_LABELS: Record<MemoryType, string> = {
   identity: 'About you',
@@ -139,6 +167,7 @@ export default function MemoryPage() {
   const [selected, setSelected] = useState<GraphNode | null>(null);
   const [selectedFacts, setSelectedFacts] = useState<MemoryItem[]>([]);
   const [showHistory, setShowHistory] = useState(false);
+  const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
 
   const load = useCallback(async () => {
     try {
@@ -185,6 +214,18 @@ export default function MemoryPage() {
       cancelled = true;
     };
   }, [tab, focus, showHistory]);
+
+  useEffect(() => {
+    if (tab !== 'timeline') return;
+    let cancelled = false;
+    (async () => {
+      const r = await fetch('/api/memories/timeline', { cache: 'no-store' });
+      if (r.ok && !cancelled) setTimeline((await r.json()).items ?? []);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [tab]);
 
   // What is known about the selected node — the backlink view for an entity,
   // the fact itself for a fact. This is the part that makes the graph useful
@@ -365,6 +406,7 @@ export default function MemoryPage() {
           [
             ['facts', 'Fakten'],
             ['graph', 'Graph'],
+            ['timeline', 'Verlauf'],
           ] as const
         ).map(([key, label]) => (
           <button
@@ -659,6 +701,67 @@ export default function MemoryPage() {
             </div>
           </aside>
         </div>
+      )}
+
+      {/* --- Timeline ------------------------------------------------------- */}
+      {tab === 'timeline' && (
+        <section className="flex flex-col gap-1">
+          <p className="mb-2 text-[11px] text-white/35">
+            Wann das Gedächtnis was gelernt und was es wieder verworfen hat — meist die Antwort
+            darauf, warum es etwas glaubt.
+          </p>
+          {timeline.length === 0 ? (
+            <div className="rounded-lg border border-white/10 bg-white/5 p-6 text-center text-white/50">
+              Noch nichts passiert.
+            </div>
+          ) : (
+            <ol className="flex flex-col">
+              {timeline.map((e, i) => (
+                <li key={`${e.memoryId}-${e.kind}-${e.at}`} className="flex gap-3">
+                  {/* The rail: a continuous line with a dot per event, so the
+                      order reads as time rather than as a list. */}
+                  <div className="flex flex-col items-center">
+                    <span
+                      className={`mt-2 h-2 w-2 shrink-0 rounded-full ${EVENT_COLOUR[e.kind]}`}
+                    />
+                    {i < timeline.length - 1 && <span className="w-px flex-1 bg-white/10" />}
+                  </div>
+                  <div className="min-w-0 flex-1 pb-4">
+                    <div className="flex flex-wrap items-baseline gap-2 text-[10px] font-mono text-white/30">
+                      <span className={e.kind === 'replaced' ? 'text-amber-300/70' : ''}>
+                        {EVENT_LABEL[e.kind]}
+                      </span>
+                      <span>{formatWhen(e.at)}</span>
+                      {e.sourceSessionId && (
+                        <Link
+                          href={`/chat?session=${e.sourceSessionId}`}
+                          className="underline decoration-dotted hover:text-white/60"
+                        >
+                          {e.sourceSessionTitle || 'Chat'}
+                        </Link>
+                      )}
+                    </div>
+                    <p
+                      className={`text-sm leading-relaxed ${
+                        e.kind === 'replaced' || e.kind === 'archived'
+                          ? 'text-white/45 line-through decoration-white/20'
+                          : 'text-white/85'
+                      }`}
+                    >
+                      <LinkedContent text={e.content} />
+                    </p>
+                    {e.replacedBy && (
+                      <p className="mt-1 text-xs text-white/60">
+                        <span className="text-white/30">→ </span>
+                        <LinkedContent text={e.replacedBy.content} />
+                      </p>
+                    )}
+                  </div>
+                </li>
+              ))}
+            </ol>
+          )}
+        </section>
       )}
 
       {/* --- The facts ------------------------------------------------------ */}

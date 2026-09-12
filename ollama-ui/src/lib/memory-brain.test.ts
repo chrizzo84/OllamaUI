@@ -348,6 +348,39 @@ describe('the graph view', () => {
   });
 });
 
+describe('the timeline', () => {
+  it('records when a fact was learned', () => {
+    const r = db.remember({ content: 'mag [[Kaffee]]' });
+    const events = db.listTimeline();
+    expect(events[0]).toMatchObject({ kind: 'learned', memoryId: r.memory.id });
+  });
+
+  // "When did it learn this" is usually the answer to "why does it think
+  // that", so a replacement has to appear as its own moment in time, naming
+  // what took its place.
+  it('records a replacement as its own event, naming the successor', () => {
+    db.remember({ content: '[[Host]] ist der NUC' });
+    const newer = db.remember({ content: '[[Host]] ist der große Server' });
+    const replaced = db.listTimeline().find((e) => e.kind === 'replaced');
+    expect(replaced?.content).toContain('NUC');
+    expect(replaced?.replacedBy?.id).toBe(newer.memory.id);
+  });
+
+  it('marks a fact saved for review apart from one that is in use', () => {
+    db.remember({ content: 'vielleicht [[Bello]]', confidence: 0.2 });
+    expect(db.listTimeline()[0].kind).toBe('drafted');
+  });
+
+  it('is newest first and capped', () => {
+    for (let i = 0; i < 30; i++) db.remember({ content: `Fakt ${i}`, subject: `f-${i}` });
+    const events = db.listTimeline(10);
+    expect(events).toHaveLength(10);
+    for (let i = 1; i < events.length; i++) {
+      expect(events[i - 1].at).toBeGreaterThanOrEqual(events[i].at);
+    }
+  });
+});
+
 describe('recall', () => {
   it('always includes identity facts, however old they are', () => {
     const identity = db.remember({ content: 'heißt [[Alex]]', type: 'identity' });

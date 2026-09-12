@@ -1,5 +1,10 @@
 Chronological list of notable changes to Ollama UI.
 
+## 2026-09-12 (5)
+
+- **A timeline for the memory** — a store like this has one whether anyone draws it or not, and "when did it learn this" is usually the answer to "why does it think that". The Memory page's third tab lists every fact learned, every replacement (struck through, with the fact that took its place beneath it), every draft and every archiving, newest first, each linked back to the conversation it happened in. The events are derived from the facts themselves — a row's `created_at` is when it was learned, its `valid_until` when it stopped being true — rather than written to a log, so there is no second source of truth to drift out of sync with the facts.
+- **Tests** — 545, up from 541.
+
 ## 2026-09-12 (4)
 
 - **The knowledge graph, drawn** — the Memory page gets a graph view: entities as the landmarks you navigate by, facts coloured by kind and sized by how often retrieval actually reached for them, and edges that carry the meaning (contradictions in warning colour, replaced facts faded, `about` as the plain structural link). Clicking any node re-centres the view on its neighbourhood and lists everything known about it beside the canvas — for an entity, that is the backlink view that makes this a knowledge base rather than a list. Obsidian's graph view is the screenshot everyone shows and the tab nobody opens twice, and the reason is that past a few hundred nodes a hairball tells you nothing; the difference here is that Obsidian's notes were written by a person who knows what is in them, while every node in this one was written by a model. So it is built as an inspection surface: neighbourhoods rather than everything, a capped overview ranked by connectedness and use, and "Historie mitzeichnen" to bring replaced facts back into the picture.

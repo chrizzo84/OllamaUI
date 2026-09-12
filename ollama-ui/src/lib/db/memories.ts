@@ -760,6 +760,63 @@ export function buildGraph(options: GraphOptions = {}): GraphData {
   return { nodes, edges, truncated: Math.max(0, total - nodes.length) };
 }
 
+export type TimelineEventKind = 'learned' | 'replaced' | 'archived' | 'drafted';
+
+export interface TimelineEvent {
+  at: number;
+  kind: TimelineEventKind;
+  memoryId: string;
+  content: string;
+  type: MemoryType;
+  subject: string | null;
+  sourceSessionId: string | null;
+  /** For a replacement: what took its place. */
+  replacedBy?: { id: string; content: string };
+}
+
+/**
+ * What happened to the knowledge base, in order.
+ *
+ * A memory store has a timeline whether anyone draws it or not, and "when did
+ * it learn this" is usually the answer to "why does it think that". The
+ * events are derived rather than logged: a row's created_at is when it was
+ * learned, its valid_until is when it stopped being true, and the status says
+ * how it ended. Deriving them means there is no second source of truth to
+ * drift out of sync with the facts themselves.
+ */
+export function listTimeline(limit = 200): TimelineEvent[] {
+  const rows = (
+    db
+      .prepare(`${SELECT_MEMORY} ORDER BY created_at DESC LIMIT ?`)
+      .all(limit * 2) as unknown as MemoryDbRow[]
+  ).map(rowToMemory);
+  const byId = new Map(rows.map((r) => [r.id, r] as const));
+  const events: TimelineEvent[] = [];
+  for (const m of rows) {
+    const base = {
+      memoryId: m.id,
+      content: m.content,
+      type: m.type,
+      subject: m.subject,
+      sourceSessionId: m.sourceSessionId,
+    };
+    events.push({ ...base, at: m.created_at, kind: m.status === 'draft' ? 'drafted' : 'learned' });
+    if (m.status === 'superseded' && m.validUntil) {
+      const successor = m.supersededBy ? byId.get(m.supersededBy) : undefined;
+      events.push({
+        ...base,
+        at: m.validUntil,
+        kind: 'replaced',
+        replacedBy: successor ? { id: successor.id, content: successor.content } : undefined,
+      });
+    }
+    if (m.status === 'archived') {
+      events.push({ ...base, at: m.updated_at, kind: 'archived' });
+    }
+  }
+  return events.sort((a, b) => b.at - a.at).slice(0, limit);
+}
+
 export function getEntity(id: string): EntityRow | undefined {
   return db.prepare('SELECT * FROM entities WHERE id = ?').get(id) as EntityRow | undefined;
 }

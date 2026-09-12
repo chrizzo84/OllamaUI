@@ -280,6 +280,7 @@ Base path: `/api`
 | `/api/memories`                                           | GET/POST/PATCH/DELETE | The knowledge base                                | `?status=` / `?subject=` for drafts and history; PATCH approves, pins, archives, re-classifies |
 | `/api/memories/contradictions`                            | GET/POST              | Open disagreements, and settling one              | POST `{edgeId, keep: 'newer'\|'older'\|'both'}`                                                |
 | `/api/memories/graph`                                     | GET                   | The knowledge graph as nodes and edges            | `?focus=` walks a neighbourhood, `?history=1` includes replaced facts                          |
+| `/api/memories/timeline`                                  | GET                   | What the store learned and unlearned, in order    | Derived from the facts, not a separate log                                                     |
 | Other routes (`chat`, `lamas`, `ps`, `status`, `tools/*`) | —                     | Additional functionality (not all documented yet) | Future docs TBD                                                                                |
 
 Every route above is behind the password gate when `APP_PASSWORD` is set — see
@@ -403,6 +404,14 @@ model. So it is built around the questions that follow from that —
 Drawn on a canvas with `d3-force`; the simulation settles in about a second
 and then stops, because a graph that keeps drifting is one whose nodes you
 cannot click.
+
+The **timeline** answers the remaining question. A memory store has one
+whether anyone draws it or not, and "when did it learn this" is usually the
+answer to "why does it think that": every fact learned, every replacement
+(struck through, with its successor beneath it), every draft and every
+archiving, newest first, each linked back to the conversation it happened
+in. The events are derived from the facts themselves rather than logged
+separately, so there is no second source of truth to drift out of sync.
 
 ---
 
