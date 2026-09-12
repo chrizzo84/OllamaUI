@@ -241,6 +241,43 @@ describe('the graph', () => {
     expect(linked.map((e) => e.toId)).not.toContain('ollama');
   });
 
+  /**
+   * For writers that never produce inline brackets: every fact the
+   * extraction pass generated in testing had a usable subject and no links
+   * at all, which left the graph empty. A declared list becomes the same
+   * edges without the fact's wording being touched.
+   */
+  it('accepts entities declared separately from the text', () => {
+    const r = db.remember({
+      content: 'Der Nutzer wohnt in Musterstadt',
+      entities: ['Musterstadt', 'Bergland'],
+    });
+    expect(
+      db
+        .listEntities()
+        .map((e) => e.id)
+        .sort(),
+    ).toEqual(['musterstadt', 'bergland']);
+    expect(db.getMemory(r.memory.id)?.content).toBe(
+      'Der Nutzer wohnt in Musterstadt',
+    );
+    expect(db.listMemoriesForEntity('musterstadt')).toHaveLength(1);
+  });
+
+  it('takes the subject from a declared entity when there is no link', () => {
+    const r = db.remember({ content: 'wohnt in Musterstadt', entities: ['Musterstadt'] });
+    expect(r.memory.subject).toBe('musterstadt');
+    // …which is what makes it replaceable at all.
+    db.remember({ content: 'ist nach Freiburg gezogen', subject: 'musterstadt' });
+    expect(db.getMemory(r.memory.id)?.status).toBe('superseded');
+  });
+
+  it('does not double up when a thing is both bracketed and declared', () => {
+    const r = db.remember({ content: 'wohnt in [[Musterstadt]]', entities: ['musterstadt'] });
+    const about = db.listEdgesForMemory(r.memory.id).filter((e) => e.kind === 'about');
+    expect(about).toHaveLength(1);
+  });
+
   it('answers what is known about one entity — the backlink view', () => {
     db.remember({ content: '[[Homeserver]] läuft auf der großen Kiste' });
     db.remember({ content: 'Backups liegen auf [[Homeserver]]', subject: 'backups' });

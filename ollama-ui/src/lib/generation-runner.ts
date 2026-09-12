@@ -863,13 +863,28 @@ export async function runGeneration(job: Job, params: GenerationParams): Promise
     review rather than in the next prompt.
     */
     if (status === 'done' && memoryEnabled && !alreadySavedDuringReply(trace)) {
-      const lastUser = [...params.messages].reverse().find((m) => m.role === 'user');
-      const text = typeof lastUser?.content === 'string' ? lastUser.content : '';
+      const reversed = [...params.messages].reverse();
+      const lastUserIndex = reversed.findIndex((m) => m.role === 'user');
+      const text =
+        lastUserIndex >= 0 && typeof reversed[lastUserIndex].content === 'string'
+          ? (reversed[lastUserIndex].content as string)
+          : '';
+      /*
+      The reply before it goes along, because an answer to a question carries
+      its subject in the question: asked where they live, "Musterstadt im
+      Bergland!" states where they live, while on its own it states
+      nothing at all. That case was being dropped entirely.
+      */
+      const priorAssistant = reversed
+        .slice(lastUserIndex + 1)
+        .find((m) => m.role === 'assistant' && typeof m.content === 'string' && m.content.trim());
       if (text) {
         void extractDurableFacts({
           base,
           model,
           userText: text,
+          priorAssistantText:
+            typeof priorAssistant?.content === 'string' ? priorAssistant.content : undefined,
           sessionId: job.sessionId,
         }).catch(() => {
           /* a failed second look must never surface as a failed reply */

@@ -207,7 +207,9 @@ export function listMemoriesForEntity(
     : ['active'];
   const rows = db
     .prepare(
-      `SELECT m.* FROM memories m
+      // DISTINCT so a fact never appears twice in the backlinks just because
+      // two edges happen to connect it to the same entity.
+      `SELECT DISTINCT m.* FROM memories m
        JOIN memory_edges e ON e.from_id = m.id
        WHERE e.kind = 'about' AND e.to_kind = 'entity' AND e.to_id = ?
          AND m.status IN (${statuses.map(() => '?').join(',')})
@@ -346,6 +348,14 @@ export interface RememberInput {
   sourceSessionId?: string | null;
   pinned?: boolean;
   validFrom?: number | null;
+  /**
+   * Entities named separately from the text, for writers that don't produce
+   * inline [[links]] — the extraction pass in memory-extract.ts sets a
+   * subject reliably and brackets almost nothing, which left the graph empty.
+   * They become the same `about` edges a bracketed link would, without the
+   * fact's wording being touched.
+   */
+  entities?: string[];
 }
 
 export interface RememberResult {
@@ -379,9 +389,13 @@ export function remember(input: RememberInput): RememberResult {
   const now = Date.now();
   const content = input.content.trim();
   const links = parseWikiLinks(content);
+  // Explicit subject wins; otherwise the first thing the fact is about, from
+  // a bracketed link or from the declared list. Without any of the three the
+  // fact has no subject and can never be superseded, so this reaches for the
+  // list too rather than leaving it null when the writer skipped brackets.
   const subject =
     input.subject === undefined
-      ? (links[0]?.slug ?? null)
+      ? (links[0]?.slug ?? (slugifyEntity(input.entities?.[0] ?? '') || null))
       : input.subject
         ? slugifyEntity(input.subject)
         : null;
@@ -440,15 +454,22 @@ export function remember(input: RememberInput): RememberResult {
     row.updated_at,
   );
 
-  // Entities and their edges — the graph, derived from the prose.
-  for (const link of links) {
+  // Entities and their edges — the graph, derived from the prose and from an
+  // explicit list where the writer gave one.
+  const declared = (input.entities ?? [])
+    .map((label) => ({ label: label.trim(), slug: slugifyEntity(label) }))
+    .filter((e) => e.slug);
+  const seenEntities = new Set<string>();
+  for (const link of [...links, ...declared]) {
+    if (seenEntities.has(link.slug)) continue;
+    seenEntities.add(link.slug);
     upsertEntity(link.slug, link.label, now);
     addEdge(row.id, 'entity', link.slug, 'about', now);
   }
-  for (const slug of unlinkedMentions(
-    content,
-    links.map((l) => l.slug),
-  )) {
+  // Everything already connected above, bracketed or declared — otherwise the
+  // mention scan finds the declared ones a second time and every entity ends
+  // up with two identical edges.
+  for (const slug of unlinkedMentions(content, [...seenEntities])) {
     addEdge(row.id, 'entity', slug, 'about', now);
   }
   if (row.sourceSessionId) addEdge(row.id, 'session', row.sourceSessionId, 'derived_from', now);

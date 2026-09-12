@@ -64,6 +64,38 @@ describe('looksWorthExtracting', () => {
   });
 });
 
+describe('looksWorthExtracting: answers to a question', () => {
+  const question = 'Ich muss ehrlich sein: ich weiß nicht, wo du wohnst. Wo denn?';
+
+  /**
+   * The case this was missing entirely. Asked where he lives, the reply was
+   * "Musterstadt!" — no "ich", no "mein", because the
+   * subject sits in the question rather than the answer. The gate rejected
+   * it, the extraction never ran, and the fact was only stored two messages
+   * later when the user asked whether it had been.
+   */
+  it('lets through a short answer that carries no first-person marker', () => {
+    expect(looksWorthExtracting('Musterstadt!', question)).toBe(true);
+    expect(looksWorthExtracting('Musterstadt!')).toBe(false);
+  });
+
+  it('lets through an answer far shorter than the normal minimum', () => {
+    expect(looksWorthExtracting('Kassel', question)).toBe(true);
+  });
+
+  // Otherwise every confirmation in a conversation would wake the extractor.
+  it('still ignores a bare acknowledgement', () => {
+    for (const reply of ['ja', 'Ja!', 'ok', 'passt', 'danke', 'genau', 'yes', 'nope']) {
+      expect(looksWorthExtracting(reply, question), reply).toBe(false);
+    }
+  });
+
+  it('does not treat a reply that merely mentions "?" early on as a question', () => {
+    const notAQuestion = 'Gute Frage? Nein, im Ernst: hier ist die Antwort. ' + 'x'.repeat(250);
+    expect(looksWorthExtracting('Musterstadt', notAQuestion)).toBe(false);
+  });
+});
+
 describe('alreadySavedDuringReply', () => {
   // No point asking again when the model already managed it — the second
   // look exists for the runs where it didn't.

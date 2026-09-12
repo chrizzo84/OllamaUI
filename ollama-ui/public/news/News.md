@@ -1,5 +1,12 @@
 Chronological list of notable changes to Ollama UI.
 
+## 2026-09-12 (8)
+
+- **An answer to a question is now read together with the question** — reported from a live chat: asked where he lived, the reply was "Musterstadt!", and it was not stored. It contains no "ich" and no "mein", because the subject sits in the _question_, not in the answer — so the extraction pass's first-person gate rejected it and never ran. The fact was only saved two messages later, when the user asked whether it had been. Short answers to direct questions are exactly where the important facts arrive, so a reply that follows a question is always examined now, and the preceding turn goes to the extractor as context. Bare acknowledgements ("ja", "passt", "danke") are still skipped, or every confirmation in a conversation would wake a 35B model.
+- **Entities can be named in a list instead of inline** — inline `[[brackets]]` are the first thing a model drops: every fact the extraction pass produced in testing had a usable subject and no brackets at all, which left the knowledge graph empty. A separate `entities` array is structure that gets filled in reliably, and it becomes the same `about` edges without touching the fact's wording. It also feeds the subject when nothing else supplies one — without a subject a fact can never be superseded. Verified against the reported case: "Musterstadt!" now stores as identity/`wohnort` with **Musterstadt** as an entity.
+- **Two edge bugs found on the way** — declared entities were also picked up by the unlinked-mention scan, so every one of them got two identical `about` edges; and the backlink query could therefore return the same fact twice. Fixed at the cause, plus `DISTINCT` as a second line of defence.
+- **Tests** — 565, up from 558.
+
 ## 2026-09-12 (7)
 
 - **Wrong weekday on every date a tool returned** — asked for the forecast, a model announced "Hier das Wetter für morgen (Freitag, 13.09.2026)". The date was right and the weekday was invented: 2026-09-13 is a Sunday. The forecast tool returned `date: "2026-09-13"` and nothing else, so the weekday had to be derived — and models cannot count days, while "Friday the 13th" is a strong enough prior to beat the actual calendar. Nothing in the reply marks which half came from a tool and which from thin air.

@@ -66,8 +66,36 @@ const STANDING_RULE_RE =
 /** Below this there is nothing to extract — a "ja" or "passt" carries no fact. */
 const MIN_LENGTH = 25;
 
-export function looksWorthExtracting(text: string): boolean {
+/**
+ * Bare acknowledgements. An answer to a question is let through (see below)
+ * and these are the answers that still carry nothing.
+ */
+const ACKNOWLEDGEMENT_RE =
+  /^(ja|nein|ok|okay|klar|passt|danke|dankeschön|gerne|jep|jup|genau|richtig|stimmt|yes|no|sure|thanks|thx|nope|yep)[\s!.,:;)-]*$/i;
+
+/**
+ * An answer to a question the assistant just asked is the one case where the
+ * message itself carries no first-person marker and still states a fact —
+ * because the subject is in the question, not the answer.
+ *
+ * Seen live: asked "wo wohnst du?", the reply was "Musterstadt im
+ * Bergland!". No "ich", no "mein", so the gate below rejected it and the
+ * extraction never ran; the fact was only stored two messages later when the
+ * user asked whether it had been. That is exactly the shape short, important
+ * answers arrive in.
+ */
+function isAnswerToQuestion(priorAssistantText: string | undefined): boolean {
+  if (!priorAssistantText) return false;
+  // Only the tail matters: a long reply that ends by asking something is
+  // still a question, and one that merely contains a rhetorical "?" early on
+  // is not.
+  return priorAssistantText.trim().slice(-200).includes('?');
+}
+
+export function looksWorthExtracting(text: string, priorAssistantText?: string): boolean {
   const trimmed = text.trim();
+  if (!trimmed || ACKNOWLEDGEMENT_RE.test(trimmed)) return false;
+  if (isAnswerToQuestion(priorAssistantText)) return true;
   if (trimmed.length < MIN_LENGTH) return false;
   if (SELF_STATEMENT_RE.test(trimmed)) return true;
   return WEAK_SELF_RE.test(trimmed) && STANDING_RULE_RE.test(trimmed) && !trimmed.endsWith('?');
@@ -108,6 +136,18 @@ const EXTRACT_TOOL = {
           type: 'string',
           description: 'What the fact is about, one to three words ("grafikkarte", "name").',
         },
+        /*
+        A list, because inline [[brackets]] are the part models drop first:
+        every fact this pass produced in testing had a usable subject and no
+        brackets at all, which left the knowledge graph empty. A named array
+        field is structure the model fills in reliably.
+        */
+        entities: {
+          type: 'array',
+          items: { type: 'string' },
+          description:
+            'The named things this fact is about — devices, software, places, people, projects. E.g. ["Musterstadt"] or ["Grafikkarte", "Homeserver"]. Leave out plain values like numbers or dates.',
+        },
       },
       required: ['fact'],
     },
@@ -136,11 +176,13 @@ export async function extractDurableFacts(params: {
   base: string;
   model: string;
   userText: string;
+  /** The reply before it, so an answer to a question can be read in context. */
+  priorAssistantText?: string;
   sessionId: string | null;
   signal?: AbortSignal;
 }): Promise<ExtractResult> {
   const empty: ExtractResult = { saved: 0, duplicates: 0 };
-  if (!looksWorthExtracting(params.userText)) return empty;
+  if (!looksWorthExtracting(params.userText, params.priorAssistantText)) return empty;
 
   // Naming what is already stored keeps the pass from re-proposing the same
   // fact after every message, which would fill the review queue with noise.
@@ -152,9 +194,11 @@ export async function extractDurableFacts(params: {
   const system =
     'You extract durable facts about the user from a single message, for a long-term memory. ' +
     'Call remember_fact once for each fact the message states about the user themselves — ' +
-    'their name, age, language, the hardware they own, the software they run, what they are ' +
-    'working on, how they want answers written. A question can still state a fact: ' +
-    '"reicht meine Grafikkarte?" states which card they own. ' +
+    'their name, age, language, where they live, the hardware they own, the software they run, ' +
+    'what they are working on, how they want answers written. A question can still state a ' +
+    'fact: "reicht meine Grafikkarte?" states which card they own. If the message answers a ' +
+    'question you just asked, read it together with that question: asked where they live, ' +
+    '"Musterstadt!" states where they live. ' +
     'Do not call it for anything else: not for questions, not for what they asked you to do ' +
     'now, not for anything only true inside this one conversation.' +
     (known ? `\n\nAlready stored, do not repeat these:\n${known}` : '') +
@@ -173,6 +217,13 @@ export async function extractDurableFacts(params: {
         think: false,
         messages: [
           { role: 'system', content: system },
+          // The preceding reply is included as itself rather than folded into
+          // the user turn: "Musterstadt!" means nothing
+          // without the question it answers, and a model reads a real
+          // exchange more reliably than a quoted one.
+          ...(params.priorAssistantText
+            ? [{ role: 'assistant', content: params.priorAssistantText.slice(-1500) }]
+            : []),
           { role: 'user', content: params.userText },
         ],
         tools: [EXTRACT_TOOL],
@@ -194,11 +245,14 @@ export async function extractDurableFacts(params: {
       typeof call.function.arguments === 'string'
         ? safeParse(call.function.arguments)
         : call.function.arguments
-    ) as { fact?: unknown; type?: unknown; subject?: unknown } | null;
+    ) as { fact?: unknown; type?: unknown; subject?: unknown; entities?: unknown } | null;
     const fact = typeof args?.fact === 'string' ? args.fact.trim() : '';
     if (!fact) continue;
     const stored = remember({
       content: fact,
+      entities: Array.isArray(args?.entities)
+        ? args.entities.filter((e): e is string => typeof e === 'string')
+        : undefined,
       type: isMemoryType(args?.type) ? (args.type as MemoryType) : undefined,
       subject:
         typeof args?.subject === 'string' && args.subject.trim() ? args.subject.trim() : undefined,

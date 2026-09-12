@@ -387,7 +387,19 @@ Entities are also recognised in facts that don't bracket them: once
 `[[Homeserver]]` exists, a later "Backups liegen auf Homeserver" is linked to it
 without rewriting the text — Obsidian calls these unlinked mentions. Models
 bracket inconsistently, and without this half the facts would never reach the
-graph, with which half decided by chance.
+graph, with which half decided by chance. The pass can also name entities in a
+separate list instead of bracketing them inline, which is the part models
+drop first — every fact it produced in testing had a usable subject and no
+brackets at all.
+
+The second look reads an answer together with the question it answers. Asked
+where he lived, the reply "Musterstadt!" contains no "ich"
+and no "mein" — the subject is in the question — so the first-person gate
+rejected it and nothing ran; the fact was only stored two messages later,
+when the user asked whether it had been. Short answers to direct questions
+are exactly where the important facts arrive, so a reply that follows a
+question is always looked at, minus bare acknowledgements ("ja", "passt",
+"danke").
 
 The **Memory page** (`/memory`) is where this is visible and correctable.
 Nobody typed these facts, so the page answers the three questions that
