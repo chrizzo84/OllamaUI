@@ -209,9 +209,9 @@ describe('the graph', () => {
         .listEntities()
         .map((e) => e.id)
         .sort(),
-    ).toEqual(['plex', 'homeserver']);
+    ).toEqual(['homeserver', 'plex']);
     const about = db.listEdgesForMemory(r.memory.id).filter((e) => e.kind === 'about');
-    expect(about.map((e) => e.toId).sort()).toEqual(['plex', 'homeserver']);
+    expect(about.map((e) => e.toId).sort()).toEqual(['homeserver', 'plex']);
   });
 
   /**
@@ -223,7 +223,10 @@ describe('the graph', () => {
    */
   it('recognises an existing entity even when the fact does not bracket it', () => {
     db.remember({ content: 'Ollama läuft auf [[Homeserver]]' });
-    const plain = db.remember({ content: 'Backups liegen auch auf Homeserver', subject: 'backups' });
+    const plain = db.remember({
+      content: 'Backups liegen auch auf Homeserver',
+      subject: 'backups',
+    });
     expect(db.listMemoriesForEntity('homeserver').map((m) => m.id)).toContain(plain.memory.id);
     // The text itself is left exactly as the model wrote it.
     expect(db.getMemory(plain.memory.id)?.content).toBe('Backups liegen auch auf Homeserver');
@@ -257,10 +260,8 @@ describe('the graph', () => {
         .listEntities()
         .map((e) => e.id)
         .sort(),
-    ).toEqual(['musterstadt', 'bergland']);
-    expect(db.getMemory(r.memory.id)?.content).toBe(
-      'Der Nutzer wohnt in Musterstadt',
-    );
+    ).toEqual(['bergland', 'musterstadt']);
+    expect(db.getMemory(r.memory.id)?.content).toBe('Der Nutzer wohnt in Musterstadt');
     expect(db.listMemoriesForEntity('musterstadt')).toHaveLength(1);
   });
 
@@ -340,7 +341,7 @@ describe('the graph view', () => {
         .filter((n) => n.kind === 'entity')
         .map((n) => n.label)
         .sort(),
-    ).toEqual(['Plex', 'Homeserver']);
+    ).toEqual(['Homeserver', 'Plex']);
     expect(g.edges.filter((e) => e.kind === 'about')).toHaveLength(2);
   });
 
@@ -461,8 +462,8 @@ describe('recall', () => {
 
   it('prefers facts relevant to the conversation', () => {
     db.remember({ content: 'mag Pizza mit Ananas', subject: 'pizza' });
-    const gpu = db.remember({ content: 'hat zwei [[RTX 3090]] im Rechner' });
-    const recalled = db.recallMemories({ query: 'Wie viel VRAM hat meine RTX 3090?', limit: 2 });
+    const gpu = db.remember({ content: 'hat eine [[Grafikkarte]] im Rechner' });
+    const recalled = db.recallMemories({ query: 'Wie viel VRAM hat meine Grafikkarte?', limit: 2 });
     expect(recalled.map((m) => m.id)).toContain(gpu.memory.id);
   });
 
@@ -506,8 +507,10 @@ describe('recall', () => {
   // that carries no meaning, costing a slot in an already tight budget.
   it('ignores words that appear in every sentence', () => {
     const music = db.remember({ content: 'hört viel [[Techno]]', subject: 'musik' });
-    const gpu = db.remember({ content: 'hat zwei [[RTX 3090]]', subject: 'gpus' });
-    const ids = db.recallMemories({ query: 'Wie viel VRAM hat meine 3090?' }).map((m) => m.id);
+    const gpu = db.remember({ content: 'hat eine [[Grafikkarte]]', subject: 'gpus' });
+    const ids = db
+      .recallMemories({ query: 'Wie viel VRAM hat meine Grafikkarte?' })
+      .map((m) => m.id);
     expect(ids).toContain(gpu.memory.id);
     expect(ids).not.toContain(music.memory.id);
   });
@@ -518,11 +521,11 @@ describe('recall', () => {
    * facts tend to be the most trivial, it crowds out the ones that matter.
    */
   it('does not pad the budget with irrelevant facts', () => {
-    const gpu = db.remember({ content: 'hat zwei [[RTX 3090]]', subject: 'gpus' });
+    const gpu = db.remember({ content: 'hat eine [[Grafikkarte]]', subject: 'gpus' });
     for (let i = 0; i < 30; i++) {
       db.remember({ content: `Nebensache ${i} ohne Bezug`, subject: `neben-${i}` });
     }
-    const recalled = db.recallMemories({ query: 'Wie viel VRAM hat meine 3090?' });
+    const recalled = db.recallMemories({ query: 'Wie viel VRAM hat meine Grafikkarte?' });
     expect(recalled.map((m) => m.id)).toContain(gpu.memory.id);
     expect(recalled.length).toBeLessThan(5);
   });

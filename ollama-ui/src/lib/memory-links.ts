@@ -3,7 +3,7 @@
  *
  * A memory stays what it always was — one readable sentence — and the graph
  * is derived from it rather than maintained beside it: "Ollama runs on
- * [[Ollama Host]] with two [[RTX 3090]]" is a fact a person can read and two
+ * [[Ollama Host]] with a [[Grafikkarte]]" is a fact a person can read and two
  * edges a graph can draw. Nothing has to be kept in sync, because there is
  * only one copy of the information.
  *

@@ -267,7 +267,7 @@ describe('searchMessages', () => {
 
   it('matches the last word as a prefix, so results appear while typing', () => {
     seed();
-    expect(db.searchMessages('Donauesch')).not.toHaveLength(0);
+    expect(db.searchMessages('Musterst')).not.toHaveLength(0);
   });
 
   it('ignores diacritics, so "Munchen" finds "München"', () => {

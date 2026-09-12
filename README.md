@@ -371,7 +371,7 @@ replaced, still a draft), because a model told only `{saved: true}` will
 confidently repeat a fact that was never active.
 
 **A second look, because one pass isn't enough.** Measured against
-`a local 35B model` on a plainly durable statement ("meine Kiste ist ein i9 mit
+a local 35B model on a plainly durable statement ("meine Kiste ist ein i9 mit
 128 GB RAM und einer Grafikkarte"), `remember_fact` fired in **1 of 5** runs
 with the original tool description and **3 of 5** after it was rewritten —
 better, and still not something to rely on. The cause is structural: during

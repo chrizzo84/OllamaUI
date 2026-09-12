@@ -30,10 +30,10 @@ describe('slugifyEntity', () => {
 
 describe('parseWikiLinks', () => {
   it('extracts every entity in the order written', () => {
-    const links = parseWikiLinks('Ollama läuft auf [[Ollama Host]] mit zwei [[RTX 3090]].');
+    const links = parseWikiLinks('Ollama läuft auf [[Ollama Host]] und einer [[Grafikkarte]].');
     expect(links).toEqual([
       { slug: 'ollama-host', label: 'Ollama Host' },
-      { slug: 'rtx-3090', label: 'RTX 3090' },
+      { slug: 'grafikkarte', label: 'Grafikkarte' },
     ]);
   });
 
@@ -67,7 +67,9 @@ describe('normalizeClaim', () => {
   // The duplicate check rests on this: the same statement, written twice in
   // two conversations, must compare equal or it accumulates in the prompt.
   it('treats the same claim written differently as equal', () => {
-    expect(normalizeClaim('Läuft auf [[Homeserver]].')).toBe(normalizeClaim('läuft auf Homeserver'));
+    expect(normalizeClaim('Läuft auf [[Homeserver]].')).toBe(
+      normalizeClaim('läuft auf Homeserver'),
+    );
     expect(normalizeClaim('Mag  kurze   Antworten!')).toBe(normalizeClaim('mag kurze Antworten'));
   });
 

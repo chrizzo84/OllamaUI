@@ -1,7 +1,10 @@
 import { z } from 'zod';
 
 // Default host (legacy fallback). Will only be used if explicitly requested via getDefaultOllamaHost().
-const DEFAULT_FALLBACK = 'http://192.0.2.10:11434';
+// A loopback default: the app is configured through the Host Manager, and
+// falling back to a specific machine's address would both fail for everyone
+// else and put someone's network layout in a public repository.
+const DEFAULT_FALLBACK = 'http://127.0.0.1:11434';
 
 const hostSchema = z
   .string()
