@@ -17,13 +17,15 @@ import {
 } from '@/lib/generation-jobs';
 import { persistFinalAssistantMessage } from '@/lib/chat-persistence';
 import {
-  createMemory,
-  listMemories,
+  remember,
+  isMemoryType,
+  recallMemories,
+  markMemoriesUsed,
+  buildMemoryBlock,
   recordBenchmarkRun,
   createScheduledTask,
   listScheduledTasks,
   deleteScheduledTask,
-  type MemoryRow,
   attachmentsAsBase64,
 } from '@/lib/db';
 import {
@@ -286,11 +288,26 @@ const REMEMBER_FACT_TOOL = {
   function: {
     name: 'remember_fact',
     description:
-      'Save a short, durable fact about the user (a preference, an ongoing project, something they told you) so you can recall it in future, separate conversations. Only use this for things worth remembering long-term — not transient chat content. One fact per call.',
+      'Save a short, durable fact about the user (a preference, an ongoing project, something they told you) so you can recall it in future, separate conversations. Only use this for things worth remembering long-term — not transient chat content. One fact per call. Wrap the things a fact is about in [[double brackets]] so they become nodes in the knowledge base: "Ollama runs on [[Ollama Host]] with two [[RTX 3090]]". A new fact about the same thing replaces the old one, so state what is true now rather than describing the change.',
     parameters: {
       type: 'object',
       properties: {
-        fact: { type: 'string', description: 'The fact to remember, one sentence.' },
+        fact: {
+          type: 'string',
+          description:
+            'The fact to remember, one sentence, with [[links]] around the things it is about.',
+        },
+        type: {
+          type: 'string',
+          enum: ['identity', 'state', 'preference', 'episodic'],
+          description:
+            'What kind of fact this is. identity: a durable trait (name, language, hardware they own). preference: how they want you to work. state: their current situation, which will change. episodic: something that happened, at a point in time. When unsure, leave it out.',
+        },
+        confidence: {
+          type: 'number',
+          description:
+            'How sure you are, 0 to 1. Below 0.5 the fact is saved for review instead of being used — use that when you are inferring rather than being told.',
+        },
       },
       required: ['fact'],
     },
@@ -388,12 +405,37 @@ async function executeTool(
     };
   }
   if (name === 'remember_fact') {
-    const a = (args && typeof args === 'object' ? args : {}) as { fact?: unknown };
+    const a = (args && typeof args === 'object' ? args : {}) as {
+      fact?: unknown;
+      type?: unknown;
+      confidence?: unknown;
+    };
     if (typeof a.fact !== 'string' || !a.fact.trim()) {
       return { error: 'Missing required "fact" argument' };
     }
-    createMemory({ content: a.fact.trim(), sourceSessionId: sessionId });
-    return { result: { saved: true } };
+    const stored = remember({
+      content: a.fact.trim(),
+      type: isMemoryType(a.type) ? a.type : undefined,
+      confidence: typeof a.confidence === 'number' ? a.confidence : undefined,
+      sourceSessionId: sessionId,
+    });
+    /*
+    The result says what actually happened, because all three outcomes are
+    things the model should know and would otherwise guess at: a duplicate
+    means "you already knew this, stop saving it again", a replacement means
+    the older fact is no longer in play, and a draft means the fact is NOT in
+    use yet. Answering a bare `{saved: true}` to a call that quietly changed
+    the store is how a model ends up confidently repeating a fact that was
+    never active.
+    */
+    return {
+      result: {
+        saved: !stored.duplicate,
+        alreadyKnown: stored.duplicate,
+        status: stored.memory.status,
+        ...(stored.superseded ? { replaced: stored.superseded.content } : {}),
+      },
+    };
   }
   if (name === 'create_reminder') {
     const a = (args && typeof args === 'object' ? args : {}) as {
@@ -997,15 +1039,41 @@ export async function runGeneration(job: Job, params: GenerationParams): Promise
 // cost regardless of how many accumulate; the user prunes the full list from
 // Settings. Merges into an existing system message (persona prompt) rather
 // than adding a second one, for template compatibility across models.
-function buildMemorySystemBlock(facts: MemoryRow[]): string {
-  const lines = facts.map((f) => `- ${f.content}`).join('\n');
-  return `Facts you remember about this user from previous conversations:\n${lines}\nUse these naturally when relevant; don't recite them unprompted. Don't call remember_fact again for something already listed here — only for genuinely new information.`;
-}
+/**
+ * Picks the memories this particular conversation should carry and puts them
+ * in the system prompt.
+ *
+ * This used to take the newest 50 facts and inject all of them, every time.
+ * Two things were wrong with that at once: the newest-50 window drops the
+ * oldest fact as soon as the 51st arrives — and the oldest is usually the
+ * most fundamental one — while injecting all of them spends context and
+ * attention on facts about Docker during a conversation about dinner. Small
+ * local models, which is what this app runs, degrade measurably when carrying
+ * irrelevant context.
+ *
+ * So: identity and pinned facts unconditionally, the rest ranked against the
+ * conversation itself and capped by a token budget (see recallMemories).
+ * Retrieved facts are marked as used, which is what later tells apart the
+ * memories that earn their place from the ones that should decay.
+ *
+ * Only the last few messages form the query — the recent turns are what the
+ * reply is actually about, and a long conversation's early history would
+ * otherwise dominate the ranking forever.
+ */
+const RECALL_QUERY_MESSAGES = 4;
 
 export function injectMemories(messages: ChatMessageIn[]): ChatMessageIn[] {
-  const facts = listMemories().slice(0, 50);
+  const query = messages
+    .filter((m) => m.role === 'user' || m.role === 'assistant')
+    .slice(-RECALL_QUERY_MESSAGES)
+    .map((m) => (typeof m.content === 'string' ? m.content : ''))
+    .join(' ')
+    .slice(0, 4000);
+  const facts = recallMemories({ query });
   if (facts.length === 0) return messages;
-  const block = buildMemorySystemBlock(facts);
+  markMemoriesUsed(facts.map((f) => f.id));
+  const block = buildMemoryBlock(facts);
+  if (!block) return messages;
   if (messages[0]?.role === 'system') {
     return [
       { ...messages[0], content: `${block}\n\n${messages[0].content}` },

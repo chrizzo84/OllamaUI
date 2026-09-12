@@ -46,7 +46,7 @@
 - 💬 Chat console with persisted sessions, personas, reasoning/tool-call traces, and a Compare mode to run two models side by side
 - 🔌 Chat generation survives closing the tab — runs as a server-side job, reconnect from any tab/device to pick a live reply back up; a global "N generating" badge, toast and tab-title flash tell you when a background reply finishes
 - 🛠️ Tool-calling for capable models — `web_search` via SearXNG, `get_current_date`, `get_weather` via Open-Meteo, `calculator`, `create_reminder`, `create_recurring_task`, `list_scheduled_tasks`, `cancel_scheduled_task`, plus `remember_fact` (memory, its own settings section). Each individually toggleable under Settings → Tools, all on by default; a tool turned off there stays off everywhere — web chat, Telegram, scheduled tasks
-- 🧠 Persistent memory — the assistant saves durable facts about you and recalls them automatically in future chats; on by default, toggle globally or per-chat
+- 🧠 Persistent memory, as a small knowledge base — durable facts about you, recalled automatically in future chats; on by default, toggle globally or per-chat. Facts have a **subject**, so a new fact about a thing **replaces** the outdated one instead of standing beside it as a second truth (the old version is kept as history, never deleted), and the replacement is recorded as a **contradiction** when the claim actually changed — an explicit list of the places the store disagreed with itself, rather than a coin flip inside the prompt. Things a fact is about are written as `[[Wikilinks]]` and become **entities** in a graph, so "what do we know about X" has an answer. Retrieval is by relevance to the current conversation under a **token budget**, with identity and pinned facts always present — the previous behaviour injected the newest 50 facts into every prompt, which both dropped the oldest (usually most fundamental) fact as soon as the 51st arrived and spent context and attention on facts about Docker during a conversation about dinner. A fact the model is unsure about lands as a **draft** for review instead of going straight into every prompt — see [The knowledge base](#the-knowledge-base)
 - ⏰ Scheduled tasks — recurring prompts that run automatically at a set time/days, no tab needed; each run lands as a new session with the usual background-job notification. One-off reminders can also be set directly from chat ("remind me tomorrow at 9...") via `create_reminder`; a footer clock shows the server's own time since schedules run on it
 - 📱 Telegram bridge (opt-in) — chat with the app from your phone through a Telegram bot, using the same tool-calling/memory engine as the web UI, including sending photos to a vision model, voice messages (transcribed via a local `whisper.cpp` server), documents (PDF/text/code — attach one to summarize or ask about it), tap-to-cancel buttons on `/tasks`, and `/info`/`/tasks`/`/new`/`/help` slash commands. Locked to a single allowlisted Telegram user id; set `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_USER_ID` and `TELEGRAM_MODEL` in `.env.local` to enable it (unset = bridge stays off), plus `TELEGRAM_VISION_MODEL` for photos and `WHISPER_HOST` for voice messages — the combined Docker image bundles `whisper-server` + a model automatically, so `WHISPER_HOST` there just defaults to it. Scheduled tasks and reminders push their result to Telegram too, not just into a new chat session, so they still reach you with no tab open — toggle this specifically under Settings → Telegram (on by default, independent of the bridge's own configuration). The polling loop backs off exponentially on a Telegram-side outage and auto-restarts if it ever crashes, with a "reconnected" notice once it recovers. The bridge's one persistent conversation is marked in the web UI's session list with a small paper-plane icon so it's not mistaken for an ordinary web chat. Replies are rendered as real Telegram formatting: long ones are split at Markdown block boundaries (never mid-entity, which used to make Telegram reject the message and drop the whole reply back to raw `**asterisks**`), tables become aligned monospace blocks — or one `Key: value` record per row when they're too wide for a phone — code blocks keep their language, and `- [x]` checkboxes stay visible
 - 🔁 `create_recurring_task`, `list_scheduled_tasks`, `cancel_scheduled_task` tools — manage scheduled tasks and reminders entirely from chat (Telegram or web), no need to open the Scheduled page; in Telegram, `/tasks` also offers a tap-to-cancel button per task. Every schedule-related claim (created, cancelled, or listed) gets verified against the actual tool-call trace instead of trusting the model's own "done" claim — a fabricated _list_ is replaced outright with the real data rather than just flagged, since it's misinformation about your own data, not just an unconfirmed action
@@ -329,6 +329,42 @@ moved and the old shape is the intuitive-but-wrong one:
 4. History is a tree, not a list: each message has a `parent_id`, and the
    session points at the active leaf per column. A conversation with no
    branches is just a tree where every node has one child.
+
+### The knowledge base
+
+Memory is a small knowledge graph, not a list of strings. Worth knowing
+before touching it, because the retrieval path is where it goes subtly wrong:
+
+1. **Every fact can have a `subject`** — what it is _about_, taken from the
+   first `[[Wikilink]]` unless given explicitly. One active fact per subject:
+   a new one **supersedes** the old, which keeps its row with
+   `status='superseded'`, a `valid_until` and a `supersedes` edge pointing at
+   it. Nothing is deleted, same principle as message branching.
+2. **A replacement that changed the claim writes a `contradicts` edge.** The
+   unresolved ones are the review queue (`listContradictions`) — the places
+   the store disagreed with itself, which otherwise resolve themselves
+   randomly inside the prompt.
+3. **`[[Wikilinks]]` create entities and `about` edges.** That is the whole
+   graph: `about` (fact → thing), `supersedes` and `contradicts` (fact →
+   fact), `derived_from` (fact → the session it came from, so every fact
+   links back to its evidence). An entity nothing points at any more is
+   pruned.
+4. **Retrieval is not "everything".** `recallMemories` always includes
+   identity and pinned facts, ranks the rest against the last few messages
+   with FTS5, and stops at a **token budget** — leftover budget stays unspent
+   rather than being padded with whatever is newest. On a small local model a
+   fact costs both context and attention.
+5. **The FTS query is stemmed by truncation and stop-word filtered.** German
+   inflects at the end of the word, so "Was koche ich?" and a stored "kocht
+   gern Pasta" share no whole word — without prefix matching this returns
+   nothing and looks exactly like the fact was never saved.
+6. **A fact below `DRAFT_CONFIDENCE_THRESHOLD` is stored as a `draft`**:
+   visible for review, never injected, and it displaces nothing. Guessing
+   quietly into the long-term store is the one failure mode that compounds.
+
+`remember_fact` reports back which of these happened (saved, already known,
+replaced, still a draft), because a model told only `{saved: true}` will
+confidently repeat a fact that was never active.
 
 ---
 
