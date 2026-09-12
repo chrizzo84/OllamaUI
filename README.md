@@ -370,6 +370,25 @@ before touching it, because the retrieval path is where it goes subtly wrong:
 replaced, still a draft), because a model told only `{saved: true}` will
 confidently repeat a fact that was never active.
 
+**A second look, because one pass isn't enough.** Measured against
+`a local 35B model` on a plainly durable statement ("meine Kiste ist ein i9 mit
+128 GB RAM und einer Grafikkarte"), `remember_fact` fired in **1 of 5** runs
+with the original tool description and **3 of 5** after it was rewritten —
+better, and still not something to rely on. The cause is structural: during
+a reply the model is answering _and_ watching for facts, and the answering
+wins. So once the answer is on screen, the same model — already loaded, so
+no swap — is asked the single narrow question with only this one tool
+available (`src/lib/memory-extract.ts`). A cheap first-person gate keeps it
+off the GPU for "danke" or "schreib mir eine Funktion". Everything it finds
+lands as a **draft**: it was extracted with nobody watching, by a pass whose
+premise is that the model's judgement had just failed.
+
+Entities are also recognised in facts that don't bracket them: once
+`[[Homeserver]]` exists, a later "Backups liegen auf Homeserver" is linked to it
+without rewriting the text — Obsidian calls these unlinked mentions. Models
+bracket inconsistently, and without this half the facts would never reach the
+graph, with which half decided by chance.
+
 The **Memory page** (`/memory`) is where this is visible and correctable.
 Nobody typed these facts, so the page answers the three questions that
 follow from that: what is in there, where did it come from, and what

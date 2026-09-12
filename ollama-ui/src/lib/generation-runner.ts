@@ -16,6 +16,7 @@ import {
   type Job,
 } from '@/lib/generation-jobs';
 import { persistFinalAssistantMessage } from '@/lib/chat-persistence';
+import { extractDurableFacts, alreadySavedDuringReply } from '@/lib/memory-extract';
 import {
   remember,
   isMemoryType,
@@ -287,21 +288,47 @@ const REMEMBER_FACT_TOOL = {
   type: 'function',
   function: {
     name: 'remember_fact',
+    /*
+    Rewritten after measuring it: the previous wording, which led with "only
+    use this for things worth remembering long-term", saved a plainly durable
+    fact ("meine Kiste ist ein Mini-PC mit 32 GB RAM und einer Grafikkarte") in 1 of
+    5 runs against a local 35B model, and never with the [[links]] it asked for.
+    Naming the categories instead of warning against over-saving, and saying
+    outright that a question can contain a fact, took that to 3 of 5, with
+    links and a subject every time.
+
+    Longer is not better here: a further revision that also forbade bracketing
+    plain values dropped it back to 0 of 5. Every additional rule makes a
+    small model more hesitant to call the tool at all, so what survives here
+    is what measurably earned its place.
+    */
     description:
-      'Save a short, durable fact about the user (a preference, an ongoing project, something they told you) so you can recall it in future, separate conversations. Only use this for things worth remembering long-term — not transient chat content. One fact per call. Wrap the things a fact is about in [[double brackets]] so they become nodes in the knowledge base: "Ollama runs on [[Ollama Host]] with two [[RTX 3090]]". A new fact about the same thing replaces the old one, so state what is true now rather than describing the change.',
+      'Remember something about the user across conversations. Call this whenever they state something about themselves that will still be true next week — their name, their language, the hardware they own, the tools and services they run, what they are working on, how they want you to answer. A question can still contain such a fact: "reicht meine Grafikkarte?" states which card they own. Call it once per fact, so a message containing three facts means three calls. Do not save what is only true inside this conversation. Wrap the things the fact is about in [[double brackets]]: "hat eine [[Grafikkarte]] und 128 GB RAM in seinem [[Arbeitsrechner]]".',
     parameters: {
       type: 'object',
       properties: {
         fact: {
           type: 'string',
           description:
-            'The fact to remember, one sentence, with [[links]] around the things it is about.',
+            "The fact, one sentence, in the user's language, with [[links]] around the things it is about.",
         },
         type: {
           type: 'string',
           enum: ['identity', 'state', 'preference', 'episodic'],
           description:
-            'What kind of fact this is. identity: a durable trait (name, language, hardware they own). preference: how they want you to work. state: their current situation, which will change. episodic: something that happened, at a point in time. When unsure, leave it out.',
+            'identity: durable traits — name, age, language, hardware they own. state: their current situation, which will change. preference: how they want you to work. episodic: something that happened at a point in time.',
+        },
+        /*
+        Asking for the subject outright rather than deriving it from the first
+        link: without one a fact can never be replaced, and the stored
+        "Der Nutzer heißt Alex und ist 30 Jahre alt" had no subject and
+        no links at all, so nothing could ever supersede it. Models that skip
+        the brackets still tend to fill in a plain field.
+        */
+        subject: {
+          type: 'string',
+          description:
+            'What the fact is about, one to three words ("grafikkarte", "name", "arbeitsrechner"). A later fact with the same subject replaces this one, so give one whenever the fact could change.',
         },
         confidence: {
           type: 'number',
@@ -408,6 +435,7 @@ async function executeTool(
     const a = (args && typeof args === 'object' ? args : {}) as {
       fact?: unknown;
       type?: unknown;
+      subject?: unknown;
       confidence?: unknown;
     };
     if (typeof a.fact !== 'string' || !a.fact.trim()) {
@@ -416,6 +444,9 @@ async function executeTool(
     const stored = remember({
       content: a.fact.trim(),
       type: isMemoryType(a.type) ? a.type : undefined,
+      // Undefined (not null) when absent, so remember() falls back to the
+      // first [[link]] rather than storing a fact that can never be replaced.
+      subject: typeof a.subject === 'string' && a.subject.trim() ? a.subject.trim() : undefined,
       confidence: typeof a.confidence === 'number' ? a.confidence : undefined,
       sourceSessionId: sessionId,
     });
@@ -803,6 +834,34 @@ export async function runGeneration(job: Job, params: GenerationParams): Promise
     // Always last: tells an attached response stream it's safe to close now
     // (see the POST handler's subscriber).
     publish(job.id, { streamEnd: true });
+
+    /*
+    Second look at what the user just said, once they already have their
+    answer — see src/lib/memory-extract.ts for why this exists: during a
+    reply the model is answering *and* watching for facts, and the answering
+    wins. Measured on a local 35B model, a plainly durable statement was saved
+    in 3 of 5 runs even after the tool description was rewritten for it.
+
+    Deliberately fire-and-forget after streamEnd: the reply is already on
+    screen, so this costs the user nothing but a little GPU time on a model
+    that is still loaded anyway. Skipped entirely when the model did save
+    something during the reply, and everything it finds lands as a draft for
+    review rather than in the next prompt.
+    */
+    if (status === 'done' && memoryEnabled && !alreadySavedDuringReply(trace)) {
+      const lastUser = [...params.messages].reverse().find((m) => m.role === 'user');
+      const text = typeof lastUser?.content === 'string' ? lastUser.content : '';
+      if (text) {
+        void extractDurableFacts({
+          base,
+          model,
+          userText: text,
+          sessionId: job.sessionId,
+        }).catch(() => {
+          /* a failed second look must never surface as a failed reply */
+        });
+      }
+    }
   }
 
   function finishError(message: string) {

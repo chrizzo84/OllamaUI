@@ -269,6 +269,43 @@ function upsertEntity(slug: string, label: string, now: number): void {
   );
 }
 
+/**
+ * Entities the text names without bracketing them.
+ *
+ * Models are inconsistent about the [[link]] syntax — measured on
+ * a local 35B model, the same fact came back with links in some runs and
+ * without in others, and the focused extraction pass
+ * (src/lib/memory-extract.ts) sets a subject reliably but almost never
+ * brackets anything. Left at that, half the facts would never reach the
+ * graph, and which half would be pure chance.
+ *
+ * So an entity that already exists is recognised wherever it is named,
+ * whether or not this particular fact bothered to bracket it — Obsidian
+ * calls these unlinked mentions. The fact's text is not rewritten: only the
+ * edge is added, so what the model wrote is what stays stored.
+ *
+ * This heals forward rather than backward: the first mention of a thing has
+ * to be bracketed by someone to create the entity, and every later mention
+ * finds it. Short labels are skipped, where a substring match would connect
+ * everything to everything.
+ */
+const MIN_MENTION_LENGTH = 3;
+
+function unlinkedMentions(content: string, alreadyLinked: string[]): string[] {
+  const plain = stripWikiLinks(content);
+  const linked = new Set(alreadyLinked);
+  const found: string[] = [];
+  for (const entity of listEntities()) {
+    if (linked.has(entity.id) || entity.label.length < MIN_MENTION_LENGTH) continue;
+    // Word boundaries, so "[[Ollama]]" does not match inside "OllamaUI".
+    const escaped = entity.label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    if (new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, 'iu').test(plain)) {
+      found.push(entity.id);
+    }
+  }
+  return found;
+}
+
 export function addEdge(
   fromId: string,
   toKind: EdgeTarget,
@@ -407,6 +444,12 @@ export function remember(input: RememberInput): RememberResult {
   for (const link of links) {
     upsertEntity(link.slug, link.label, now);
     addEdge(row.id, 'entity', link.slug, 'about', now);
+  }
+  for (const slug of unlinkedMentions(
+    content,
+    links.map((l) => l.slug),
+  )) {
+    addEdge(row.id, 'entity', slug, 'about', now);
   }
   if (row.sourceSessionId) addEdge(row.id, 'session', row.sourceSessionId, 'derived_from', now);
 

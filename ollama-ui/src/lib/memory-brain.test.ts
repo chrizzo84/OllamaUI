@@ -214,6 +214,33 @@ describe('the graph', () => {
     expect(about.map((e) => e.toId).sort()).toEqual(['plex', 'homeserver']);
   });
 
+  /**
+   * Models are inconsistent about the [[link]] syntax — the same fact comes
+   * back bracketed in some runs and plain in others, and the focused
+   * extraction pass sets a subject reliably but rarely brackets anything.
+   * Left at that, half the facts would never reach the graph and which half
+   * would be pure chance.
+   */
+  it('recognises an existing entity even when the fact does not bracket it', () => {
+    db.remember({ content: 'Ollama läuft auf [[Homeserver]]' });
+    const plain = db.remember({ content: 'Backups liegen auch auf Homeserver', subject: 'backups' });
+    expect(db.listMemoriesForEntity('homeserver').map((m) => m.id)).toContain(plain.memory.id);
+    // The text itself is left exactly as the model wrote it.
+    expect(db.getMemory(plain.memory.id)?.content).toBe('Backups liegen auch auf Homeserver');
+  });
+
+  it('does not invent an entity from an unbracketed first mention', () => {
+    db.remember({ content: 'irgendwas über Kubernetes', subject: 'k8s' });
+    expect(db.listEntities().map((e) => e.id)).not.toContain('kubernetes');
+  });
+
+  it('matches a mention on word boundaries, not as a substring', () => {
+    db.remember({ content: 'nutzt [[Ollama]] täglich' });
+    const other = db.remember({ content: 'arbeitet an OllamaUI', subject: 'projekt' });
+    const linked = db.listEdgesForMemory(other.memory.id).filter((e) => e.kind === 'about');
+    expect(linked.map((e) => e.toId)).not.toContain('ollama');
+  });
+
   it('answers what is known about one entity — the backlink view', () => {
     db.remember({ content: '[[Homeserver]] läuft auf der großen Kiste' });
     db.remember({ content: 'Backups liegen auf [[Homeserver]]', subject: 'backups' });
