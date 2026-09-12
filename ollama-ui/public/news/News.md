@@ -1,5 +1,9 @@
 Chronological list of notable changes to Ollama UI.
 
+## 2026-09-12 (9)
+
+- **Next.js 16.2.12 → 16.3.3**, closing a critical advisory (four of the eight open Dependabot alerts were this one package across `package.json` and the lockfile). Verified rather than assumed, because this project has a scar from exactly this area: the build still runs on webpack (`next build --webpack`), and the standalone server's password gate — which Turbopack once compiled and silently failed to wire in — was re-checked end to end against a real standalone build. Gate on: `/api/sessions` and `/api/memories` answer 401, `/memory` redirects to `/login`, `/login` serves 200; login with the correct password returns 200 with an `HttpOnly` cookie and the same routes then answer 200. Gate off: everything open again, as intended. 565 tests, typecheck and lint unchanged.
+
 ## 2026-09-12 (8)
 
 - **An answer to a question is now read together with the question** — reported from a live chat: asked where he lived, the reply was "Musterstadt!", and it was not stored. It contains no "ich" and no "mein", because the subject sits in the _question_, not in the answer — so the extraction pass's first-person gate rejected it and never ran. The fact was only saved two messages later, when the user asked whether it had been. Short answers to direct questions are exactly where the important facts arrive, so a reply that follows a question is always examined now, and the preceding turn goes to the extractor as context. Bare acknowledgements ("ja", "passt", "danke") are still skipped, or every confirmation in a conversation would wake a 35B model.
