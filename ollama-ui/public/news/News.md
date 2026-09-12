@@ -1,5 +1,14 @@
 Chronological list of notable changes to Ollama UI.
 
+## 2026-09-12 (12)
+
+- **Near-duplicate facts, from three separate causes** — reported from a real store that had collected two facts for the home town and three overlapping ones for the same machine. Each cause was a different mistake.
+- **Approving a draft skipped displacement entirely.** A draft deliberately displaces nothing — it is not in use, so it must not push out something that is. But approving it makes it current, and that step only flipped the status. The result was two active facts on the same subject side by side, both marked current, which is precisely the situation the whole design exists to prevent. Approval now runs the same displacement a direct write does, including recording a contradiction when the wording actually differs.
+- **The live pass left no trace.** It never marked the message it had examined, so the backfill read the same conversation again later and stored the same fact in different words. It now marks the question a reply answers — found through the message tree, since the live pass holds the reply's id and not the question's.
+- **The subject could not carry displacement alone.** The same machine came back as subject `hardware` in one run and `unraid-system` in the next, so nothing displaced anything. A model will not name a subject consistently across conversations, so facts are now also compared by their content words: above 60% overlap the newer one displaces the older exactly as a shared subject would. Lexical on purpose — an embedding call per write would be another round trip on the hot path, and word overlap already separates "wohnt in X" from "besitzt eine Y" cleanly. Replayed against the real store: **8 active facts became 5**, with 3 contradictions surfaced for review.
+- **And the band in between is shown, not guessed at.** "hat einen Mini-PC mit 32 GB RAM" and "nutzt ein Homeserver-System mit Mini-PC und 32 GB RAM für lokale KI" overlap heavily and are not the same sentence — one carries more. Merging that automatically would either lose the detail or leave the near-copy standing, so a draft in that range is now shown next to the fact it resembles, with the percentage, and the reader decides.
+- **Tests** — 591, up from 581, including the real store's duplicates as a fixture.
+
 ## 2026-09-12 (11)
 
 - **Reading the conversations that happened before the memory existed** — the extractor only started running today, so every earlier conversation is unexamined, and that is exactly where the durable facts sit: people explain their setup, their preferences and who they are once, early, and never repeat it. The Memory page can now read back through them. It is the same job the night shift will run on a timer, built first as something a person starts by hand, so the mechanism is observable before it is given a schedule.

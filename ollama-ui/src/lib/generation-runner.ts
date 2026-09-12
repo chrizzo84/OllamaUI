@@ -24,6 +24,7 @@ import {
   markMemoriesUsed,
   buildMemoryBlock,
   recordBenchmarkRun,
+  markAnsweredMessageScanned,
   createScheduledTask,
   listScheduledTasks,
   deleteScheduledTask,
@@ -862,7 +863,7 @@ export async function runGeneration(job: Job, params: GenerationParams): Promise
     something during the reply, and everything it finds lands as a draft for
     review rather than in the next prompt.
     */
-    if (status === 'done' && memoryEnabled && !alreadySavedDuringReply(trace)) {
+    if (status === 'done' && memoryEnabled) {
       const reversed = [...params.messages].reverse();
       const lastUserIndex = reversed.findIndex((m) => m.role === 'user');
       const text =
@@ -878,7 +879,27 @@ export async function runGeneration(job: Job, params: GenerationParams): Promise
       const priorAssistant = reversed
         .slice(lastUserIndex + 1)
         .find((m) => m.role === 'assistant' && typeof m.content === 'string' && m.content.trim());
-      if (text) {
+      /*
+      Marked as examined either way — whether the model saved something
+      during the reply or the second look did it afterwards. Without this the
+      backfill reads the same conversation again later and stores the same
+      fact in different words, which is how the store filled up with
+      near-duplicates: "Der Nutzer Alex wohnt in X" beside "Der Nutzer wohnt
+      in X".
+      */
+      const markScanned = () => {
+        try {
+          // job.id is the assistant message; the question it answers is its
+          // parent in the message tree.
+          markAnsweredMessageScanned(job.id);
+        } catch {
+          /* not worth failing a finished reply over */
+        }
+      };
+
+      if (alreadySavedDuringReply(trace)) {
+        markScanned();
+      } else if (text) {
         void extractDurableFacts({
           base,
           model,
@@ -886,9 +907,11 @@ export async function runGeneration(job: Job, params: GenerationParams): Promise
           priorAssistantText:
             typeof priorAssistant?.content === 'string' ? priorAssistant.content : undefined,
           sessionId: job.sessionId,
-        }).catch(() => {
-          /* a failed second look must never surface as a failed reply */
-        });
+        })
+          .then(markScanned)
+          .catch(() => {
+            /* a failed second look must never surface as a failed reply */
+          });
       }
     }
   }

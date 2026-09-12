@@ -181,6 +181,127 @@ describe('re-classifying by hand', () => {
   });
 });
 
+describe('near-duplicates', () => {
+  /**
+   * Straight from a real store, which is what prompted this: the subject was
+   * meant to prevent it and did not, because the same machine came back as
+   * "hardware" in one run and "unraid-system" in the next. A model does not
+   * name a subject consistently across conversations, so the text has to be
+   * compared as well.
+   */
+  it('scores near-copies high and different facts low', () => {
+    const wohnort = 'Der Nutzer wohnt in Musterstadt im Bergland.';
+    const wohnortMitName = 'Der Nutzer Alex wohnt in Musterstadt im Bergland.';
+    const karte = 'Der Nutzer besitzt eine Grafikkarte mit 12 GB.';
+    expect(db.claimSimilarity(wohnort, wohnortMitName)).toBeGreaterThan(db.SAME_TOPIC_THRESHOLD);
+    expect(db.claimSimilarity(wohnort, karte)).toBeLessThan(db.SAME_TOPIC_THRESHOLD);
+  });
+
+  it('a re-worded fact displaces the original instead of joining it', () => {
+    const first = db.remember({ content: 'Der Nutzer Alex wohnt in Musterstadt im Bergland.' });
+    const second = db.remember({ content: 'Der Nutzer wohnt in Musterstadt im Bergland.' });
+    expect(second.superseded?.id).toBe(first.memory.id);
+    expect(db.listMemories({ status: 'active' })).toHaveLength(1);
+  });
+
+  // Displacement now works without any subject at all, which is what makes
+  // it robust against a model that names subjects inconsistently.
+  it('displaces across differently-named subjects', () => {
+    const a = db.remember({
+      content: 'Der Nutzer nutzt einen Homeserver mit 32 GB RAM für lokale KI.',
+      subject: 'hardware',
+    });
+    db.remember({
+      content: 'Der Nutzer nutzt einen Homeserver mit 32 GB RAM für lokale KI und Docker.',
+      subject: 'homeserver-setup',
+    });
+    expect(db.getMemory(a.memory.id)?.status).toBe('superseded');
+  });
+
+  it('leaves genuinely different facts about one machine alone', () => {
+    const a = db.remember({
+      content: 'Der Nutzer besitzt eine [[Grafikkarte]] mit 12 GB.',
+      subject: 'gpu-1',
+    });
+    const b = db.remember({
+      content: 'Der Nutzer hat 128 GB Arbeitsspeicher verbaut.',
+      subject: 'ram',
+    });
+    expect(db.getMemory(a.memory.id)?.status).toBe('active');
+    expect(db.getMemory(b.memory.id)?.status).toBe('active');
+  });
+});
+
+describe('findSimilarActive', () => {
+  // The band automatic displacement stays out of: close enough to be a
+  // re-wording, different enough to be an addition.
+  it('names the active fact a draft resembles', () => {
+    const existing = db.remember({
+      content: 'Der Nutzer hat einen Mini-PC mit 32 GB RAM auf einem Homeserver-System.',
+      subject: 'hardware',
+    });
+    const found = db.findSimilarActive(
+      'Der Nutzer nutzt ein Homeserver-System mit Mini-PC und 32 GB RAM für lokale KI.',
+    );
+    expect(found?.memory.id).toBe(existing.memory.id);
+  });
+
+  it('says nothing when nothing is close', () => {
+    db.remember({ content: 'mag [[Kaffee]] am Morgen', subject: 'kaffee' });
+    expect(db.findSimilarActive('Der Nutzer besitzt eine Grafikkarte mit 12 GB.')).toBeNull();
+  });
+
+  it('never points a fact at itself', () => {
+    const r = db.remember({ content: 'Der Nutzer wohnt in Musterstadt im Bergland.' });
+    expect(db.findSimilarActive(r.memory.content, r.memory.id)).toBeNull();
+  });
+});
+
+describe('approving a draft', () => {
+  /**
+   * The bug this test exists for: a draft deliberately displaces nothing —
+   * it is not in use, so it must not push out something that is. But
+   * approving it makes it current, and that step skipped the displacement
+   * entirely, leaving two active facts on the same subject side by side.
+   * Seen live with two "wohnort" facts, both marked current.
+   */
+  it('displaces what it replaces, which it could not do as a draft', () => {
+    const existing = db.remember({ content: 'Der Nutzer Alex wohnt in Musterstadt im Bergland.' });
+    const draft = db.remember({
+      content: 'Der Nutzer wohnt in Musterstadt im Bergland.',
+      confidence: 0.4,
+    });
+    // While it is a draft, nothing moves.
+    expect(db.getMemory(existing.memory.id)?.status).toBe('active');
+
+    db.approveMemory(draft.memory.id);
+    expect(db.getMemory(existing.memory.id)?.status).toBe('superseded');
+    expect(db.getMemory(existing.memory.id)?.supersededBy).toBe(draft.memory.id);
+    expect(db.listMemories({ status: 'active' })).toHaveLength(1);
+  });
+
+  it('records a contradiction when the approved wording says something else', () => {
+    db.remember({
+      content: 'Der Nutzer besitzt eine Grafikkarte mit 8 GB Speicher.',
+      subject: 'gpu',
+    });
+    const draft = db.remember({
+      content: 'Der Nutzer besitzt eine Grafikkarte mit 6 GB Speicher.',
+      subject: 'gpu',
+      confidence: 0.4,
+    });
+    db.approveMemory(draft.memory.id);
+    expect(db.listContradictions()).toHaveLength(1);
+  });
+
+  it('approving the only fact on its subject displaces nothing', () => {
+    const draft = db.remember({ content: 'mag [[Kaffee]]', confidence: 0.3 });
+    db.approveMemory(draft.memory.id);
+    expect(db.getMemory(draft.memory.id)?.status).toBe('active');
+    expect(db.listMemories({ status: 'superseded' })).toHaveLength(0);
+  });
+});
+
 describe('remember: the write gate', () => {
   it('parks a low-confidence fact as a draft, out of every prompt', () => {
     const r = db.remember({ content: 'heißt vielleicht [[Chris]]', confidence: 0.3 });

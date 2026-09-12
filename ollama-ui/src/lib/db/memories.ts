@@ -175,6 +175,38 @@ export function getMemory(id: string): MemoryRow | undefined {
   return row ? rowToMemory(row as unknown as MemoryDbRow) : undefined;
 }
 
+/**
+ * The active fact a draft most resembles, if any is close enough to be worth
+ * showing next to it.
+ *
+ * Between "clearly the same claim" (displaced automatically) and "clearly
+ * different" there is a band where only a person can tell: "hat einen
+ * Mini-PC mit 32 GB RAM" and "nutzt ein Homeserver-System mit Mini-PC und 32
+ * GB RAM für lokale KI" overlap heavily and are not the same sentence — one
+ * carries more. Deciding that automatically would either merge real detail
+ * away or leave near-copies standing, so the review queue shows what a draft
+ * resembles and lets the reader choose.
+ */
+const SIMILAR_ENOUGH_TO_SHOW = 0.3;
+
+export function findSimilarActive(
+  content: string,
+  excludeId?: string,
+): { memory: MemoryRow; similarity: number } | null {
+  const rows = (
+    db.prepare(`${SELECT_MEMORY} WHERE status = 'active'`).all() as unknown as MemoryDbRow[]
+  ).map(rowToMemory);
+  let best: { memory: MemoryRow; similarity: number } | null = null;
+  for (const row of rows) {
+    if (row.id === excludeId) continue;
+    const similarity = claimSimilarity(row.content, content);
+    if (similarity >= SIMILAR_ENOUGH_TO_SHOW && (!best || similarity > best.similarity)) {
+      best = { memory: row, similarity };
+    }
+  }
+  return best;
+}
+
 /** The history of one subject, oldest first — what was believed, and when. */
 export function listMemoryHistory(subject: string): MemoryRow[] {
   const rows = db
@@ -335,6 +367,63 @@ export function resolveEdge(edgeId: string, now = Date.now()): void {
   db.prepare('UPDATE memory_edges SET resolved_at = ? WHERE id = ?').run(now, edgeId);
 }
 
+/*
+Words that carry no topic and would make any two sentences about the same
+person look alike. Separate from the FTS stop words: this list only needs to
+cover what recurs in *facts*, which are nearly all of the shape "Der Nutzer
+<verb> <thing>".
+*/
+const CLAIM_NOISE = new Set(
+  (
+    'der die das den dem des ein eine einen einem eines und oder aber auch noch nur mit von zum zur ' +
+    'aus auf uber unter vor nach seit gegen ohne um im in ist sind war hat habe haben wird werden ' +
+    'kann er sie es ich du mein meine sein seine ihr ihre nutzer user the a an and or of for with ' +
+    'his her their is are was has have uses user'
+  ).split(' '),
+);
+
+function claimTokens(text: string): Set<string> {
+  return new Set(
+    normalizeClaim(text)
+      .split(' ')
+      .filter((w) => w.length > 2 && !CLAIM_NOISE.has(w)),
+  );
+}
+
+/**
+ * How much two facts are about the same thing, 0 to 1.
+ *
+ * The subject was supposed to carry this on its own, and in practice does
+ * not: the same machine came back as "hardware", "unraid-system" and
+ * "grafikkarten" across three runs, so nothing displaced anything and the
+ * store filled up with near-copies. A model will not name a subject
+ * consistently across conversations, so the text has to be compared too.
+ *
+ * Deliberately lexical rather than semantic: an embedding call per write
+ * would be another model round trip on the hot path, and overlap of content
+ * words already separates "Der Nutzer wohnt in X" from "Der Nutzer besitzt
+ * eine Y" cleanly.
+ */
+export function claimSimilarity(a: string, b: string): number {
+  const ta = claimTokens(a);
+  const tb = claimTokens(b);
+  if (!ta.size || !tb.size) return 0;
+  let shared = 0;
+  for (const t of ta) if (tb.has(t)) shared++;
+  return shared / (ta.size + tb.size - shared);
+}
+
+/**
+ * Above this two facts are treated as being about the same thing, so the
+ * newer one displaces the older exactly as a shared subject would.
+ *
+ * 0.6 rather than higher because the near-copies seen in practice sat around
+ * 0.7–0.9 ("Der Nutzer wohnt in X" vs "Der Nutzer Alex wohnt in X"), and
+ * rather than lower because two genuinely different facts about the same
+ * machine ("hat eine GTX 1060" / "hat eine RTX 3060") land well below it.
+ */
+export const SAME_TOPIC_THRESHOLD = 0.6;
+
 export interface RememberInput {
   content: string;
   type?: MemoryType;
@@ -477,12 +566,24 @@ export function remember(input: RememberInput): RememberResult {
   // Displacement: one active fact per subject.
   let superseded: MemoryRow | undefined;
   let contradicted = false;
-  if (subject && row.status === 'active') {
-    const previous = db
-      .prepare(
-        `${SELECT_MEMORY} WHERE subject = ? AND status = 'active' AND id != ? ORDER BY created_at DESC`,
-      )
-      .all(subject, row.id) as unknown as MemoryDbRow[];
+  if (row.status === 'active') {
+    /*
+    Two ways to be about the same thing: the same subject, or simply saying
+    nearly the same words. The second exists because the first cannot be
+    relied on — the same machine was subject "hardware" in one run,
+    "unraid-system" in the next, so nothing ever displaced anything and the
+    store filled with near-copies.
+    */
+    const candidates = (
+      db
+        .prepare(`${SELECT_MEMORY} WHERE status = 'active' AND id != ?`)
+        .all(row.id) as unknown as MemoryDbRow[]
+    ).filter(
+      (prev) =>
+        (subject && prev.subject === subject) ||
+        claimSimilarity(prev.content, content) >= SAME_TOPIC_THRESHOLD,
+    );
+    const previous = candidates.sort((a, b) => b.created_at - a.created_at);
     for (const prev of previous) {
       db.prepare(
         "UPDATE memories SET status = 'superseded', superseded_by = ?, valid_until = ?, updated_at = ? WHERE id = ?",
@@ -554,11 +655,42 @@ export function resolveContradiction(
 }
 
 /** Promotes a draft into the active store (the Memory page's approve button). */
+/**
+ * Promotes a draft into the active store — and runs the displacement it
+ * skipped while it was a draft.
+ *
+ * A draft deliberately displaces nothing: it is not in use, so it must not
+ * push out something that is. But approving it makes it a current fact, and
+ * without this the store ended up with two active facts on the same subject
+ * standing side by side — exactly the situation the whole design exists to
+ * prevent. Seen live: "Der Nutzer wohnt in X" approved next to "Der Nutzer
+ * Alex wohnt in X", both marked current, both on subject "wohnort".
+ */
 export function approveMemory(id: string): MemoryRow | undefined {
   const now = Date.now();
-  db.prepare(
-    "UPDATE memories SET status = 'active', updated_at = ? WHERE id = ? AND status = 'draft'",
-  ).run(now, id);
+  const draft = getMemory(id);
+  if (!draft || draft.status !== 'draft') return draft;
+  db.prepare("UPDATE memories SET status = 'active', updated_at = ? WHERE id = ?").run(now, id);
+
+  const rivals = (
+    db
+      .prepare(`${SELECT_MEMORY} WHERE status = 'active' AND id != ?`)
+      .all(id) as unknown as MemoryDbRow[]
+  ).filter(
+    (other) =>
+      (draft.subject && other.subject === draft.subject) ||
+      claimSimilarity(other.content, draft.content) >= SAME_TOPIC_THRESHOLD,
+  );
+  const claim = normalizeClaim(draft.content);
+  for (const rival of rivals) {
+    db.prepare(
+      "UPDATE memories SET status = 'superseded', superseded_by = ?, valid_until = ?, updated_at = ? WHERE id = ?",
+    ).run(id, now, now, rival.id);
+    addEdge(id, 'memory', rival.id, 'supersedes', now);
+    if (normalizeClaim(rival.content) !== claim) {
+      addEdge(id, 'memory', rival.id, 'contradicts', now);
+    }
+  }
   return getMemory(id);
 }
 
@@ -1040,6 +1172,30 @@ export function markMessageScanned(messageId: string, found: number, now = Date.
   db.prepare(
     'INSERT OR REPLACE INTO memory_scans (message_id, scanned_at, found) VALUES (?, ?, ?)',
   ).run(messageId, now, found);
+}
+
+/**
+ * Marks the user message an assistant reply answers as examined.
+ *
+ * The live pass has the reply's id, not the question's — but history is a
+ * tree and the reply hangs off exactly that question, so the parent link is
+ * the answer. Without this the backfill reads the same conversation again
+ * later and stores the same fact in different words, which is how the store
+ * filled up with near-duplicates.
+ *
+ * Silent when the reply has no parent (the very first message of a
+ * conversation, or a row written before this existed): nothing is worth
+ * failing a finished reply over.
+ */
+export function markAnsweredMessageScanned(assistantMessageId: string, now = Date.now()): void {
+  const row = db
+    .prepare("SELECT parent_id FROM messages WHERE id = ? AND role = 'assistant'")
+    .get(assistantMessageId) as { parent_id?: string | null } | undefined;
+  if (!row?.parent_id) return;
+  const parent = db
+    .prepare("SELECT id FROM messages WHERE id = ? AND role = 'user'")
+    .get(row.parent_id) as { id?: string } | undefined;
+  if (parent?.id) markMessageScanned(parent.id, 0, now);
 }
 
 export function countScannedMessages(): number {

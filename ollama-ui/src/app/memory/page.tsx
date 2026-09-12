@@ -35,6 +35,9 @@ interface MemoryItem {
   lastUsedAt: number | null;
   sourceSessionId: string | null;
   createdAt: number;
+  /** An active fact this draft resembles — shown so a re-wording isn't approved twice. */
+  similarTo?: { id: string; content: string };
+  similarity?: number;
 }
 
 interface ContradictionSide {
@@ -559,12 +562,25 @@ export default function MemoryPage() {
               key={d.id}
               className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-white/10 bg-white/[0.03] p-4"
             >
-              <p className="min-w-0 flex-1 text-sm text-white/80">
-                <LinkedContent text={d.content} />
-                <span className="ml-2 text-[10px] font-mono text-white/30">
-                  confidence {Math.round(d.confidence * 100)}%
-                </span>
-              </p>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm text-white/80">
+                  <LinkedContent text={d.content} />
+                  <span className="ml-2 text-[10px] font-mono text-white/30">
+                    confidence {Math.round(d.confidence * 100)}%
+                  </span>
+                </p>
+                {/* The band where automatic displacement deliberately stays
+                    out: close enough to be a re-wording, different enough to
+                    be an addition. Only the reader can tell. */}
+                {d.similarTo && (
+                  <p className="mt-1 text-[11px] leading-relaxed text-amber-200/60">
+                    ähnelt zu {d.similarity}% einem bestehenden Fakt:{' '}
+                    <span className="text-white/50">
+                      <LinkedContent text={d.similarTo.content} />
+                    </span>
+                  </p>
+                )}
+              </div>
               <div className="flex shrink-0 gap-2">
                 <Button size="sm" onClick={() => act(d.id, 'approve')} disabled={busy.has(d.id)}>
                   <Check className="h-3.5 w-3.5" /> Übernehmen

@@ -11,6 +11,7 @@ import {
   setMemoryPinned,
   updateMemoryClassification,
   listContradictions,
+  findSimilarActive,
   isMemoryType,
   type MemoryRow,
   type MemoryStatus,
@@ -78,7 +79,21 @@ export async function GET(req: NextRequest) {
     MemoryStatus | undefined;
   const rows = requested === 'all' ? listMemories() : listMemories({ status: status ?? 'active' });
   return Response.json({
-    items: rows.map(toApi),
+    // A draft is shown next to the active fact it most resembles, when there
+    // is one: automatic displacement handles the clear cases, and this is
+    // the band where only the reader can tell a re-wording from an addition.
+    items: rows.map((m) => {
+      const api = toApi(m);
+      if (m.status !== 'draft') return api;
+      const similar = findSimilarActive(m.content, m.id);
+      return similar
+        ? {
+            ...api,
+            similarTo: { id: similar.memory.id, content: similar.memory.content },
+            similarity: Math.round(similar.similarity * 100),
+          }
+        : api;
+    }),
     // Surfaced alongside the list rather than behind their own request: a
     // fact saved for review that nobody is told about is a fact that stays
     // invisible forever, and an unresolved contradiction is the one thing
