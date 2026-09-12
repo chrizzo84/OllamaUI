@@ -670,6 +670,115 @@ describe('recall', () => {
   });
 });
 
+describe('what goes into every prompt', () => {
+  const belongings = () => {
+    for (let i = 0; i < 40; i++) {
+      db.remember({
+        content: `besitzt ein Gerät Nummer ${i}, gekauft ${2010 + i}`,
+        type: 'identity',
+        subject: `besitz-${i}`,
+      });
+    }
+  };
+
+  /**
+   * The bug this replaced: every `identity` fact was unconditional, so a
+   * store with forty durable facts — a bike, a cat, a camera — spent the
+   * whole budget on them and pushed out the one fact the question was about.
+   * Measured before the fix: 40 facts carried, the asked-about one missing.
+   *
+   * "Durable" and "relevant to every question" are different axes, and only
+   * the second earns a place in every prompt.
+   */
+  it('does not let durable facts crowd out the relevant one', () => {
+    const asked = db.remember({
+      content: 'Backups laufen jede Nacht auf den [[Homeserver]]',
+      type: 'state',
+      subject: 'backups',
+    });
+    belongings();
+    const got = db.recallMemories({ query: 'Wo liegen eigentlich meine Backups?' });
+    expect(got.map((m) => m.id)).toContain(asked.memory.id);
+    expect(got.length).toBeLessThan(10);
+  });
+
+  it('still carries the fundamentals when nothing is pinned', () => {
+    const name = db.remember({ content: 'heißt [[Alex]]', type: 'identity', subject: 'name' });
+    const stil = db.remember({
+      content: 'mag kurze Antworten',
+      type: 'preference',
+      subject: 'stil',
+    });
+    belongings();
+    const got = db.recallMemories({ query: 'Was ist mit Docker?' }).map((m) => m.id);
+    expect(got).toContain(name.memory.id);
+    expect(got).toContain(stil.memory.id);
+  });
+
+  it('a pinned fact is unconditional, however full the store is', () => {
+    const pinned = db.remember({
+      content: 'antwortet immer auf Deutsch',
+      type: 'state',
+      subject: 'sprache',
+      pinned: true,
+    });
+    belongings();
+    expect(db.recallMemories({ query: 'irgendwas völlig anderes' }).map((m) => m.id)).toContain(
+      pinned.memory.id,
+    );
+  });
+
+  /**
+   * Ordering the reserve by use count would be self-reinforcing: a fact
+   * carried into every prompt is counted as used every time, so it would
+   * keep its place on the strength of having had it. Only facts retrieval
+   * actually picked for the conversation count.
+   */
+  it('counts only what was retrieved for this conversation', () => {
+    const grounding = db.remember({ content: 'heißt [[Alex]]', type: 'identity', subject: 'name' });
+    const topic = db.remember({
+      content: 'Backups laufen auf den [[Homeserver]]',
+      type: 'state',
+      subject: 'backups',
+    });
+    const r = db.recallWithProvenance({ query: 'Wo sind meine Backups?' });
+    expect(r.memories.map((m) => m.id)).toContain(grounding.memory.id);
+    expect(r.matchedByRelevance).toContain(topic.memory.id);
+    expect(r.matchedByRelevance).not.toContain(grounding.memory.id);
+  });
+});
+
+describe('retrieval by entity', () => {
+  /**
+   * The graph was only ever drawn, never used — but an entity is exactly
+   * what a question is about, and word matching misses the connection when
+   * the wording differs.
+   */
+  it('pulls everything known about a thing the question names', () => {
+    db.remember({ content: 'Backups laufen nachts auf den [[Homeserver]]', subject: 'backups' });
+    db.remember({ content: 'der [[Homeserver]] steht im Keller', subject: 'standort' });
+    db.remember({ content: 'kocht gern Pasta', subject: 'kochen' });
+    const got = db
+      .recallMemories({ query: 'Was läuft eigentlich alles auf dem Homeserver?' })
+      .map((m) => m.subject);
+    expect(got).toContain('backups');
+    expect(got).toContain('standort');
+    expect(got).not.toContain('kochen');
+  });
+
+  it('matches an entity on word boundaries only', () => {
+    db.remember({ content: 'nutzt [[Ollama]] täglich', subject: 'ollama' });
+    expect(db.recallByEntity('Was macht eigentlich OllamaUI?').map((m) => m.subject)).not.toContain(
+      'ollama',
+    );
+  });
+
+  it('says nothing when the question names no known thing', () => {
+    db.remember({ content: 'nutzt [[Ollama]] täglich', subject: 'ollama' });
+    expect(db.recallByEntity('Wie spät ist es?')).toHaveLength(0);
+  });
+});
+
 describe('usage tracking', () => {
   it('counts what retrieval actually used', () => {
     const r = db.remember({ content: 'mag [[Kaffee]]' });

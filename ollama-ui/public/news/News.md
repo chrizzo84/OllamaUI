@@ -1,5 +1,14 @@
 Chronological list of notable changes to Ollama UI.
 
+## 2026-09-12 (13)
+
+- **The retrieval rule that would have broken as the memory grew** — every `identity` fact was unconditional, on the assumption that "durable" means "always relevant". Those are different axes, and conflating them reproduced the original bug one layer down: measured on a store of forty durable facts (a bike, a cat, a camera), a question about backups carried **all forty** and the backup fact itself did not make it into the prompt. Now only **pinned** facts are unconditional — a person said so — while a quarter of the budget and at most four facts stay reserved for grounding (a name, a language, a tone) so a memory with no pins doesn't forget who it is talking to. Same store, same question afterwards: 5 facts, ~55 tokens, the right one among them.
+- **The graph is used, not just drawn** — an entity is exactly what a question is _about_, and word matching misses the connection when the wording differs. Facts attached to an entity the message names are now retrieved first, then FTS. Asked "was läuft eigentlich alles auf dem Homeserver?", all three Homeserver facts come back, including the one sharing no words with the question.
+- **Use counts stopped lying** — a fact carried into every prompt was counted as used every time, so the always-present facts would always win any ranking or decay built on the figure, purely on the strength of being always present. Only facts retrieval picked _for that conversation_ count now.
+- **Near-duplicate detection was dropping real differences** — content words shorter than three characters were filtered out, which includes numbers, so "32 GB RAM" and "64 GB RAM" looked identical and the newer silently displaced the older. Caught by a scale test where 42 distinct facts collapsed into 3. Numbers are kept whatever their length.
+- **What the model was told is visible in the chat** — each reply carries a trace line listing the facts retrieval put in front of it, marked by whether each was fetched for that question or carried along as grounding. Retrieval is otherwise invisible: an answer that used a stored fact looks exactly like one that made it up, and "why does it think that" should be answerable without leaving the conversation.
+- **Tests** — 598, up from 591.
+
 ## 2026-09-12 (12)
 
 - **Near-duplicate facts, from three separate causes** — reported from a real store that had collected two facts for the home town and three overlapping ones for the same machine. Each cause was a different mistake.

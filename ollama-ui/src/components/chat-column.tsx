@@ -222,6 +222,57 @@ function ThinkingLine({
   );
 }
 
+/**
+ * The stored facts retrieval put in front of the model for this reply.
+ *
+ * Without this the memory is a black box: an answer that used a stored fact
+ * is indistinguishable from one that made it up, and "why does it think
+ * that" can only be answered by leaving the conversation. Collapsed by
+ * default — it is provenance, not content — and marks which facts were
+ * chosen *for this question* rather than carried along as grounding.
+ */
+function MemoryLine({
+  ev,
+  expanded,
+  onToggle,
+}: {
+  ev: Extract<TraceEvent, { type: 'memory' }>;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  const relevant = ev.facts.filter((f) => f.relevant).length;
+  return (
+    <div className="rounded-lg border border-white/10 bg-white/[0.02]">
+      <button
+        onClick={onToggle}
+        className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-white/45 hover:text-white/70"
+      >
+        <Brain className="h-3.5 w-3.5 shrink-0" />
+        <span>
+          {ev.facts.length} {ev.facts.length === 1 ? 'Fakt' : 'Fakten'} aus dem Gedächtnis
+          {relevant > 0 && <span className="text-white/30"> · {relevant} zur Frage passend</span>}
+        </span>
+        <span className="ml-auto text-white/25">{expanded ? '−' : '+'}</span>
+      </button>
+      {expanded && (
+        <ul className="flex flex-col gap-1 border-t border-white/5 px-3 py-2">
+          {ev.facts.map((f) => (
+            <li key={f.id} className="flex items-start gap-2 text-[11px] leading-relaxed">
+              <span
+                className={`mt-1.5 h-1 w-1 shrink-0 rounded-full ${f.relevant ? 'bg-[rgb(var(--accent-glow))]' : 'bg-white/20'}`}
+                title={f.relevant ? 'wegen dieser Frage geholt' : 'immer dabei'}
+              />
+              <span className={f.relevant ? 'text-white/70' : 'text-white/40'}>
+                {f.content.replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (_m, a, b) => b ?? a)}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 function ToolLine({
   ev,
   expanded,
@@ -553,15 +604,28 @@ const MessageBubble = memo(function MessageBubble({
             const isLast = idx === trace.length - 1;
             const active = traceActive && isLast;
             const expanded = expandedIds.has(ev.id) || active;
-            return ev.type === 'thinking' ? (
-              <ThinkingLine
-                key={ev.id}
-                ev={ev}
-                expanded={expanded}
-                active={active}
-                onToggle={() => onToggle(ev.id)}
-              />
-            ) : (
+            if (ev.type === 'thinking') {
+              return (
+                <ThinkingLine
+                  key={ev.id}
+                  ev={ev}
+                  expanded={expanded}
+                  active={active}
+                  onToggle={() => onToggle(ev.id)}
+                />
+              );
+            }
+            if (ev.type === 'memory') {
+              return (
+                <MemoryLine
+                  key={ev.id}
+                  ev={ev}
+                  expanded={expandedIds.has(ev.id)}
+                  onToggle={() => onToggle(ev.id)}
+                />
+              );
+            }
+            return (
               <ToolLine key={ev.id} ev={ev} expanded={expanded} onToggle={() => onToggle(ev.id)} />
             );
           })}

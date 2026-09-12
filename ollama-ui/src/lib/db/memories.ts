@@ -386,7 +386,11 @@ function claimTokens(text: string): Set<string> {
   return new Set(
     normalizeClaim(text)
       .split(' ')
-      .filter((w) => w.length > 2 && !CLAIM_NOISE.has(w)),
+      // Numbers are kept whatever their length: they are often the only thing
+      // separating two facts ("32 GB RAM" from "64 GB RAM", "8 GB" from
+      // "12 GB"). Dropping them as too short made those look identical, and
+      // the newer one silently displaced the older.
+      .filter((w) => (w.length > 2 || /^\d+$/.test(w)) && !CLAIM_NOISE.has(w)),
   );
 }
 
@@ -1234,41 +1238,90 @@ export interface RecallOptions {
  * fifty of them are a tenth of the window spent on things nobody asked
  * about.
  */
-export function recallMemories(options: RecallOptions = {}): MemoryRow[] {
+/**
+ * Retrieval, plus which facts were chosen *because they matched the
+ * conversation* rather than because they are pinned or grounding.
+ *
+ * The distinction decides what counts as "used". Counting a fact every time
+ * it rides along unconditionally would make the use count meaningless — the
+ * facts that are always present would always win it, which is both a lie
+ * about what the model leaned on and a feedback loop into any ranking or
+ * decay built on top of it.
+ */
+export function recallWithProvenance(options: RecallOptions = {}): {
+  memories: MemoryRow[];
+  matchedByRelevance: string[];
+} {
   const tokenBudget = options.tokenBudget ?? 800;
   const limit = options.limit ?? 40;
 
-  const always = (
-    db
-      .prepare(
-        `${SELECT_MEMORY} WHERE status = 'active' AND (type = 'identity' OR pinned = 1)
-         ORDER BY pinned DESC, created_at ASC`,
-      )
-      .all() as unknown as MemoryDbRow[]
-  ).map(rowToMemory);
-
   const chosen: MemoryRow[] = [];
   let spent = 0;
-  const take = (m: MemoryRow) => {
-    if (chosen.some((c) => c.id === m.id)) return;
+  const take = (m: MemoryRow, ceiling = tokenBudget): boolean => {
+    if (chosen.some((c) => c.id === m.id)) return false;
     const cost = estimateTokens(m.content);
-    if (chosen.length >= limit || spent + cost > tokenBudget) return;
+    if (chosen.length >= limit || spent + cost > ceiling) return false;
     chosen.push(m);
     spent += cost;
+    return true;
   };
-  always.forEach(take);
 
-  const relevant = options.query ? searchMemories(options.query, limit) : [];
-  relevant.forEach(take);
+  /*
+  Pinned facts are unconditional, because a person said so. Nothing else is:
+  "durable" and "relevant to every question" are different axes, and
+  conflating them is what the first version got wrong. Every `identity` fact
+  went into every prompt, so a store with forty durable facts — a bike, a
+  cat, a camera — spent the whole budget on them and pushed out the one fact
+  the question was actually about. Measured: 40 identity facts, 0 room left
+  for the backup fact someone had just asked about.
+  */
+  const pinned = (
+    db
+      .prepare(`${SELECT_MEMORY} WHERE status = 'active' AND pinned = 1 ORDER BY created_at ASC`)
+      .all() as unknown as MemoryDbRow[]
+  ).map(rowToMemory);
+  pinned.forEach((m) => take(m));
+
+  /*
+  A small guaranteed share for the facts that shape *how* to answer rather
+  than what to answer — a name, a language, a preferred tone. Without any
+  reservation a memory with no pins would eventually stop knowing the user's
+  name; with an unbounded one the original bug returns. Oldest first inside
+  that share, because the fundamentals are stated early: "heißt X", "schreibt
+  auf Deutsch".
+  */
+  const groundingCeiling = spent + Math.floor(tokenBudget * GROUNDING_SHARE);
+  const grounding = (
+    db
+      .prepare(
+        `${SELECT_MEMORY} WHERE status = 'active' AND pinned = 0
+           AND type IN ('identity','preference')
+         ORDER BY created_at ASC LIMIT ?`,
+      )
+      .all(GROUNDING_LIMIT) as unknown as MemoryDbRow[]
+  ).map(rowToMemory);
+  for (const m of grounding) take(m, groundingCeiling);
+
+  // Everything else competes on relevance to the conversation, with the rest
+  // of the budget.
+  /*
+  Two ways to be relevant, and the entity one goes first because it is the
+  stronger signal: naming a thing is a more deliberate act than sharing a
+  word with a sentence.
+  */
+  const byEntity = options.query ? recallByEntity(options.query, limit) : [];
+  const byWords = options.query ? searchMemories(options.query, limit) : [];
+  const relevant = [...byEntity, ...byWords.filter((m) => !byEntity.some((e) => e.id === m.id))];
+  const matchedByRelevance: string[] = [];
+  for (const m of relevant) if (take(m)) matchedByRelevance.push(m.id);
 
   /*
   Recency fills the gap only when relevance found nothing at all — an opening
   message, or a turn with no lexical overlap with anything stored. Filling
   leftover budget with "whatever is newest" whenever there is room is the
-  same mistake this rewrite exists to fix, one layer further in: it spends
-  the window on facts nobody asked about, and because the newest facts are
-  usually the most trivial ones, it crowds out the ones that matter. Unused
-  budget costs nothing; irrelevant context costs attention.
+  same mistake one layer further in: it spends the window on facts nobody
+  asked about. Unused budget costs nothing; irrelevant context costs
+  attention.
   */
   if (!relevant.length) {
     const recent = (
@@ -1278,11 +1331,42 @@ export function recallMemories(options: RecallOptions = {}): MemoryRow[] {
         )
         .all(RECENCY_FALLBACK_LIMIT) as unknown as MemoryDbRow[]
     ).map(rowToMemory);
-    recent.forEach(take);
+    recent.forEach((m) => take(m));
   }
 
-  return chosen;
+  return { memories: chosen, matchedByRelevance };
 }
+
+/**
+ * What retrieval picked, without the provenance. Kept because most callers
+ * only want the facts.
+ */
+export function recallMemories(options: RecallOptions = {}): MemoryRow[] {
+  return recallWithProvenance(options).memories;
+}
+
+/**
+ * Share of the budget reserved for identity and preference facts that are not
+ * pinned. A quarter is enough for a handful of short grounding facts and
+ * leaves the majority to whatever the conversation is actually about.
+ */
+const GROUNDING_SHARE = 0.25;
+
+/**
+ * And a hard count on top of the share, because grounding facts are *few* by
+ * nature — a name, a language, a preferred tone. With only a token ceiling,
+ * short facts filled it: measured on a store of forty durable facts, the
+ * reserve was spent on nineteen belongings before the question's own fact
+ * got a look in. Anyone wanting more than this in every prompt can pin it,
+ * which is a deliberate act rather than an accident of ordering.
+ *
+ * Oldest first rather than most-used: the fundamentals are stated early
+ * ("heißt X", "schreibt auf Deutsch"), and ordering by use count would be
+ * self-reinforcing — a fact carried into every prompt is counted as used
+ * every time, so it would keep its place forever on the strength of having
+ * had it.
+ */
+const GROUNDING_LIMIT = 4;
 
 /** Few on purpose — this is a cold start, not a reason to empty the store into the prompt. */
 const RECENCY_FALLBACK_LIMIT = 5;
@@ -1323,6 +1407,50 @@ const STOP_WORDS = new Set(
  */
 function stemPrefix(word: string): string {
   return word.length > 4 ? word.slice(0, Math.max(4, word.length - 2)) : word;
+}
+
+/**
+ * Facts attached to any entity the text names.
+ *
+ * The graph was only ever drawn, never used. But an entity is exactly the
+ * thing a question is *about*, and word matching alone misses the connection:
+ * asked "läuft das noch auf dem Server im Keller?", FTS finds facts
+ * containing "Server" and misses "Backups laufen jede Nacht auf den
+ * [[Homeserver]]" unless the wording happens to line up. Matching the named
+ * things instead pulls in everything known about them.
+ *
+ * Entity labels are matched on word boundaries against the conversation, so
+ * a two-letter name cannot match half the store — the same floor the
+ * unlinked-mention scan uses.
+ */
+export function recallByEntity(query: string, limit = 10): MemoryRow[] {
+  const plain = normalizeClaim(query);
+  if (!plain) return [];
+  const hits: string[] = [];
+  for (const entity of listEntities()) {
+    const slug = entity.id;
+    if (slug.length < MIN_MENTION_LENGTH) continue;
+    const label = normalizeClaim(entity.label);
+    if (!label) continue;
+    const pattern = new RegExp(
+      `(?<![\\p{L}\\p{N}])${label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\p{L}\\p{N}])`,
+      'u',
+    );
+    if (pattern.test(plain)) hits.push(slug);
+  }
+  if (!hits.length) return [];
+  const placeholders = hits.map(() => '?').join(',');
+  const rows = db
+    .prepare(
+      `SELECT DISTINCT m.* FROM memories m
+       JOIN memory_edges e ON e.from_id = m.id
+       WHERE e.kind = 'about' AND e.to_kind = 'entity' AND e.to_id IN (${placeholders})
+         AND m.status = 'active'
+       ORDER BY m.use_count DESC, m.created_at DESC
+       LIMIT ?`,
+    )
+    .all(...hits, limit) as unknown as MemoryDbRow[];
+  return rows.map(rowToMemory);
 }
 
 /**

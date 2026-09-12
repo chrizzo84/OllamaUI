@@ -353,18 +353,40 @@ before touching it, because the retrieval path is where it goes subtly wrong:
    fact), `derived_from` (fact → the session it came from, so every fact
    links back to its evidence). An entity nothing points at any more is
    pruned.
-4. **Retrieval is not "everything".** `recallMemories` always includes
-   identity and pinned facts, ranks the rest against the last few messages
-   with FTS5, and stops at a **token budget** — leftover budget stays unspent
-   rather than being padded with whatever is newest. On a small local model a
-   fact costs both context and attention.
-5. **The FTS query is stemmed by truncation and stop-word filtered.** German
+4. **Retrieval is not "everything".** Only **pinned** facts are
+   unconditional — a person said so. Everything else competes, because
+   "durable" and "relevant to every question" are different axes and
+   conflating them was the first version's mistake: every `identity` fact
+   went into every prompt, so a store with forty durable facts (a bike, a
+   cat, a camera) spent the whole budget on them and pushed out the one the
+   question was about. Measured, then fixed. A small share of the budget
+   (25%, at most four facts) is still reserved for grounding — a name, a
+   language, a tone — so a memory with no pins doesn't forget who it is
+   talking to. The rest goes to relevance, capped by a **token budget**, with
+   leftover budget left unspent rather than padded.
+5. **Two ways to be relevant.** Naming a thing is the stronger signal, so
+   facts attached to an entity the message mentions come first
+   (`recallByEntity`), then FTS5 word matching. Asked "was läuft auf dem
+   Homeserver?", the entity path returns everything known about it, including
+   facts whose wording shares nothing with the question.
+6. **Only what was retrieved _for this conversation_ counts as used.**
+   Counting the grounding facts every time they ride along would make the use
+   count meaningless — the always-present facts would always win it — and
+   feed back into any ranking or decay built on top.
+7. **The FTS query is stemmed by truncation and stop-word filtered.** German
    inflects at the end of the word, so "Was koche ich?" and a stored "kocht
    gern Pasta" share no whole word — without prefix matching this returns
    nothing and looks exactly like the fact was never saved.
-6. **A fact below `DRAFT_CONFIDENCE_THRESHOLD` is stored as a `draft`**:
+8. **A fact below `DRAFT_CONFIDENCE_THRESHOLD` is stored as a `draft`**:
    visible for review, never injected, and it displaces nothing. Guessing
    quietly into the long-term store is the one failure mode that compounds.
+
+Every reply records which facts were put in front of the model, in its own
+trace line next to the reasoning and tool calls — marked by whether each was
+retrieved for that question or carried along as grounding. Retrieval is
+otherwise invisible: an answer that used a stored fact looks exactly like one
+that invented it, which is the wrong thing to leave unobservable in a memory
+that writes itself.
 
 `remember_fact` reports back which of these happened (saved, already known,
 replaced, still a draft), because a model told only `{saved: true}` will

@@ -20,7 +20,7 @@ import { extractDurableFacts, alreadySavedDuringReply } from '@/lib/memory-extra
 import {
   remember,
   isMemoryType,
-  recallMemories,
+  recallWithProvenance,
   markMemoriesUsed,
   buildMemoryBlock,
   recordBenchmarkRun,
@@ -782,6 +782,18 @@ export async function runGeneration(job: Job, params: GenerationParams): Promise
   let evalDurationTotalNs = 0;
   let lastPromptTokens: number | undefined;
   const trace: TraceEvent[] = [];
+  /*
+  First entry in the trace, before any thinking: the facts retrieval put in
+  front of the model for this reply. Recorded here rather than at the
+  injection site because this is where the trace lives, and injectMemories
+  runs in three different entry points.
+  */
+  {
+    const injected = takeLastInjectedMemories();
+    if (injected.length) {
+      trace.push({ type: 'memory', id: safeUuid(), facts: injected });
+    }
+  }
   let openThinkingId: string | null = null;
 
   function buildStats(): ChatStats {
@@ -1173,6 +1185,21 @@ export async function runGeneration(job: Job, params: GenerationParams): Promise
  */
 const RECALL_QUERY_MESSAGES = 4;
 
+/**
+ * The facts the last injectMemories call put in front of the model, so the
+ * caller can record them in the reply's trace. Module-level because
+ * injectMemories is called by three different entry points (chat route,
+ * scheduler, Telegram) and threading a return value through all of them
+ * would change every signature for one diagnostic.
+ */
+let lastInjected: { id: string; content: string; relevant: boolean }[] = [];
+
+export function takeLastInjectedMemories(): { id: string; content: string; relevant: boolean }[] {
+  const facts = lastInjected;
+  lastInjected = [];
+  return facts;
+}
+
 export function injectMemories(messages: ChatMessageIn[]): ChatMessageIn[] {
   const query = messages
     .filter((m) => m.role === 'user' || m.role === 'assistant')
@@ -1180,9 +1207,17 @@ export function injectMemories(messages: ChatMessageIn[]): ChatMessageIn[] {
     .map((m) => (typeof m.content === 'string' ? m.content : ''))
     .join(' ')
     .slice(0, 4000);
-  const facts = recallMemories({ query });
+  const { memories: facts, matchedByRelevance } = recallWithProvenance({ query });
   if (facts.length === 0) return messages;
-  markMemoriesUsed(facts.map((f) => f.id));
+  // Only the facts retrieval picked *for this conversation* count as used —
+  // see recallWithProvenance for why counting the unconditional ones would
+  // corrupt the figure.
+  markMemoriesUsed(matchedByRelevance);
+  lastInjected = facts.map((f) => ({
+    id: f.id,
+    content: f.content,
+    relevant: matchedByRelevance.includes(f.id),
+  }));
   const block = buildMemoryBlock(facts);
   if (!block) return messages;
   if (messages[0]?.role === 'system') {
