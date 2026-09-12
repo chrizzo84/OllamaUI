@@ -260,6 +260,31 @@ function initDb(): DatabaseSync {
       FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE
     );
 
+    /*
+    What the maintenance pass did, and when.
+
+    A job that edits the memory unattended while nobody watches is the
+    riskiest thing in this app, and the only thing that makes it acceptable
+    is being able to see afterwards what it touched. Each run records its
+    counts and, on failure, why it stopped — kept as rows rather than derived,
+    because unlike the memory timeline this is not reconstructible from the
+    facts themselves.
+    */
+    CREATE TABLE IF NOT EXISTS memory_maintenance_runs (
+      id TEXT PRIMARY KEY,
+      trigger TEXT NOT NULL,
+      status TEXT NOT NULL,
+      model TEXT,
+      started_at INTEGER NOT NULL,
+      finished_at INTEGER,
+      conversations_read INTEGER NOT NULL DEFAULT 0,
+      facts_found INTEGER NOT NULL DEFAULT 0,
+      merges_proposed INTEGER NOT NULL DEFAULT 0,
+      archived INTEGER NOT NULL DEFAULT 0,
+      error TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_maintenance_started ON memory_maintenance_runs(started_at DESC);
+
     CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
       content,
       content='memories',

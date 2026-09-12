@@ -183,6 +183,34 @@ function tick(): void {
       console.error(`Scheduled task "${task.name}" (${task.id}) failed:`, e);
     });
   }
+
+  void maybeRunNightShift();
+}
+
+/*
+The memory's maintenance pass rides on this same minute tick rather than
+keeping a timer of its own: it needs exactly what the scheduler already has —
+a heartbeat that survives an idle server and starts without an HTTP request.
+Imported lazily so the scheduler does not pull the memory graph into its
+module tree just to check a clock.
+*/
+async function maybeRunNightShift(): Promise<void> {
+  try {
+    const { isNightShiftDue, runNightShift, getNightShiftSettings } =
+      await import('@/lib/memory-nightshift');
+    const settings = getNightShiftSettings();
+    if (!isNightShiftDue(new Date(), settings)) return;
+
+    const base = resolveOllamaHostServer();
+    if (!base) return; // nothing to talk to; try again next tick
+    const model = settings.model || process.env.TELEGRAM_MODEL || '';
+    if (!model) return; // no model configured for unattended work
+
+    await runNightShift({ base, model, trigger: 'schedule', settings });
+  } catch (e) {
+    // Maintenance failing must never take the scheduler's own tick with it.
+    console.error('Memory night shift failed:', e);
+  }
 }
 
 // Guards against starting a second interval on Next.js dev's hot-reload

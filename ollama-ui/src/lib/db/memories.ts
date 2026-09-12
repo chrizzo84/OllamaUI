@@ -1036,6 +1036,165 @@ export function listEntitiesWithCounts(): (EntityRow & { memoryCount: number })[
     .all() as unknown as (EntityRow & { memoryCount: number })[];
 }
 
+// --- Maintenance ------------------------------------------------------------
+
+export interface MaintenanceRunRow {
+  id: string;
+  trigger: 'schedule' | 'manual';
+  status: 'running' | 'done' | 'stopped' | 'error';
+  model: string | null;
+  startedAt: number;
+  finishedAt: number | null;
+  conversationsRead: number;
+  factsFound: number;
+  mergesProposed: number;
+  archived: number;
+  error: string | null;
+}
+
+interface MaintenanceDbRow {
+  id: string;
+  trigger: string;
+  status: string;
+  model: string | null;
+  started_at: number;
+  finished_at: number | null;
+  conversations_read: number;
+  facts_found: number;
+  merges_proposed: number;
+  archived: number;
+  error: string | null;
+}
+
+function rowToRun(r: MaintenanceDbRow): MaintenanceRunRow {
+  return {
+    id: r.id,
+    trigger: r.trigger as 'schedule' | 'manual',
+    status: r.status as MaintenanceRunRow['status'],
+    model: r.model,
+    startedAt: r.started_at,
+    finishedAt: r.finished_at,
+    conversationsRead: r.conversations_read,
+    factsFound: r.facts_found,
+    mergesProposed: r.merges_proposed,
+    archived: r.archived,
+    error: r.error,
+  };
+}
+
+export function startMaintenanceRun(trigger: 'schedule' | 'manual', model: string | null): string {
+  const id = safeUuid();
+  db.prepare(
+    `INSERT INTO memory_maintenance_runs (id, trigger, status, model, started_at)
+     VALUES (?, ?, 'running', ?, ?)`,
+  ).run(id, trigger, model, Date.now());
+  return id;
+}
+
+export function updateMaintenanceRun(
+  id: string,
+  patch: Partial<{
+    status: MaintenanceRunRow['status'];
+    conversationsRead: number;
+    factsFound: number;
+    mergesProposed: number;
+    archived: number;
+    error: string | null;
+    finished: boolean;
+  }>,
+): void {
+  const sets: string[] = [];
+  const values: unknown[] = [];
+  if (patch.status) {
+    sets.push('status = ?');
+    values.push(patch.status);
+  }
+  for (const [key, column] of [
+    ['conversationsRead', 'conversations_read'],
+    ['factsFound', 'facts_found'],
+    ['mergesProposed', 'merges_proposed'],
+    ['archived', 'archived'],
+  ] as const) {
+    const value = patch[key];
+    if (typeof value === 'number') {
+      sets.push(`${column} = ?`);
+      values.push(value);
+    }
+  }
+  if (patch.error !== undefined) {
+    sets.push('error = ?');
+    values.push(patch.error);
+  }
+  if (patch.finished) {
+    sets.push('finished_at = ?');
+    values.push(Date.now());
+  }
+  if (!sets.length) return;
+  db.prepare(`UPDATE memory_maintenance_runs SET ${sets.join(', ')} WHERE id = ?`).run(
+    ...(values as never[]),
+    id,
+  );
+}
+
+export function listMaintenanceRuns(limit = 20): MaintenanceRunRow[] {
+  const rows = db
+    .prepare('SELECT * FROM memory_maintenance_runs ORDER BY started_at DESC LIMIT ?')
+    .all(limit) as unknown as MaintenanceDbRow[];
+  return rows.map(rowToRun);
+}
+
+/**
+ * Episodic facts nobody has looked at in a long time.
+ *
+ * Only episodic decays automatically, and only when retrieval has never
+ * reached for it. An episodic fact is tied to a moment by definition — "war
+ * im Mai auf der FOSDEM" is true forever and interesting for a while — so
+ * letting it age out is honest. Identity, preferences and state are left
+ * alone: a preference nobody happened to ask about this quarter has not
+ * stopped being true, and archiving it unattended would quietly change how
+ * the assistant behaves.
+ *
+ * Archived rather than deleted, so the timeline still shows it happened.
+ */
+export function listDecayableMemories(olderThanMs: number, now = Date.now()): MemoryRow[] {
+  const cutoff = now - olderThanMs;
+  const rows = db
+    .prepare(
+      `${SELECT_MEMORY} WHERE status = 'active' AND type = 'episodic' AND pinned = 0
+         AND use_count = 0 AND created_at < ?
+       ORDER BY created_at ASC`,
+    )
+    .all(cutoff) as unknown as MemoryDbRow[];
+  return rows.map(rowToMemory);
+}
+
+/**
+ * Pairs of active facts that overlap enough to be worth a second look but not
+ * enough for displacement to have handled them — the band the write path
+ * deliberately stays out of, collected here so a maintenance pass can offer a
+ * merged wording.
+ */
+export function listMergeCandidates(
+  limit = 10,
+): { a: MemoryRow; b: MemoryRow; similarity: number }[] {
+  const active = (
+    db.prepare(`${SELECT_MEMORY} WHERE status = 'active'`).all() as unknown as MemoryDbRow[]
+  ).map(rowToMemory);
+  const pairs: { a: MemoryRow; b: MemoryRow; similarity: number }[] = [];
+  for (let i = 0; i < active.length; i++) {
+    for (let j = i + 1; j < active.length; j++) {
+      const similarity = claimSimilarity(active[i].content, active[j].content);
+      if (similarity >= MERGE_CANDIDATE_FLOOR && similarity < SAME_TOPIC_THRESHOLD) {
+        pairs.push({ a: active[i], b: active[j], similarity });
+      }
+    }
+  }
+  return pairs.sort((x, y) => y.similarity - x.similarity).slice(0, limit);
+}
+
+/** Below this two facts are simply different; above SAME_TOPIC_THRESHOLD the write path already displaced one. */
+const MERGE_CANDIDATE_FLOOR = 0.35;
+
 // --- The backfill over past conversations ----------------------------------
 
 export interface ScanCandidate {

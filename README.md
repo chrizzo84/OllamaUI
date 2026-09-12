@@ -281,6 +281,7 @@ Base path: `/api`
 | `/api/memories/contradictions`                            | GET/POST              | Open disagreements, and settling one              | POST `{edgeId, keep: 'newer'\|'older'\|'both'}`                                                |
 | `/api/memories/graph`                                     | GET                   | The knowledge graph as nodes and edges            | `?focus=` walks a neighbourhood, `?history=1` includes replaced facts                          |
 | `/api/memories/timeline`                                  | GET                   | What the store learned and unlearned, in order    | Derived from the facts, not a separate log                                                     |
+| `/api/memories/nightshift`                                | GET/POST/DELETE       | The maintenance pass: settings, history, run now  | POST `{run:true}` starts one; DELETE stops it                                                  |
 | Other routes (`chat`, `lamas`, `ps`, `status`, `tools/*`) | —                     | Additional functionality (not all documented yet) | Future docs TBD                                                                                |
 
 Every route above is behind the password gate when `APP_PASSWORD` is set — see
@@ -475,6 +476,25 @@ model. So it is built around the questions that follow from that —
 Drawn on a canvas with `d3-force`; the simulation settles in about a second
 and then stops, because a graph that keeps drifting is one whose nodes you
 cannot click.
+
+**The night shift.** A local machine is idle twenty-three hours a day and its
+tokens cost nothing but electricity, which makes work worth doing that would
+never be worth a per-token bill. Once a night (off by default, configurable
+on the Memory page) a maintenance pass: reads conversations that happened
+since the last run, offers merged wordings for facts that overlap without
+being duplicates, and lets episodic facts nobody ever retrieved age into the
+archive.
+
+The rule that makes it acceptable is that **it proposes, it does not
+decide** — everything it extracts or merges lands as a draft in the review
+queue. The one exception is archiving episodic facts, which is reversible and
+touches nothing that shapes behaviour: never identity, never a preference,
+never anything pinned, never anything retrieval has used. Every run is bounded
+(a wall-clock budget, a conversation cap, an abort that takes effect between
+steps) and recorded in `memory_maintenance_runs` with what it touched — a job
+that edits the memory unattended is only acceptable if you can see afterwards
+what it did. It rides on the scheduler's existing minute tick rather than
+keeping a timer of its own.
 
 The **timeline** answers the remaining question. A memory store has one
 whether anyone draws it or not, and "when did it learn this" is usually the

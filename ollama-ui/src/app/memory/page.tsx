@@ -19,6 +19,7 @@ import { useToastStore } from '@/store/toast';
 import { Pin, PinOff, Archive, Trash2, Plus, History, GitBranch, Check } from 'lucide-react';
 import { MemoryGraph, type GraphNode, type GraphEdge } from '@/components/memory-graph';
 import { MemoryBackfill } from '@/components/memory-backfill-panel';
+import { MemoryNightShift } from '@/components/memory-nightshift-panel';
 
 type MemoryType = 'identity' | 'state' | 'preference' | 'episodic' | 'procedural' | 'unsorted';
 type MemoryStatus = 'active' | 'superseded' | 'archived' | 'draft';
@@ -603,6 +604,7 @@ export default function MemoryPage() {
           settings, because what it produces lands in the review queue right
           above. */}
       {tab === 'facts' && <MemoryBackfill onFinished={load} />}
+      {tab === 'facts' && <MemoryNightShift onFinished={load} />}
 
       {/* --- Add ------------------------------------------------------------ */}
       {tab === 'facts' && (
