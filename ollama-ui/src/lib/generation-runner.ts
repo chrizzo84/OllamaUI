@@ -36,7 +36,7 @@ import {
   toOllamaTool,
 } from '@/lib/mcp';
 import { listMcpServers } from '@/lib/mcp-settings';
-import { computeNextRunAt } from '@/lib/schedule-time';
+import { computeNextRunAt, weekdayOf } from '@/lib/schedule-time';
 import type { TraceEvent } from '@/store/chat';
 import type { ChatStats } from '@/lib/chat-stream';
 
@@ -502,7 +502,13 @@ async function executeTool(
       memoryEnabled: true,
       nextRunAt: when.getTime(),
     });
-    return { result: { scheduled: true, when: when.toISOString() } };
+    // The weekday travels with every date a tool hands back: a model asked to
+    // repeat one will otherwise derive it, and derive it wrong (see
+    // weekdayOf). For a reminder that is worse than a wrong forecast — it is
+    // wrong information about the user's own calendar.
+    return {
+      result: { scheduled: true, when: when.toISOString(), weekday: weekdayOf(when) },
+    };
   }
   if (name === 'create_recurring_task') {
     const a = (args && typeof args === 'object' ? args : {}) as {
@@ -547,7 +553,12 @@ async function executeTool(
       nextRunAt,
     });
     return {
-      result: { scheduled: true, name: taskName, nextRunAt: new Date(nextRunAt).toISOString() },
+      result: {
+        scheduled: true,
+        name: taskName,
+        nextRunAt: new Date(nextRunAt).toISOString(),
+        nextRunWeekday: weekdayOf(nextRunAt),
+      },
     };
   }
   if (name === 'list_scheduled_tasks') {
@@ -557,7 +568,10 @@ async function executeTool(
       recurring: t.recurring,
       ...(t.recurring
         ? { timeOfDay: t.timeOfDay, daysOfWeek: t.daysOfWeek }
-        : { whenISO: t.nextRunAt ? new Date(t.nextRunAt).toISOString() : null }),
+        : {
+            whenISO: t.nextRunAt ? new Date(t.nextRunAt).toISOString() : null,
+            whenWeekday: t.nextRunAt ? weekdayOf(t.nextRunAt) : null,
+          }),
     }));
     return { result: { tasks } };
   }

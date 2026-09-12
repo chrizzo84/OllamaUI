@@ -7,6 +7,8 @@
 // it would search for weather and then never actually called any tool at
 // all, likely in part because "search the web for a 3-day forecast" is a
 // much fuzzier task than "call get_weather".
+import { weekdayOf } from '@/lib/schedule-time';
+
 const GEOCODE_TIMEOUT_MS = 10_000;
 const FORECAST_TIMEOUT_MS = 10_000;
 
@@ -86,6 +88,12 @@ export interface WeatherResult {
   current?: { temperatureC?: number; condition: string };
   daily: Array<{
     date: string;
+    /**
+     * Spelled out rather than left for the model to derive: asked for
+     * 2026-09-13 — a Sunday — one announced "morgen (Freitag, 13.09.2026)".
+     * Models cannot count days and "Friday the 13th" is a strong prior.
+     */
+    weekday: string;
     condition: string;
     tempMinC?: number;
     tempMaxC?: number;
@@ -121,6 +129,7 @@ export async function getWeather(location: string, days: number): Promise<Weathe
   const dailyTimes = forecast.daily?.time ?? [];
   const daily = dailyTimes.map((date, i) => ({
     date,
+    weekday: weekdayOf(date),
     condition: describeWeatherCode(forecast.daily?.weather_code?.[i]),
     tempMinC: forecast.daily?.temperature_2m_min?.[i],
     tempMaxC: forecast.daily?.temperature_2m_max?.[i],

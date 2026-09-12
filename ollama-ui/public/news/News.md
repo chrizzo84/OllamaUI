@@ -1,5 +1,12 @@
 Chronological list of notable changes to Ollama UI.
 
+## 2026-09-12 (7)
+
+- **Wrong weekday on every date a tool returned** — asked for the forecast, a model announced "Hier das Wetter für morgen (Freitag, 13.09.2026)". The date was right and the weekday was invented: 2026-09-13 is a Sunday. The forecast tool returned `date: "2026-09-13"` and nothing else, so the weekday had to be derived — and models cannot count days, while "Friday the 13th" is a strong enough prior to beat the actual calendar. Nothing in the reply marks which half came from a tool and which from thin air.
+- **Every date a tool hands back now carries its weekday** — the forecast, `create_reminder`, `create_recurring_task` and `list_scheduled_tasks`. On a reminder this matters more than on weather: a wrong weekday there is wrong information about the user's own calendar. English weekday names on purpose — translating one is something models do reliably, counting days is not.
+- **A bare date is read in UTC** — `YYYY-MM-DD` from the forecast is a calendar day, not a moment; parsing it in the server's zone puts it a day earlier anywhere west of Greenwich (verified: in `America/Los_Angeles` the naive version calls 2026-09-13 a Saturday). A full timestamp is still read in the server's zone, which is the one the schedule was written in.
+- **Tests** — 558, up from 555. Verified end to end against the live forecast API and a local 35B model, which now answers "Sonntag, der 13. September".
+
 ## 2026-09-12 (6)
 
 - **Facts were being silently dropped, and now they're measured** — reported as "wird nicht gespeichert", and the trace showed exactly that: the one `remember_fact` call that did happen ran perfectly, but the message stating a whole machine's specs produced no call at all. So it was measured instead of guessed. On `a local 35B model`, "meine Kiste ist ein Mini-PC mit 32 GB RAM und einer Grafikkarte" was saved in **1 of 5 runs**, never with the `[[links]]` the tool asked for — and the fact that _was_ stored had no subject, meaning nothing could ever replace it.

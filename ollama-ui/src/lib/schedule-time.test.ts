@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { computeNextRunAt } from './schedule-time';
+import { computeNextRunAt, weekdayOf } from './schedule-time';
 
 // All assertions build Dates with the local-time constructor on purpose:
 // computeNextRunAt works in server-local time (setHours/getDay), which is
@@ -79,5 +79,34 @@ describe('computeNextRunAt', () => {
         expect(computeNextRunAt(time, [day], from)).toBeGreaterThan(from.getTime());
       }
     }
+  });
+});
+
+describe('weekdayOf', () => {
+  /**
+   * The case that prompted this: asked for the forecast for 2026-09-13, a
+   * model announced "morgen (Freitag, 13.09.2026)". It is a Sunday — but
+   * "Friday the 13th" is a strong enough prior to beat the calendar, and
+   * nothing in the tool result contradicted it.
+   */
+  it('names the weekday of a calendar date', () => {
+    expect(weekdayOf('2026-09-12')).toBe('Saturday');
+    expect(weekdayOf('2026-09-13')).toBe('Sunday');
+    expect(weekdayOf('2026-09-14')).toBe('Monday');
+  });
+
+  // A bare YYYY-MM-DD is a calendar day, not a moment: read in the server's
+  // zone it would land a day earlier anywhere west of Greenwich.
+  it('reads a bare date in UTC, so it cannot shift by a day', () => {
+    const previous = process.env.TZ;
+    process.env.TZ = 'America/Los_Angeles';
+    expect(weekdayOf('2026-09-13')).toBe('Sunday');
+    process.env.TZ = previous;
+  });
+
+  it('accepts a timestamp and a Date as the moment they are', () => {
+    const sunday = new Date(2026, 8, 13, 14, 30);
+    expect(weekdayOf(sunday)).toBe('Sunday');
+    expect(weekdayOf(sunday.getTime())).toBe('Sunday');
   });
 });
