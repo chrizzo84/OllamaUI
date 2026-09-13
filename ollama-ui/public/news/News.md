@@ -1,5 +1,12 @@
 Chronological list of notable changes to Ollama UI.
 
+## 2026-09-13 (4)
+
+- **Vitest 3.2.7 → 4.1.11**, closing the path-traversal advisory in `@vitest/mocker` (GHSA — arbitrary file read; 4.1.11 is exactly the first patched version). A dev dependency, so nothing shipped was affected, but it runs on every commit and in CI.
+- **One thing had to change for it.** `vi.fn()`'s return type widened in 4.x to cover constructor spies (`Mock<Procedure | Constructable>`), which no longer satisfies a specific signature — the chat-stream test's spy handlers were typed as a bare `ReturnType<typeof vi.fn>` and stopped compiling. They now name the handler they stand in for, which also means `h.onToken.mock.calls[0][0]` is a string instead of `any`.
+- The other 3→4 breaking changes do not apply here: no coverage config, no workspaces, no browser mode, no reliance on `mockReset` restoring an implementation (every mock in the suite is a bare `vi.fn()`), and CI already runs Node 24 against the new floor of 20.
+- **Tests** — 486, unchanged, all passing on the new runner.
+
 ## 2026-09-13 (3)
 
 - **The memory system is gone.** Everything of it: the facts, the entity graph, the Memory page, the night shift, the pass over past conversations, the `remember_fact` tool, the per-chat and global switches, and the injection of stored facts into prompts. The tables are dropped on the next start. This is a removal, not a deprecation — there is no flag that brings it back.

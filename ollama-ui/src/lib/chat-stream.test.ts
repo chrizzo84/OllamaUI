@@ -16,16 +16,26 @@ function streamOf(chunks: string[]): ReadableStream<Uint8Array> {
 
 const ndjson = (...objs: unknown[]) => objs.map((o) => JSON.stringify(o) + '\n');
 
-function spyHandlers(): { [K in keyof ChatStreamHandlers]-?: ReturnType<typeof vi.fn> } {
+/*
+Each spy is typed as the handler it stands in for, rather than as a bare
+`ReturnType<typeof vi.fn>`. Vitest 4 widened that return type to cover
+constructor spies (`Mock<Procedure | Constructable>`), which no longer
+satisfies a specific signature like `(delta: string) => void` — so the
+untyped version stopped compiling. Naming the signature is also what keeps
+`h.onToken.mock.calls[0][0]` a string instead of `any`.
+*/
+type Handler<K extends keyof ChatStreamHandlers> = NonNullable<ChatStreamHandlers[K]>;
+
+function spyHandlers() {
   return {
-    onThinking: vi.fn(),
-    onToken: vi.fn(),
-    onToolCall: vi.fn(),
-    onToolResult: vi.fn(),
-    onDone: vi.fn(),
-    onError: vi.fn(),
-    onSnapshot: vi.fn(),
-    onQueued: vi.fn(),
+    onThinking: vi.fn<Handler<'onThinking'>>(),
+    onToken: vi.fn<Handler<'onToken'>>(),
+    onToolCall: vi.fn<Handler<'onToolCall'>>(),
+    onToolResult: vi.fn<Handler<'onToolResult'>>(),
+    onDone: vi.fn<Handler<'onDone'>>(),
+    onError: vi.fn<Handler<'onError'>>(),
+    onSnapshot: vi.fn<Handler<'onSnapshot'>>(),
+    onQueued: vi.fn<Handler<'onQueued'>>(),
   };
 }
 
