@@ -487,6 +487,15 @@ model. So it is built around the questions that follow from that —
 - **Size is earned.** A fact's radius comes from `use_count`, so what the
   model actually leans on is visible at a glance, and so is the dead weight.
 
+- **Every node is reachable.** Drag to move the view, wheel to zoom around
+  the cursor, and pick a node up to put it somewhere else — it stays where it
+  is dropped, and "Neu anordnen" gives every hand-placed node back to the
+  physics. Without that, wherever the layout happened to put something was
+  where it stayed, and anything outside the frame may as well not exist. The
+  view also frames itself while the layout settles (entities by their label,
+  which is far wider than their dot), and stops doing so the moment anyone
+  touches it.
+
 Drawn on a canvas with `d3-force`; the simulation settles in about a second
 and then stops, because a graph that keeps drifting is one whose nodes you
 cannot click.

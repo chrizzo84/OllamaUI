@@ -1,5 +1,14 @@
 Chronological list of notable changes to Ollama UI.
 
+## 2026-09-13 (2)
+
+- **The graph could be looked at but not used** — reported as "ich kann darin nix verschieben, es hängen Punkte außerhalb meiner Sicht". Both halves of that were true and they were the same omission: the canvas had no pan, no zoom and no way to drag a node, so wherever the force layout happened to put something was where it stayed, and a node outside the frame was simply gone. Dragging moves the view, the wheel zooms around the cursor (on a non-passive listener, so the page underneath no longer scrolls away instead), and a node can be picked up and put somewhere else — where it stays, because a node that springs back when you let go has not been moved.
+- **The view frames itself.** While the layout settles, the view keeps every node in shot; it stops doing that the moment anyone pans, zooms or drags, because a picture that re-frames itself under a hand that is using it is worse than one that never re-frames at all. "Alles zeigen" asks for it again, "Neu anordnen" hands every hand-placed node back to the physics.
+- **Framed by the label, not by the dot.** An entity's name is drawn above it and is often several times wider than the circle, so fitting the circles alone left "Musterstadt" hanging over an edge of a canvas that was, strictly speaking, showing every node. The scale is also capped well below a magnifying glass — a three-node graph blown up to fill the canvas reads as broken.
+- **The arithmetic moved into `lib/graph-fit.ts`** with 8 tests, because it is the part that decides whether a node is reachable at all and it is wrong in ways a screenshot does not show: the tests assert the property that matters — after the transform, every node is inside the canvas — for a graph that spilled far outside it, for a wide flat one where the tighter axis has to win, and for the case where nothing has a position yet.
+- **A node being dragged no longer waits for the physics.** Setting only d3's `fx`/`fy` means the node follows the hand on the next tick — one frame late while the layout is alive, and not at all once it has settled and the timer has stopped, which is the state a graph spends most of its life in. The drawn position is set too.
+- **Tests** — 624, up from 616.
+
 ## 2026-09-13 (1)
 
 - **A failed extraction looked exactly like an empty conversation** — and that difference decides whether a conversation is ever read again. Every call to the extractor was wrapped in a `catch` that returned `{ saved: 0 }`, so an unreachable host, a timeout, or the 400 a local Ollama gives for a model whose template has no tool support all arrived as "read it, there was nothing in it". The backfill then did what it does with a verdict: marked every message of that conversation as examined, for good. Reported as "alle 11 Nachrichten sind ausgewertet, 0 gefunden — es wurde aber nichts rausgeschrieben", with a memory that was completely empty.

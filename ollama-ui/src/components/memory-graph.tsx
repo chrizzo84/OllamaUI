@@ -22,11 +22,17 @@
  *  - **Size is earned.** A fact's radius comes from how often retrieval
  *    actually used it, so what the model really leans on is visible at a
  *    glance — and so is the dead weight.
+ *  - **You can reach every node.** A force layout puts things where the
+ *    physics wants them, which is regularly outside the frame; without pan,
+ *    zoom and a way to drag a node out of a clump, those nodes may as well
+ *    not exist. The view also fits itself to the graph once the simulation
+ *    settles, so the common case needs no interaction at all.
  *
  * Canvas rather than SVG: a few hundred nodes with per-frame physics is
  * exactly where SVG's per-element overhead starts dropping frames.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { fitView } from '@/lib/graph-fit';
 import {
   forceSimulation,
   forceLink,
@@ -78,6 +84,12 @@ const TYPE_COLOUR: Record<string, string> = {
   unsorted: '#94a3b8',
 };
 
+/** The label as drawn — shared with the fit, so the two cannot disagree. */
+const ENTITY_FONT = '11px system-ui, sans-serif';
+function nodeLabel(n: GraphNode): string {
+  return n.label.length > 46 ? `${n.label.slice(0, 45)}…` : n.label;
+}
+
 function nodeRadius(n: GraphNode): number {
   if (n.kind === 'entity') return 5 + Math.min(9, (n.degree ?? 0) * 1.6);
   // Use count is the honest measure of a fact's worth: it says how often the
@@ -106,6 +118,28 @@ export function MemoryGraph({
   const [hovered, setHovered] = useState<string | null>(null);
   const hoveredRef = useRef<string | null>(null);
   const [size, setSize] = useState({ w: 800, h: 520 });
+  /*
+  The view transform, in a ref rather than in state: it changes on every
+  pointer move and every wheel notch, and a re-render per frame would cost
+  more than the drawing does. Nothing in the JSX depends on it.
+  */
+  const viewRef = useRef({ k: 1, x: 0, y: 0 });
+  /*
+  Whether the view still owes the new data a fit. Set when the graph changes
+  and cleared the moment anyone pans, zooms or drags — a view that re-frames
+  itself under a hand that is using it is worse than one that never frames
+  itself at all.
+  */
+  const pendingFitRef = useRef(true);
+  const dragRef = useRef<{
+    kind: 'pan' | 'node';
+    node?: SimNode;
+    /** Where the pointer went down, to tell a click from a drag. */
+    startX: number;
+    startY: number;
+    moved: boolean;
+  } | null>(null);
+  const [grabbing, setGrabbing] = useState(false);
 
   useEffect(() => {
     hoveredRef.current = hovered;
@@ -129,6 +163,11 @@ export function MemoryGraph({
     ctx.save();
     ctx.scale(dpr, dpr);
     ctx.clearRect(0, 0, size.w, size.h);
+    // Everything below is drawn in world coordinates; this is the only place
+    // that knows about the view.
+    const view = viewRef.current;
+    ctx.translate(view.x, view.y);
+    ctx.scale(view.k, view.k);
 
     const hoveredId = hoveredRef.current;
     const neighbours = new Set<string>();
@@ -183,9 +222,9 @@ export function MemoryGraph({
       // label; facts would turn the canvas into a wall of text, and show
       // theirs on hover instead.
       if (n.kind === 'entity' || isHovered) {
-        const label = n.label.length > 46 ? `${n.label.slice(0, 45)}…` : n.label;
+        const label = nodeLabel(n);
         ctx.globalAlpha = dimmed;
-        ctx.font = isHovered ? '600 12px system-ui, sans-serif' : '11px system-ui, sans-serif';
+        ctx.font = isHovered ? '600 12px system-ui, sans-serif' : ENTITY_FONT;
         ctx.fillStyle = isHovered ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.55)';
         ctx.textAlign = 'center';
         ctx.fillText(label, n.x!, n.y! - n.r - 5);
@@ -194,6 +233,134 @@ export function MemoryGraph({
     }
     ctx.restore();
   }, [size.w, size.h, focus]);
+
+  /** Pointer position in the graph's own coordinates, undoing pan and zoom. */
+  const toWorld = useCallback((clientX: number, clientY: number) => {
+    const rect = canvasRef.current?.getBoundingClientRect();
+    const view = viewRef.current;
+    return {
+      x: (clientX - (rect?.left ?? 0) - view.x) / view.k,
+      y: (clientY - (rect?.top ?? 0) - view.y) / view.k,
+    };
+  }, []);
+
+  /**
+   * Puts a node under the pointer.
+   *
+   * Both the fixed position the simulation reads (`fx`/`fy`) and the drawn
+   * one (`x`/`y`): d3 only copies the first into the second on its next tick,
+   * so setting `fx` alone means the node follows the hand one frame late —
+   * and not at all if the layout has settled and the timer has stopped, which
+   * is the state a graph spends most of its life in.
+   */
+  function moveNode(node: SimNode, clientX: number, clientY: number) {
+    const w = toWorld(clientX, clientY);
+    node.fx = w.x;
+    node.fy = w.y;
+    node.x = w.x;
+    node.y = w.y;
+  }
+
+  const nodeAt = useCallback(
+    (clientX: number, clientY: number): SimNode | null => {
+      const { x, y } = toWorld(clientX, clientY);
+      let best: SimNode | null = null;
+      let bestDist = Infinity;
+      for (const n of nodesRef.current) {
+        if (n.x == null || n.y == null) continue;
+        const d = Math.hypot(n.x - x, n.y - y);
+        // The grab margin is in screen pixels, so it stays the same size to
+        // the hand however far the view is zoomed out.
+        if (d < n.r + 6 / viewRef.current.k && d < bestDist) {
+          best = n;
+          bestDist = d;
+        }
+      }
+      return best;
+    },
+    [toWorld],
+  );
+
+  /**
+   * Frames the whole graph.
+   *
+   * This is the answer to nodes sitting outside the canvas: a force layout
+   * spreads things as far as the physics wants, and with a fixed viewport
+   * that regularly means part of the graph is somewhere off to the left with
+   * no way to reach it. Called automatically when the simulation settles, and
+   * by the button, so the default state of the view is "everything visible".
+   */
+  /**
+   * Frames the whole graph — the answer to nodes sitting outside the canvas.
+   * Runs while the layout settles and on the button; the arithmetic lives in
+   * lib/graph-fit.ts, where it can be tested.
+   */
+  const fitToNodes = useCallback(() => {
+    /*
+    Entities are framed by their label, not by their dot: the name is drawn
+    above the node and is often several times wider than it, so fitting the
+    circles alone leaves "Musterstadt" hanging over the edge of a canvas
+    that is, strictly speaking, showing every node.
+    */
+    const ctx = canvasRef.current?.getContext('2d');
+    if (ctx) ctx.font = ENTITY_FONT;
+    const points = nodesRef.current.map((n) =>
+      n.kind === 'entity' && ctx
+        ? { x: n.x, y: n.y, r: Math.max(n.r + 18, ctx.measureText(nodeLabel(n)).width / 2) }
+        : n,
+    );
+    // Capped well below a magnifying glass: blowing a three-node graph up to
+    // fill the canvas reads as broken, and at high zoom the labels collide
+    // with everything around them.
+    const view = fitView(points, size.w, size.h, { maxScale: 1.6, padding: 32 });
+    if (!view) return;
+    viewRef.current = view;
+    draw();
+  }, [size.w, size.h, draw]);
+
+  /** Lets go of every node a hand has pinned, and lets the physics settle again. */
+  function relayout() {
+    const sim = simRef.current;
+    if (!sim) return;
+    // Asked of the simulation rather than of our own array: these are the
+    // nodes the physics is actually holding, and releasing them is its job.
+    for (const n of sim.nodes()) {
+      n.fx = null;
+      n.fy = null;
+    }
+    sim.alpha(0.8).restart();
+  }
+
+  /*
+  Zooming, on a non-passive listener.
+
+  React attaches wheel handlers passively, where preventDefault does nothing
+  and the page scrolls away under the graph instead of zooming it. This has
+  to be a native listener to be allowed to say no.
+  */
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    function onWheel(e: WheelEvent) {
+      e.preventDefault();
+      const view = viewRef.current;
+      const rect = canvas!.getBoundingClientRect();
+      const px = e.clientX - rect.left;
+      const py = e.clientY - rect.top;
+      pendingFitRef.current = false;
+      const k = Math.min(3, Math.max(0.15, view.k * Math.exp(-e.deltaY * 0.0015)));
+      // Keep whatever is under the cursor under the cursor — anything else
+      // feels like the graph is sliding away while you zoom.
+      viewRef.current = {
+        k,
+        x: px - ((px - view.x) / view.k) * k,
+        y: py - ((py - view.y) / view.k) * k,
+      };
+      draw();
+    }
+    canvas.addEventListener('wheel', onWheel, { passive: false });
+    return () => canvas.removeEventListener('wheel', onWheel);
+  }, [draw]);
 
   // Rebuild the simulation when the data changes. Positions of nodes that
   // survive the change are carried over, so re-centring the view moves the
@@ -247,35 +414,36 @@ export function MemoryGraph({
       .alphaDecay(0.06)
       .alphaMin(0.02)
       .velocityDecay(0.45)
-      .on('tick', draw);
+      /*
+      The frame follows the layout while it spreads, rather than waiting for
+      it to finish. Waiting was the obvious version and it is the fragile one:
+      it hangs on a single 'end' event, and anything that keeps the simulation
+      alive — or a browser that stops delivering animation frames — leaves the
+      view sitting on the initial positions with half the graph outside the
+      canvas, which is exactly the state this is meant to prevent. Refitting
+      per tick costs one pass over the nodes we are about to draw anyway.
+      */
+      .on('tick', () => {
+        if (pendingFitRef.current) fitToNodes();
+        else draw();
+      })
+      .on('end', () => {
+        if (pendingFitRef.current) fitToNodes();
+      });
     simRef.current = sim;
     return () => {
       sim.stop();
     };
-  }, [nodes, edges, size.w, size.h, draw]);
+  }, [nodes, edges, size.w, size.h, draw, fitToNodes]);
+
+  // New data (a different focus, a fact approved) earns a new frame.
+  useEffect(() => {
+    pendingFitRef.current = true;
+  }, [nodes, edges]);
 
   useEffect(() => {
     draw();
   }, [draw]);
-
-  function nodeAt(clientX: number, clientY: number): SimNode | null {
-    const canvas = canvasRef.current;
-    if (!canvas) return null;
-    const rect = canvas.getBoundingClientRect();
-    const x = clientX - rect.left;
-    const y = clientY - rect.top;
-    let best: SimNode | null = null;
-    let bestDist = Infinity;
-    for (const n of nodesRef.current) {
-      if (n.x == null || n.y == null) continue;
-      const d = Math.hypot(n.x - x, n.y - y);
-      if (d < n.r + 6 && d < bestDist) {
-        best = n;
-        bestDist = d;
-      }
-    }
-    return best;
-  }
 
   const legend = useMemo(
     () => [
@@ -296,37 +464,116 @@ export function MemoryGraph({
           width={size.w * (typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1)}
           height={size.h * (typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1)}
           style={{ width: size.w, height: size.h }}
-          className="block cursor-pointer"
-          onMouseMove={(e) => {
+          className={`block touch-none ${grabbing ? 'cursor-grabbing' : 'cursor-grab'}`}
+          onPointerDown={(e) => {
             const n = nodeAt(e.clientX, e.clientY);
-            if (n?.id !== hovered) {
-              setHovered(n?.id ?? null);
-              hoveredRef.current = n?.id ?? null;
+            e.currentTarget.setPointerCapture(e.pointerId);
+            pendingFitRef.current = false;
+            dragRef.current = {
+              kind: n ? 'node' : 'pan',
+              node: n ?? undefined,
+              startX: e.clientX,
+              startY: e.clientY,
+              moved: false,
+            };
+            setGrabbing(true);
+            if (n) {
+              // Warm the simulation so the neighbours give way while the
+              // node is moved, instead of the graph staying frozen until the
+              // drag ends and then jumping.
+              simRef.current?.alphaTarget(0.2).restart();
+              moveNode(n, e.clientX, e.clientY);
+            }
+          }}
+          onPointerMove={(e) => {
+            const drag = dragRef.current;
+            if (!drag) {
+              const n = nodeAt(e.clientX, e.clientY);
+              if (n?.id !== hovered) {
+                setHovered(n?.id ?? null);
+                hoveredRef.current = n?.id ?? null;
+                draw();
+              }
+              return;
+            }
+            if (Math.hypot(e.clientX - drag.startX, e.clientY - drag.startY) > 3) drag.moved = true;
+            if (drag.kind === 'node' && drag.node) {
+              moveNode(drag.node, e.clientX, e.clientY);
+              draw();
+            } else {
+              // Panning moves the view by raw screen pixels — dividing by the
+              // zoom here would make a drag cover less ground the further out
+              // you are, which is the opposite of what a hand expects.
+              const view = viewRef.current;
+              viewRef.current = {
+                ...view,
+                x: view.x + e.movementX,
+                y: view.y + e.movementY,
+              };
               draw();
             }
           }}
-          onMouseLeave={() => {
+          onPointerUp={() => {
+            const drag = dragRef.current;
+            dragRef.current = null;
+            setGrabbing(false);
+            if (!drag) return;
+            simRef.current?.alphaTarget(0);
+            /*
+            A node dropped by hand stays where it was dropped (its fx/fy are
+            kept). "Verschieben" that springs back the moment you let go is
+            not moving anything — and "Neu anordnen" gives every pinned node
+            back to the physics in one click.
+            */
+            if (!drag.moved) {
+              // A click, not a drag: release the node it pinned on the way
+              // down, so tapping a node never silently fixes it in place.
+              if (drag.node) {
+                drag.node.fx = null;
+                drag.node.fy = null;
+              }
+              onSelect(drag.node ?? null);
+              if (drag.node) onFocus(drag.node.id);
+            }
+          }}
+          onPointerLeave={() => {
+            if (dragRef.current) return;
             setHovered(null);
             hoveredRef.current = null;
             draw();
           }}
-          onClick={(e) => {
-            const n = nodeAt(e.clientX, e.clientY);
-            onSelect(n ?? null);
-            if (n) onFocus(n.id);
-          }}
         />
-        {focus && (
-          <button
-            onClick={() => {
-              onFocus(undefined);
-              onSelect(null);
-            }}
-            className="absolute right-3 top-3 rounded-lg border border-white/15 bg-black/60 px-2.5 py-1 text-[11px] text-white/70 hover:text-white"
-          >
-            Ganze Übersicht
-          </button>
-        )}
+        <div className="absolute right-3 top-3 flex items-center gap-2">
+          {focus && (
+            <button
+              onClick={() => {
+                onFocus(undefined);
+                onSelect(null);
+              }}
+              className="rounded-lg border border-white/15 bg-black/60 px-2.5 py-1 text-[11px] text-white/70 hover:text-white"
+            >
+              Ganze Übersicht
+            </button>
+          )}
+          {nodes.length > 0 && (
+            <>
+              <button
+                onClick={fitToNodes}
+                title="Zoomt so weit heraus, dass jeder Knoten im Bild ist"
+                className="rounded-lg border border-white/15 bg-black/60 px-2.5 py-1 text-[11px] text-white/70 hover:text-white"
+              >
+                Alles zeigen
+              </button>
+              <button
+                onClick={relayout}
+                title="Löst alle von Hand gesetzten Knoten und lässt die Anordnung neu einschwingen"
+                className="rounded-lg border border-white/15 bg-black/60 px-2.5 py-1 text-[11px] text-white/70 hover:text-white"
+              >
+                Neu anordnen
+              </button>
+            </>
+          )}
+        </div>
         {nodes.length === 0 && (
           <div className="absolute inset-0 flex items-center justify-center text-sm text-white/40">
             Noch nichts verknüpft — Fakten mit [[Klammern]] bauen den Graphen auf.
@@ -355,7 +602,9 @@ export function MemoryGraph({
           <span className="inline-block h-px w-4 bg-white/20" />
           ersetzt / handelt von
         </span>
-        <span className="ml-auto">Klick zentriert · Größe = wie oft benutzt</span>
+        <span className="ml-auto">
+          Ziehen verschiebt · Scrollen zoomt · Knoten lassen sich anfassen · Klick zentriert
+        </span>
       </div>
     </div>
   );
