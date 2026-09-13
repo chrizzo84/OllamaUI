@@ -1,6 +1,7 @@
-
-packages:
-  - src/*
+# Not a workspace: this file exists for the settings below, which pnpm 10
+# moved out of package.json. It used to declare `packages: src/*`, which
+# matched nothing — no directory under src/ has a package.json — and only
+# suggested a multi-package layout this repo does not have.
 
 # Install scripts are blocked unless a package is listed here. Nothing needs
 # one: better-sqlite3 (the only entry this list ever had) was dropped in
