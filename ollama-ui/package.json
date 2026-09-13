@@ -1,6 +1,6 @@
 {
   "name": "ollama-ui",
-  "version": "0.1.20260913-4",
+  "version": "0.1.20260913-5",
   "packageManager": "pnpm@10.14.0",
   "private": true,
   "engines": {
@@ -69,11 +69,6 @@
     ],
     "**/*.{ts,tsx,js,jsx,md,css,json}": [
       "prettier --write"
-    ]
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "esbuild"
     ]
   }
 }

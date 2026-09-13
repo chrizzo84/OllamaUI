@@ -2,8 +2,12 @@
 packages:
   - src/*
 
-onlyBuiltDependencies:
-  - better-sqlite3
+# Install scripts are blocked unless a package is listed here. Nothing needs
+# one: better-sqlite3 (the only entry this list ever had) was dropped in
+# favour of node:sqlite, and the two packages that do ship install scripts —
+# esbuild and unrs-resolver — have worked blocked all along, because both
+# resolve a prebuilt binary from a per-platform package instead.
+onlyBuiltDependencies: []
 
 # Security patches for transitive dependencies with known advisories.
 # (This used to live under package.json's "pnpm.overrides", which pnpm 10+
@@ -13,5 +17,5 @@ overrides:
   postcss: '>=8.5.23'
   nanoid: '>=3.3.18'
   js-yaml: '>=5.2.2'
-  sharp: '>=0.35.3'
+  sharp: '>=0.35.4'
   '@babel/core': '>=7.29.6'

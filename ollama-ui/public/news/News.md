@@ -1,5 +1,11 @@
 Chronological list of notable changes to Ollama UI.
 
+## 2026-09-13 (5)
+
+- **sharp 0.35.3 → 0.35.4**, closing the last open advisory (high — two libheif vulnerabilities inside the bundled libvips). Worth being precise about, because it was first written off here as a lockfile ghost and it was not: sharp is installed, Next.js pulls it as an optional dependency, and the app renders through `next/image`, so it is genuinely in the running image. The pin lives in `pnpm-workspace.yaml`'s `overrides`, which already carried sharp at a floor one patch too low. Verified by loading the new native module and encoding a PNG: sharp 0.35.4, libvips 8.18.6.
+- **Every other Dependabot alert is closed** — 21 of them, all `next`, plus `minimatch` and `vitest`. The five remaining overrides (`fast-uri`, `postcss`, `nanoid`, `js-yaml`, `@babel/core`) were checked against the installed tree rather than assumed: each resolves above its floor and is still doing its job.
+- **Two pieces of dead package-manager config went with it.** `package.json` carried a `"pnpm"` block that pnpm 10 no longer reads — it printed a warning on every single command and the setting it held had no effect. And the install-script allowlist still named `better-sqlite3`, dropped from this project long ago in favour of `node:sqlite`. Nothing needs an install script: the two packages that ship one, esbuild and unrs-resolver, have worked blocked all along because both resolve a prebuilt binary from a per-platform package.
+
 ## 2026-09-13 (4)
 
 - **Vitest 3.2.7 → 4.1.11**, closing the path-traversal advisory in `@vitest/mocker` (GHSA — arbitrary file read; 4.1.11 is exactly the first patched version). A dev dependency, so nothing shipped was affected, but it runs on every commit and in CI.
