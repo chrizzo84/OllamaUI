@@ -309,7 +309,7 @@ State highlights:
 
 - `anyPullActive` prevents concurrent pulls.
 - `expandedVariants[slug]` toggles full variant list per model.
-- Progress derived from last event for the active model.
+- Pull progress is written by the stream loop alone, one update per network chunk. Deriving it a second time from the event list is what made a large pull exceed React's update depth and kill the page.
 
 ### Where a chat message actually lives
 
@@ -677,13 +677,13 @@ Distributed under the MIT License. See the `LICENSE` file for full text.
 | -------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
 | Framework            | Next.js App Router (Node runtime; webpack build, see §9)                                                                      |
 | Backups              | `VACUUM INTO` snapshots in `data/backups/`, pre-migration + daily, 7 retained                                                 |
-| Persistence          | SQLite via `node:sqlite` — messages, sessions, evals;           FTS5 full-text search; attachments on disk, content-addressed |
+| Persistence          | SQLite via `node:sqlite` — messages, sessions, evals; FTS5 full-text search; attachments on disk, content-addressed |
 | Auth                 | Optional single-user password gate in `src/proxy.ts`, Web Crypto HMAC sessions                                                |
 | Data                 | React Query, NDJSON streaming                                                                                                 |
 | State                | Zustand                                                                                                                       |
 | Styling              | Tailwind CSS v4, theme-adaptive glass design system, motion via Framer Motion                                                 |
 | Backend Integrations | Ollama HTTP API, MCP (stdio + HTTP), SearXNG, Open-Meteo, whisper.cpp, Telegram Bot API                                       |
-| Testing              | Vitest (391 unit tests), run in CI with lint + typecheck                                                                      |
+| Testing              | Vitest (486 unit tests), run in CI with lint + typecheck                                                                      |
 | Scraping             | Python (httpx, BeautifulSoup, tenacity)                                                                                       |
 
 ---
