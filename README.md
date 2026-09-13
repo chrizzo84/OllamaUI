@@ -68,6 +68,13 @@
 - ⚡️ Lightweight state management with Zustand & React Query caching, with per-message memoization and deferred markdown parsing so streaming stays smooth in long conversations
 - 🐍 Python scraper (separate directory) to periodically refresh the catalog JSON
 
+> **Removed in `0.1.20260913-3`:** the persistent memory. It saved facts about
+> you during a chat and put them back into later prompts; it could not be made
+> reliable enough to be worth the surprises it produced, so it is gone along
+> with its tables, which are dropped the first time this version opens an older
+> database. Chats, search, scheduled tasks and the Telegram bridge are
+> untouched.
+
 ---
 
 ## 2. Repository Layout 🗂️
@@ -257,26 +264,26 @@ consistent. Back that directory up separately if you want the images too.
 
 Base path: `/api`
 
-| Route                                                     | Method                | Purpose                                           | Notes                                                                                          |
-| --------------------------------------------------------- | --------------------- | ------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `/api/models`                                             | GET                   | List installed models + tags                      | Wraps Ollama `/api/tags` (server side implementation not shown here)                           |
-| `/api/models/pull`                                        | POST                  | Stream pull of a model or model:variant           | Returns NDJSON, enriches lines with `percentage` when possible                                 |
-| `/api/models/delete`                                      | POST                  | Remove a model                                    | Body: `{ model: "name" }`                                                                      |
-| `/api/models/catalog`                                     | GET                   | Filtered catalog from `models.json`               | Query: `q`, `limit` (0 = all)                                                                  |
-| `/api/auth/login`                                         | POST/DELETE           | Sign in / sign out                                | Only route reachable without a session                                                         |
-| `/api/attachments/[id]`                                   | GET                   | Serve an uploaded file                            | Content-addressed (SHA-256), immutable, cached                                                 |
-| `/api/documents/extract`                                  | POST                  | Extract text from an uploaded document            | `multipart/form-data`, field `file`; PDF via `pdftotext`                                       |
-| `/api/sessions/search`                                    | GET                   | Full-text search over titles and messages         | Backed by SQLite FTS5                                                                          |
-| `/api/sessions/[id]/branch`                               | POST                  | Switch to another version of a message            | Body: `{ messageId }`                                                                          |
-| `/api/sessions/[id]/messages/[messageId]`                 | DELETE                | Delete a message and its subtree                  | Leaves sibling branches intact                                                                 |
-| `/api/settings/mcp`                                       | GET/PUT               | Configured MCP servers                            | GET connects and reports each server's live tools                                              |
-| `/api/settings/generation`                                | GET/PUT               | Global generation defaults (`num_ctx`)            | Applies to web chat, Telegram and scheduled tasks alike                                        |
-| `/api/evals/sets`                                         | GET/PUT/DELETE        | Saved prompt sets                                 |                                                                                                |
-| `/api/evals/runs`                                         | GET/POST              | Start and list evaluation runs                    | POST returns immediately; the run outlives the request                                         |
-| `/api/evals/runs/[id]`                                    | GET                   | One run with results so far                       | Poll while `status` is `running`                                                               |
-| `/api/evals/results`                                      | PATCH                 | Score one answer                                  | Body: `{ id, rating }`; `null` clears                                                          |
-| `/api/gpu`                                                | GET                   | Per-card VRAM of the machine running the UI       | Empty list + a `reason` when it can't/shouldn't probe                                          |
-| Other routes (`chat`, `lamas`, `ps`, `status`, `tools/*`) | —                     | Additional functionality (not all documented yet) | Future docs TBD                                                                                |
+| Route                                                     | Method         | Purpose                                           | Notes                                                                |
+| --------------------------------------------------------- | -------------- | ------------------------------------------------- | -------------------------------------------------------------------- |
+| `/api/models`                                             | GET            | List installed models + tags                      | Wraps Ollama `/api/tags` (server side implementation not shown here) |
+| `/api/models/pull`                                        | POST           | Stream pull of a model or model:variant           | Returns NDJSON, enriches lines with `percentage` when possible       |
+| `/api/models/delete`                                      | POST           | Remove a model                                    | Body: `{ model: "name" }`                                            |
+| `/api/models/catalog`                                     | GET            | Filtered catalog from `models.json`               | Query: `q`, `limit` (0 = all)                                        |
+| `/api/auth/login`                                         | POST/DELETE    | Sign in / sign out                                | Only route reachable without a session                               |
+| `/api/attachments/[id]`                                   | GET            | Serve an uploaded file                            | Content-addressed (SHA-256), immutable, cached                       |
+| `/api/documents/extract`                                  | POST           | Extract text from an uploaded document            | `multipart/form-data`, field `file`; PDF via `pdftotext`             |
+| `/api/sessions/search`                                    | GET            | Full-text search over titles and messages         | Backed by SQLite FTS5                                                |
+| `/api/sessions/[id]/branch`                               | POST           | Switch to another version of a message            | Body: `{ messageId }`                                                |
+| `/api/sessions/[id]/messages/[messageId]`                 | DELETE         | Delete a message and its subtree                  | Leaves sibling branches intact                                       |
+| `/api/settings/mcp`                                       | GET/PUT        | Configured MCP servers                            | GET connects and reports each server's live tools                    |
+| `/api/settings/generation`                                | GET/PUT        | Global generation defaults (`num_ctx`)            | Applies to web chat, Telegram and scheduled tasks alike              |
+| `/api/evals/sets`                                         | GET/PUT/DELETE | Saved prompt sets                                 |                                                                      |
+| `/api/evals/runs`                                         | GET/POST       | Start and list evaluation runs                    | POST returns immediately; the run outlives the request               |
+| `/api/evals/runs/[id]`                                    | GET            | One run with results so far                       | Poll while `status` is `running`                                     |
+| `/api/evals/results`                                      | PATCH          | Score one answer                                  | Body: `{ id, rating }`; `null` clears                                |
+| `/api/gpu`                                                | GET            | Per-card VRAM of the machine running the UI       | Empty list + a `reason` when it can't/shouldn't probe                |
+| Other routes (`chat`, `lamas`, `ps`, `status`, `tools/*`) | —              | Additional functionality (not all documented yet) | Future docs TBD                                                      |
 
 Every route above is behind the password gate when `APP_PASSWORD` is set — see
 [Access Control](#5b-access-control-).
@@ -309,7 +316,7 @@ State highlights:
 
 - `anyPullActive` prevents concurrent pulls.
 - `expandedVariants[slug]` toggles full variant list per model.
-- Pull progress is written by the stream loop alone, one update per network chunk. Deriving it a second time from the event list is what made a large pull exceed React's update depth and kill the page.
+- Pull progress has exactly one writer, the stream loop, and updates once per network chunk rather than once per line.
 
 ### Where a chat message actually lives
 
@@ -647,8 +654,8 @@ inside the container if the GPU was passed in (see above) — without that,
 - Multi-pull queue (sequential)
 - Download speed & ETA estimation
 - Keyboard shortcuts (focus search, abort pull)
-- RAG over a local folder — embeddings via Ollama's `/api/embed`, retrieved for
-  a question the user actually asks rather than injected into every prompt
+- RAG over a local folder — embeddings via Ollama's `/api/embed`, searched when
+  a question calls for it
 - Modelfile editor — build a model from a base + system prompt + parameters, so
   a persona can become a real Ollama model usable outside this app
 - MCP: resources and prompts (only tools are implemented today)
@@ -673,18 +680,18 @@ Distributed under the MIT License. See the `LICENSE` file for full text.
 
 ## 15. At A Glance 👀
 
-| Stack                | Key Tools                                                                                                                     |
-| -------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| Framework            | Next.js App Router (Node runtime; webpack build, see §9)                                                                      |
-| Backups              | `VACUUM INTO` snapshots in `data/backups/`, pre-migration + daily, 7 retained                                                 |
+| Stack                | Key Tools                                                                                                           |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| Framework            | Next.js App Router (Node runtime; webpack build, see §9)                                                            |
+| Backups              | `VACUUM INTO` snapshots in `data/backups/`, pre-migration + daily, 7 retained                                       |
 | Persistence          | SQLite via `node:sqlite` — messages, sessions, evals; FTS5 full-text search; attachments on disk, content-addressed |
-| Auth                 | Optional single-user password gate in `src/proxy.ts`, Web Crypto HMAC sessions                                                |
-| Data                 | React Query, NDJSON streaming                                                                                                 |
-| State                | Zustand                                                                                                                       |
-| Styling              | Tailwind CSS v4, theme-adaptive glass design system, motion via Framer Motion                                                 |
-| Backend Integrations | Ollama HTTP API, MCP (stdio + HTTP), SearXNG, Open-Meteo, whisper.cpp, Telegram Bot API                                       |
-| Testing              | Vitest (486 unit tests), run in CI with lint + typecheck                                                                      |
-| Scraping             | Python (httpx, BeautifulSoup, tenacity)                                                                                       |
+| Auth                 | Optional single-user password gate in `src/proxy.ts`, Web Crypto HMAC sessions                                      |
+| Data                 | React Query, NDJSON streaming                                                                                       |
+| State                | Zustand                                                                                                             |
+| Styling              | Tailwind CSS v4, theme-adaptive glass design system, motion via Framer Motion                                       |
+| Backend Integrations | Ollama HTTP API, MCP (stdio + HTTP), SearXNG, Open-Meteo, whisper.cpp, Telegram Bot API                             |
+| Testing              | Vitest (486 unit tests), run in CI with lint + typecheck                                                            |
+| Scraping             | Python (httpx, BeautifulSoup, tenacity)                                                                             |
 
 ---
 
