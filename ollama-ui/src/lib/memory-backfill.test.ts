@@ -11,6 +11,7 @@ const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ollama-ui-backfill-test-')
 process.env.OLLAMA_UI_DATA_DIR = tmpDir;
 
 const db = await import('./db');
+const backfill = await import('./memory-backfill');
 
 afterAll(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
 
@@ -225,5 +226,106 @@ describe('scan marks', () => {
     db.markMessageScanned(db.listUnscannedMessages()[0].messageId, 1);
     db.deleteSession(session.id);
     expect(db.countScannedMessages()).toBe(0);
+  });
+});
+
+/*
+The run itself, with the model faked.
+
+These cover the difference that turned out to matter most in practice: a call
+that failed and a conversation that genuinely held nothing both used to arrive
+as "found 0", and the second one retires the messages for good. A history read
+by a broken run cannot be read again, so the distinction is not cosmetic.
+*/
+describe('a run against a model that answers badly', () => {
+  const realFetch = globalThis.fetch;
+  afterAll(() => {
+    globalThis.fetch = realFetch;
+  });
+
+  /** Waits for the detached run to settle, so assertions see a finished pass. */
+  async function settle(): Promise<void> {
+    for (let i = 0; i < 200 && backfill.getBackfillProgress().status === 'running'; i++) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+  }
+
+  function respond(body: unknown, status = 200) {
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify(body), {
+        status,
+        headers: { 'Content-Type': 'application/json' },
+      })) as typeof fetch;
+  }
+
+  it('stops and keeps the conversation unread when Ollama refuses', async () => {
+    conversation([{ role: 'user', content: 'Ich habe einen Homeserver mit 128 GB RAM.' }]);
+    // What a local Ollama actually answers for a model whose template has no
+    // tool support — the failure that looked like "nothing found" forever.
+    respond({ error: 'registry.ollama.ai/library/x does not support tools' }, 400);
+
+    expect(backfill.startBackfill({ base: 'http://127.0.0.1:1', model: 'x' })).toBe(true);
+    await settle();
+
+    const progress = backfill.getBackfillProgress();
+    expect(progress.status).toBe('error');
+    expect(progress.error).toContain('400');
+    // The point of the whole exercise: nothing was retired.
+    expect(db.countScannedMessages()).toBe(0);
+    expect(db.countUnscannedMessages()).toBe(1);
+  });
+
+  it('records an unreachable host as an error rather than an empty result', async () => {
+    conversation([{ role: 'user', content: 'Ich habe einen Homeserver mit 128 GB RAM.' }]);
+    globalThis.fetch = (async () => {
+      throw new Error('fetch failed');
+    }) as typeof fetch;
+
+    backfill.startBackfill({ base: 'http://127.0.0.1:1', model: 'x' });
+    await settle();
+
+    expect(backfill.getBackfillProgress().status).toBe('error');
+    expect(db.countScannedMessages()).toBe(0);
+  });
+
+  it('marks a conversation read once the model has actually answered', async () => {
+    conversation([{ role: 'user', content: 'Ich habe einen Homeserver mit 128 GB RAM.' }]);
+    respond({
+      message: {
+        tool_calls: [
+          {
+            function: {
+              name: 'remember_fact',
+              arguments: {
+                fact: 'Der Nutzer hat einen Homeserver mit 128 GB RAM.',
+                type: 'identity',
+              },
+            },
+          },
+        ],
+      },
+    });
+
+    backfill.startBackfill({ base: 'http://127.0.0.1:1', model: 'x' });
+    await settle();
+
+    const progress = backfill.getBackfillProgress();
+    expect(progress.status).toBe('done');
+    expect(progress.found).toBe(1);
+    expect(db.countUnscannedMessages()).toBe(0);
+    expect(db.listMemories().some((m) => m.content.includes('128 GB RAM'))).toBe(true);
+  });
+
+  // "Read it, there was nothing" is a real verdict and has to stick, or every
+  // pass re-reads the same small talk for ever.
+  it('marks a conversation read when the model finds nothing', async () => {
+    conversation([{ role: 'user', content: 'Erklär mir bitte kurz, wie Transformer arbeiten.' }]);
+    respond({ message: { content: 'NONE' } });
+
+    backfill.startBackfill({ base: 'http://127.0.0.1:1', model: 'x' });
+    await settle();
+
+    expect(backfill.getBackfillProgress().status).toBe('done');
+    expect(db.countUnscannedMessages()).toBe(0);
   });
 });

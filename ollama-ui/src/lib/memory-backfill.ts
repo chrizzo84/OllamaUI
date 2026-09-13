@@ -54,6 +54,13 @@ export interface BackfillProgress {
   duplicates: number;
   /** Messages covered so far — what the conversations above amount to. */
   messages: number;
+  /*
+  How long the current model call has been going, so a pass that looks
+  frozen can be told from one that is simply slow — a 35B model reading a
+  long transcript is a minute of silence, and silence with no elapsed time
+  next to it reads as "nothing is happening".
+  */
+  currentStartedAt: number | null;
   startedAt: number | null;
   finishedAt: number | null;
   error: string | null;
@@ -67,6 +74,7 @@ const idle = (): BackfillProgress => ({
   found: 0,
   duplicates: 0,
   messages: 0,
+  currentStartedAt: null,
   startedAt: null,
   finishedAt: null,
   error: null,
@@ -139,10 +147,11 @@ async function run(
   try {
     for (const conversation of conversations) {
       if (signal.aborted) {
-        current = { ...current, status: 'stopped', finishedAt: Date.now() };
+        current = { ...current, status: 'stopped', currentStartedAt: null, finishedAt: Date.now() };
         return;
       }
 
+      current = { ...current, currentStartedAt: Date.now() };
       const result = await extractFromConversation({
         base: params.base,
         model: params.model,
@@ -152,13 +161,34 @@ async function run(
       });
 
       /*
+      A failed call is not a verdict. The model was never asked — the host
+      was unreachable, the model was not pulled, its template has no tool
+      support — so nothing about this conversation has been established and
+      marking it as examined would retire it for good with the UI reporting
+      "0 gefunden". That is precisely how a whole history can end up read and
+      empty. The run stops instead: whatever broke the first call will break
+      the next fifty, and a stopped run with a reason on screen is the only
+      version of this a person can act on.
+      */
+      if (!result.ok) {
+        current = {
+          ...current,
+          status: 'error',
+          error: result.error ?? 'Der Extraktor konnte nicht befragt werden',
+          currentStartedAt: null,
+          finishedAt: Date.now(),
+        };
+        return;
+      }
+
+      /*
       Marked after the call, and every message of the conversation at once:
       the extractor saw them together, so they were examined together. A run
       interrupted before this point leaves the conversation unmarked and it
       is read again next time — repeating one call is a far better failure
       than silently skipping a conversation nobody will ever look at again.
       */
-      for (const id of conversation.messageIds) markMessageScanned(id, 0);
+      for (const id of conversation.messageIds) markMessageScanned(id, result.saved);
       current = {
         ...current,
         processed: current.processed + 1,
@@ -167,7 +197,7 @@ async function run(
         duplicates: current.duplicates + result.duplicates,
       };
     }
-    current = { ...current, status: 'done', finishedAt: Date.now() };
+    current = { ...current, status: 'done', currentStartedAt: null, finishedAt: Date.now() };
   } catch (e) {
     // A failure part-way through keeps whatever it already found and already
     // marked, so resuming skips that work rather than repeating it.
@@ -175,6 +205,7 @@ async function run(
       ...current,
       status: 'error',
       error: e instanceof Error ? e.message : 'Backfill failed',
+      currentStartedAt: null,
       finishedAt: Date.now(),
     };
   } finally {

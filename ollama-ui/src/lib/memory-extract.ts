@@ -163,6 +163,19 @@ export interface ExtractResult {
   saved: number;
   /** Facts the model proposed that were already known. */
   duplicates: number;
+  /*
+  Whether the model was actually asked and answered.
+
+  Without this, a failed call and an empty conversation are the same result —
+  `{ saved: 0 }` — and the difference matters more than anything else here:
+  "read it, there was nothing" is final, while "could not read it" has to be
+  retried. Conflating them is how a whole history got marked as examined by a
+  run where every single call had failed, with the UI cheerfully reporting
+  "0 gefunden". A caller that marks messages as read must check this first.
+  */
+  ok: boolean;
+  /** Why the call failed, when it did — shown to the user, not swallowed. */
+  error?: string;
 }
 
 /**
@@ -181,7 +194,7 @@ export async function extractDurableFacts(params: {
   sessionId: string | null;
   signal?: AbortSignal;
 }): Promise<ExtractResult> {
-  const empty: ExtractResult = { saved: 0, duplicates: 0 };
+  const empty: ExtractResult = { saved: 0, duplicates: 0, ok: true };
   if (!looksWorthExtracting(params.userText, params.priorAssistantText)) return empty;
 
   // Naming what is already stored keeps the pass from re-proposing the same
@@ -235,7 +248,7 @@ async function callExtractor(params: {
   sessionId: string | null;
   signal?: AbortSignal;
 }): Promise<ExtractResult> {
-  const empty: ExtractResult = { saved: 0, duplicates: 0 };
+  const failed = (error: string): ExtractResult => ({ saved: 0, duplicates: 0, ok: false, error });
   let data: { message?: { tool_calls?: ToolCall[] } };
   try {
     const res = await fetch(`${params.base}/api/chat`, {
@@ -257,13 +270,20 @@ async function callExtractor(params: {
       }),
       signal: params.signal ?? AbortSignal.timeout(180_000),
     });
-    if (!res.ok) return empty;
+    if (!res.ok) {
+      // The body carries the reason a local Ollama refuses: an unpulled
+      // model, or one whose template has no tool support — which is the
+      // failure most likely to look like "found nothing" forever.
+      const detail = (await res.text().catch(() => '')).slice(0, 200);
+      return failed(`Ollama antwortete ${res.status}${detail ? `: ${detail}` : ''}`);
+    }
     data = await res.json();
-  } catch {
-    return empty; // unreachable host, timeout, abort — all fine to drop
+  } catch (e) {
+    if (params.signal?.aborted) return { saved: 0, duplicates: 0, ok: true };
+    return failed(e instanceof Error ? e.message : 'Modellaufruf fehlgeschlagen');
   }
 
-  const result: ExtractResult = { saved: 0, duplicates: 0 };
+  const result: ExtractResult = { saved: 0, duplicates: 0, ok: true };
   for (const call of data.message?.tool_calls ?? []) {
     if (call.function?.name !== 'remember_fact') continue;
     const args = (
@@ -317,7 +337,7 @@ export async function extractFromConversation(params: {
   sessionId: string | null;
   signal?: AbortSignal;
 }): Promise<ExtractResult> {
-  const empty: ExtractResult = { saved: 0, duplicates: 0 };
+  const empty: ExtractResult = { saved: 0, duplicates: 0, ok: true };
   // Nothing to read if the user never said anything substantial.
   if (!params.turns.some((t) => t.role === 'user' && t.content.trim().length >= MIN_LENGTH)) {
     return empty;

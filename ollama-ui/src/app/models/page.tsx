@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { usePrefsStore } from '@/store/prefs';
 import { motion } from 'framer-motion';
-import { usePullLogStore, PullStructuredEvent } from '@/store/pull-log';
+import { usePullLogStore, type PullData } from '@/store/pull-log';
 import { useToastStore } from '@/store/toast';
 
 interface OllamaModelTag {
@@ -105,6 +105,9 @@ function formatSize(bytes?: number) {
   return `${val.toFixed(1)} ${units[i]}`;
 }
 
+/** How much of a pull's output is kept on screen — the tail is the useful part. */
+const PULL_LOG_CHARS = 20_000;
+
 export default function ModelsPage() {
   const queryClient = useQueryClient();
   const { data, isLoading, isError, error, refetch, isFetching } = useQuery({
@@ -114,9 +117,14 @@ export default function ModelsPage() {
   });
 
   const pushToast = useToastStore((s) => s.push);
-  const addPullEvent = usePullLogStore((s) => s.add);
+  /*
+  The event list is deliberately *not* subscribed to here. It has no reader —
+  nothing on this page renders it — and subscribing meant every one of the
+  thousands of progress lines a pull emits re-rendered the whole page,
+  catalog included. It is written for the log's sake and read by nobody.
+  */
+  const addPullEvents = usePullLogStore((s) => s.addMany);
   const clearPullEvents = usePullLogStore((s) => s.clear);
-  const pullEvents = usePullLogStore((s) => s.events);
 
   const deleteMutation = useMutation({
     mutationFn: async (model: string) => {
@@ -190,23 +198,20 @@ export default function ModelsPage() {
   // }, [autoRefreshModelsSeconds, refetch]);
   // Removed unused helper functions openHostManager/manualRefreshHost (were for legacy host UI)
 
-  // derive progress from last event with percentage for the currently pulled model input
-  useEffect(() => {
-    if (!pullInput) return;
-    const model = pullInput.trim();
-    const relevant = [...pullEvents]
-      .reverse()
-      .find(
-        (e) => e.model === model && typeof (e.data as PullStructuredEvent).percentage === 'number',
-      );
-    if (relevant) {
-      const data: unknown = relevant.data;
-      if (typeof data === 'object' && data !== null && 'percentage' in data) {
-        const pct = (data as { percentage?: unknown }).percentage;
-        if (typeof pct === 'number') setProgress(pct);
-      }
-    }
-  }, [pullEvents, pullInput]);
+  /*
+  There used to be an effect here that re-derived `progress` from the whole
+  event list on every event. It was the source of "Minified React error #185"
+  (maximum update depth exceeded) during a pull: each line of the stream
+  updated the store, the store update re-ran this effect, the effect called
+  setProgress, and React counts that as an update scheduled from an update.
+  Ollama emits progress many times a second, so the chain never broke long
+  enough for React to reset its counter, and somewhere past fifty it threw —
+  inside the read loop, which is why the crash landed in the pull log as an
+  "ERROR:" line.
+
+  It was also redundant: the stream loop below already has each percentage in
+  hand and sets it directly. The fix is not a bigger limit, it is one writer.
+  */
 
   // Extracted pull start logic so we can trigger from catalog cards
   async function startPull(model: string) {
@@ -233,17 +238,32 @@ export default function ModelsPage() {
         const { done, value } = await reader.read();
         if (done) break;
         const chunk = decoder.decode(value, { stream: true });
-        setPullLog((prev: string) => prev + chunk);
         const lines = chunk.split('\n').filter(Boolean);
+
+        /*
+        One state update per network chunk, not per line. A chunk of a pull
+        can carry dozens of progress lines, and React is given the last
+        percentage of the batch — the intermediate ones were never on screen
+        long enough to be seen anyway.
+        */
+        const parsed: PullData[] = [];
+        let lastPct: number | null = null;
         for (const line of lines) {
           try {
             const obj = JSON.parse(line);
-            addPullEvent(model, obj);
-            if (typeof obj.percentage === 'number') setProgress(obj.percentage);
+            parsed.push(obj);
+            if (typeof obj.percentage === 'number') lastPct = obj.percentage;
           } catch {
-            addPullEvent(model, { raw: line });
+            parsed.push({ raw: line });
           }
         }
+        addPullEvents(model, parsed);
+        // Capped: a large pull writes megabytes of progress JSON, and the
+        // box below only ever shows the tail of it. Keeping the whole thing
+        // in a string that is re-rendered on every chunk is quadratic work
+        // for text nobody scrolls back to.
+        setPullLog((prev: string) => (prev + chunk).slice(-PULL_LOG_CHARS));
+        if (lastPct !== null) setProgress(lastPct);
       }
       await queryClient.invalidateQueries({ queryKey: ['ollama-model-tags'] });
       pushToast({ type: 'success', message: 'Pull finished.' });
@@ -291,7 +311,13 @@ export default function ModelsPage() {
     refetchOnWindowFocus: false,
   });
 
-  const isStreamingPull = !!abortRef.current; // active streaming pull (catalog variant)
+  /*
+  Driven by state, not by the abort ref it used to read. Writing a ref does
+  not re-render, so "is a pull running" was only ever correct by accident —
+  it happened to be right because the progress counter was re-rendering the
+  page anyway. `currentPullModel` is set for exactly the same span.
+  */
+  const isStreamingPull = currentPullModel !== null;
   const anyPullActive = isStreamingPull;
   const [expandedVariants, setExpandedVariants] = useState<Record<string, boolean>>({});
   function toggleVariants(slug: string) {
@@ -490,7 +516,7 @@ export default function ModelsPage() {
             >
               Pull
             </Button>
-            {abortRef.current && (
+            {isStreamingPull && (
               <Button
                 type="button"
                 variant="outline"

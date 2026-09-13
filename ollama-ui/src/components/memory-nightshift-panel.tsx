@@ -14,7 +14,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { useToastStore } from '@/store/toast';
-import { Moon, Square } from 'lucide-react';
+import { Moon, Square, AlertTriangle } from 'lucide-react';
 
 interface Run {
   id: string;
@@ -39,10 +39,24 @@ interface State {
     decayDays: number;
   };
   running: boolean;
-  step: string | null;
+  step: 'starting' | 'reading' | 'merging' | 'archiving' | null;
+  reading: {
+    processed: number;
+    total: number;
+    found: number;
+    currentStartedAt: number | null;
+  } | null;
   pendingConversations: number;
   runs: Run[];
 }
+
+/** The step names, in the language the rest of the panel is written in. */
+const STEP_LABEL: Record<NonNullable<State['step']>, string> = {
+  starting: 'startet',
+  reading: 'liest neue Gespräche',
+  merging: 'sucht nach Überschneidungen',
+  archiving: 'räumt alte Ereignisse weg',
+};
 
 function when(ms: number): string {
   const diff = Date.now() - ms;
@@ -59,6 +73,7 @@ export function MemoryNightShift({ onFinished }: { onFinished: () => void }) {
   const [state, setState] = useState<State | null>(null);
   const [models, setModels] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
+  const [, tick] = useState(0);
   const wasRunning = useRef(false);
 
   const poll = useCallback(async () => {
@@ -84,17 +99,33 @@ export function MemoryNightShift({ onFinished }: { onFinished: () => void }) {
     })();
   }, [poll]);
 
+  /*
+  Polled while idle too, just slowly.
+
+  The night shift is the one job here that starts without anybody pressing
+  anything. Polling only while `running` meant the panel could never see a
+  run begin: it learned about a 03:30 pass only if the page happened to be
+  reloaded while it was still going, so from the outside the feature looked
+  inert while the Ollama log showed it working. Twenty seconds is cheap —
+  three SQLite reads — and it is the difference between a panel that reports
+  and one that has to be asked.
+  */
   useEffect(() => {
     if (!state?.running) {
       if (wasRunning.current) {
         wasRunning.current = false;
         onFinished();
       }
-      return;
+      const idle = setInterval(poll, 20_000);
+      return () => clearInterval(idle);
     }
     wasRunning.current = true;
     const id = setInterval(poll, 2000);
-    return () => clearInterval(id);
+    const ticker = setInterval(() => tick((n) => n + 1), 1000);
+    return () => {
+      clearInterval(id);
+      clearInterval(ticker);
+    };
   }, [state?.running, poll, onFinished]);
 
   async function save(patch: Record<string, unknown>, run = false) {
@@ -161,12 +192,35 @@ export function MemoryNightShift({ onFinished }: { onFinished: () => void }) {
       </div>
 
       {state.running && (
-        <div className="mt-3 flex items-center gap-2 rounded-lg border border-[rgb(var(--accent-glow)/0.3)] bg-[rgb(var(--accent-glow)/0.06)] px-3 py-2 text-xs text-white/70">
-          <span className="relative flex h-2 w-2">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[rgb(var(--accent-glow)/0.6)]" />
-            <span className="relative inline-flex h-2 w-2 rounded-full bg-[rgb(var(--accent-glow))]" />
+        <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-[rgb(var(--accent-glow)/0.3)] bg-[rgb(var(--accent-glow)/0.06)] px-3 py-2 text-xs text-white/70">
+          <span className="flex items-center gap-2">
+            <span className="relative flex h-2 w-2">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[rgb(var(--accent-glow)/0.6)]" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-[rgb(var(--accent-glow))]" />
+            </span>
+            {state.step ? STEP_LABEL[state.step] : 'läuft'}
           </span>
-          Läuft: {state.step}
+          {state.reading && (
+            <span className="font-mono text-[10px] text-white/45">
+              {state.reading.processed} / {state.reading.total} Gespräche · {state.reading.found}{' '}
+              gefunden
+              {state.reading.currentStartedAt
+                ? ` · liest seit ${Math.max(0, Math.round((Date.now() - state.reading.currentStartedAt) / 1000))}s`
+                : ''}
+            </span>
+          )}
+        </div>
+      )}
+
+      {/*
+      An enabled schedule with no model never runs and says nothing about it —
+      the tick just returns. Silence is the wrong answer to a switch someone
+      deliberately turned on.
+      */}
+      {settings.enabled && !settings.model && (
+        <div className="mt-3 flex items-start gap-2 rounded-lg border border-amber-500/25 bg-amber-500/[0.06] px-3 py-2 text-[11px] leading-relaxed text-amber-200/80">
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          Nachts automatisch ist an, aber es ist kein Modell gewählt — so läuft nichts.
         </div>
       )}
 

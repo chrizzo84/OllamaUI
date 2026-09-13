@@ -433,6 +433,20 @@ supersedes an earlier one exactly as it would have live. A conversation that
 grows afterwards comes back for its new messages only, with the whole
 transcript still given as context. Everything it finds lands as a draft.
 
+**A failed call is not a verdict**, and keeping those two apart matters more
+than anything else in this loop. The extractor used to swallow every failure
+and return "found nothing" — an unreachable host, a timeout, the 400 a local
+Ollama returns for a model whose template has no tool support all arrived as
+an empty result, and the run then marked those conversations as examined, for
+good. Found the hard way: a store reporting "alle 11 Nachrichten ausgewertet,
+0 gefunden" and holding not one fact, where re-reading the same four
+conversations produced **8** — the name, the age, the CPU and its RAM, both
+graphics cards, unRAID, Ollama, the home town. The result now carries whether
+the model actually answered; a failed call stops the run with the reason on
+screen and marks nothing. And because a weak model answers honestly and badly
+without ever failing, **"Nochmal lesen"** on the Memory page clears the scan
+marks so the history can be read again with a better one.
+
 The second look reads an answer together with the question it answers. Asked
 where he lived, the reply "Musterstadt!" contains no "ich"
 and no "mein" — the subject is in the question — so the first-person gate
@@ -495,6 +509,14 @@ steps) and recorded in `memory_maintenance_runs` with what it touched — a job
 that edits the memory unattended is only acceptable if you can see afterwards
 what it did. It rides on the scheduler's existing minute tick rather than
 keeping a timer of its own.
+
+Which means the panel has to be able to see a run it did not start. It polls
+slowly while idle for exactly that reason: polling only while a run is known
+to be going meant a 03:30 pass was invisible unless the page happened to be
+reloaded during it, so the Ollama log showed the work and the page said "noch
+nie gelaufen". The running step is named, the reading step reports its
+progress as it goes rather than at the end, and a schedule switched on with
+no model chosen says so instead of quietly never running.
 
 The **timeline** answers the remaining question. A memory store has one
 whether anyone draws it or not, and "when did it learn this" is usually the

@@ -12,6 +12,7 @@ import { NextRequest } from 'next/server';
 import { z } from 'zod';
 import { resolveOllamaHostServer } from '@/lib/host-resolve-server';
 import { getBackfillProgress, startBackfill, stopBackfill } from '@/lib/memory-backfill';
+import { clearScanHistory } from '@/lib/db';
 
 export const runtime = 'nodejs';
 
@@ -25,6 +26,29 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  /*
+  Forgetting what was already examined, so the history can be read again.
+
+  Needed because "examined" is a one-way mark: a pass that ran with a model
+  whose template has no tool support, or against a host that was down, used
+  to retire every conversation it touched while reporting that it found
+  nothing. Even now that a failed call no longer marks anything, a *weak*
+  model still answers honestly and badly — and without this the only way
+  back would be editing the database. The drafts already written are left
+  alone; re-reading writes drafts, and the duplicate check catches the rest.
+  */
+  const raw = (await req
+    .clone()
+    .json()
+    .catch(() => ({}))) as { reset?: boolean };
+  if (raw.reset) {
+    if (getBackfillProgress().status === 'running') {
+      return Response.json({ error: 'A run is in progress', code: 'RUNNING' }, { status: 409 });
+    }
+    clearScanHistory();
+    return Response.json(getBackfillProgress());
+  }
+
   const base = resolveOllamaHostServer();
   if (!base) {
     return Response.json(

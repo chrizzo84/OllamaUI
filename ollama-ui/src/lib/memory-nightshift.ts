@@ -76,11 +76,18 @@ export function getNightShiftSettings(): NightShiftSettings {
 /** Wall-clock ceiling for one run: it must be finished long before anyone is up. */
 const RUN_BUDGET_MS = 2 * 60 * 60 * 1000;
 
+/*
+Step ids rather than sentences: the panel renders them, and a German UI
+saying "Läuft: reading conversations" is the kind of seam that makes a
+feature feel like it is talking to itself rather than to the user.
+*/
+export type NightShiftStep = 'starting' | 'reading' | 'merging' | 'archiving';
+
 interface RunState {
   id: string;
   abort: AbortController;
   startedAt: number;
-  step: string;
+  step: NightShiftStep;
 }
 
 let active: RunState | null = null;
@@ -89,7 +96,7 @@ export function isNightShiftRunning(): boolean {
   return active !== null;
 }
 
-export function currentNightShiftStep(): string | null {
+export function currentNightShiftStep(): NightShiftStep | null {
   return active?.step ?? null;
 }
 
@@ -127,7 +134,7 @@ export async function runNightShift(params: NightShiftParams): Promise<void> {
 
   try {
     // 1. Read what is new.
-    active.step = 'reading conversations';
+    active.step = 'reading';
     if (countUnscannedConversations() > 0 && !abort.signal.aborted) {
       startBackfill({ base: params.base, model: params.model, limit: settings.conversationLimit });
       // Poll rather than await: the backfill owns its own progress and can be
@@ -138,16 +145,33 @@ export async function runNightShift(params: NightShiftParams): Promise<void> {
           stopBackfill();
           break;
         }
+        // Written through on every poll, because the run row is the only
+        // thing the panel can read: a step that takes twenty minutes and
+        // reports nothing until it ends is why this looked like it was doing
+        // nothing at all.
+        const live = getBackfillProgress();
+        updateMaintenanceRun(id, {
+          conversationsRead: live.processed,
+          factsFound: live.found,
+        });
         await sleep(2000);
       }
       const progress = getBackfillProgress();
       conversationsRead = progress.processed;
       factsFound = progress.found;
       updateMaintenanceRun(id, { conversationsRead, factsFound });
+      /*
+      A reading step that failed is the whole run's problem, not a detail to
+      swallow: the later steps do not need the model, so the run would
+      otherwise finish as "done" with zeroes and nothing to explain them.
+      */
+      if (progress.status === 'error' && progress.error) {
+        updateMaintenanceRun(id, { error: progress.error });
+      }
     }
 
     // 2. Offer merges for the overlapping pairs.
-    active.step = 'merging overlaps';
+    active.step = 'merging';
     if (!abort.signal.aborted && !overBudget()) {
       mergesProposed = await proposeMerges({
         base: params.base,
@@ -159,7 +183,7 @@ export async function runNightShift(params: NightShiftParams): Promise<void> {
     }
 
     // 3. Let old episodic facts age out.
-    active.step = 'archiving stale facts';
+    active.step = 'archiving';
     if (!abort.signal.aborted) {
       const stale = listDecayableMemories(settings.decayDays * 24 * 60 * 60 * 1000);
       for (const memory of stale) archiveMemory(memory.id);

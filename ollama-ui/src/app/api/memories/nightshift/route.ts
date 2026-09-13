@@ -22,6 +22,7 @@ import {
   NIGHT_SHIFT_SETTINGS_KEY,
   DEFAULT_NIGHT_SHIFT,
 } from '@/lib/memory-nightshift';
+import { getBackfillProgress } from '@/lib/memory-backfill';
 
 export const runtime = 'nodejs';
 
@@ -37,10 +38,27 @@ const settingsSchema = z.object({
 });
 
 function state() {
+  const step = currentNightShiftStep();
+  const backfill = getBackfillProgress();
   return {
     settings: getNightShiftSettings(),
     running: isNightShiftRunning(),
-    step: currentNightShiftStep(),
+    step,
+    /*
+    The reading step is the long one — one model call per conversation, minutes
+    at a time — and until it ended it reported nothing at all, so a run in
+    progress was indistinguishable from a run that had died. Its counters come
+    straight from the backfill it drives.
+    */
+    reading:
+      step === 'reading'
+        ? {
+            processed: backfill.processed,
+            total: backfill.total,
+            found: backfill.found,
+            currentStartedAt: backfill.currentStartedAt,
+          }
+        : null,
     pendingConversations: countUnscannedConversations(),
     runs: listMaintenanceRuns(10),
   };

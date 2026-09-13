@@ -15,7 +15,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { useToastStore } from '@/store/toast';
-import { History, Square } from 'lucide-react';
+import { History, Square, RotateCcw, AlertTriangle } from 'lucide-react';
 
 interface Progress {
   status: 'idle' | 'running' | 'done' | 'stopped' | 'error';
@@ -24,6 +24,7 @@ interface Progress {
   found: number;
   duplicates: number;
   messages: number;
+  currentStartedAt: number | null;
   error: string | null;
   model: string | null;
   remaining: number;
@@ -37,6 +38,10 @@ export function MemoryBackfill({ onFinished }: { onFinished: () => void }) {
   const [models, setModels] = useState<string[]>([]);
   const [model, setModel] = useState('');
   const [starting, setStarting] = useState(false);
+  const [confirmReset, setConfirmReset] = useState(false);
+  // Re-rendered once a second while a call is out, so the elapsed counter
+  // below actually moves — see why that matters at its render site.
+  const [, tick] = useState(0);
   const wasRunning = useRef(false);
 
   const poll = useCallback(async () => {
@@ -74,7 +79,11 @@ export function MemoryBackfill({ onFinished }: { onFinished: () => void }) {
     }
     wasRunning.current = true;
     const id = setInterval(poll, 1500);
-    return () => clearInterval(id);
+    const ticker = setInterval(() => tick((n) => n + 1), 1000);
+    return () => {
+      clearInterval(id);
+      clearInterval(ticker);
+    };
   }, [progress?.status, poll, onFinished]);
 
   async function start() {
@@ -104,6 +113,32 @@ export function MemoryBackfill({ onFinished }: { onFinished: () => void }) {
     poll();
   }
 
+  /**
+   * Forgets which messages were already examined, so everything can be read
+   * again. Two clicks, because it means paying for the whole history in model
+   * time a second time.
+   */
+  async function reset() {
+    if (!confirmReset) {
+      setConfirmReset(true);
+      setTimeout(() => setConfirmReset(false), 5000);
+      return;
+    }
+    setConfirmReset(false);
+    try {
+      const r = await fetch('/api/memories/backfill', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reset: true }),
+      });
+      if (!r.ok) throw new Error();
+      setProgress(await r.json());
+      pushToast({ type: 'success', message: 'Alle Gespräche gelten wieder als ungelesen.' });
+    } catch {
+      pushToast({ type: 'error', message: 'Konnte nicht zurückgesetzt werden.' });
+    }
+  }
+
   if (!progress) return null;
   const running = progress.status === 'running';
   const pct = progress.total > 0 ? Math.round((progress.processed / progress.total) * 100) : 0;
@@ -125,7 +160,7 @@ export function MemoryBackfill({ onFinished }: { onFinished: () => void }) {
               ? `Läuft mit ${progress.model} — ein Modellaufruf pro Gespräch, das belegt die GPU.`
               : progress.remaining > 0
                 ? `${progress.remainingConversations} Gespräch${progress.remainingConversations === 1 ? '' : 'e'} mit ${progress.remaining} ungeprüften Nachrichten. Jedes wird als Ganzes gelesen — ein Modellaufruf pro Gespräch. Gefundenes landet oben zur Prüfung.`
-                : `Alle ${progress.scanned} Nachrichten sind ausgewertet.`}
+                : `Alle ${progress.scanned} Nachrichten sind ausgewertet — jedes Gespräch wurde einmal gelesen.`}
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
@@ -148,6 +183,23 @@ export function MemoryBackfill({ onFinished }: { onFinished: () => void }) {
               </Button>
             </>
           )}
+          {/*
+          A pass that read everything and found nothing looks identical to one
+          that never really ran — and until a moment ago it could be exactly
+          that. Offering the re-read here is what turns "alle ausgewertet, 0
+          gefunden" from a dead end into something a person can question.
+          */}
+          {!running && progress.scanned > 0 && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={reset}
+              title="Vergisst, welche Nachrichten schon gelesen wurden — danach kann die Historie neu ausgewertet werden, z.B. mit einem stärkeren Modell."
+            >
+              <RotateCcw className="h-3 w-3" />
+              {confirmReset ? 'Wirklich?' : 'Nochmal lesen'}
+            </Button>
+          )}
           {running && (
             <Button size="sm" variant="outline" onClick={stop}>
               <Square className="h-3 w-3" /> Anhalten
@@ -155,6 +207,25 @@ export function MemoryBackfill({ onFinished }: { onFinished: () => void }) {
           )}
         </div>
       </div>
+
+      {/*
+      Shown on its own and outside the progress block below, because a run
+      whose very first call fails has processed nothing — and that block only
+      renders once something has been processed, which hid exactly the
+      failures worth seeing.
+      */}
+      {progress.status === 'error' && progress.error && (
+        <div className="mt-3 flex items-start gap-2 rounded-lg border border-red-500/25 bg-red-500/[0.06] px-3 py-2 text-[11px] leading-relaxed text-red-200/80">
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          <span>
+            Abgebrochen: {progress.error}
+            <span className="block text-red-200/50">
+              Die betroffenen Gespräche bleiben ungelesen und werden beim nächsten Durchlauf erneut
+              versucht. Häufigste Ursache: das gewählte Modell kann keine Tools aufrufen.
+            </span>
+          </span>
+        </div>
+      )}
 
       {(running || progress.processed > 0) && (
         <div className="mt-3">
@@ -171,10 +242,18 @@ export function MemoryBackfill({ onFinished }: { onFinished: () => void }) {
             {progress.messages > 0 && <span>{progress.messages} Nachrichten</span>}
             <span className="text-[rgb(var(--accent-glow))]">{progress.found} gefunden</span>
             {progress.duplicates > 0 && <span>{progress.duplicates} schon bekannt</span>}
-            {progress.status === 'stopped' && <span className="text-white/50">angehalten</span>}
-            {progress.status === 'error' && (
-              <span className="text-red-400/80">Fehler: {progress.error}</span>
+            {/*
+            A model reading a long transcript is a minute of silence. Without
+            an elapsed count next to it, that minute is indistinguishable
+            from a hung run — which is the complaint that started this.
+            */}
+            {running && progress.currentStartedAt && (
+              <span className="text-white/50">
+                liest seit{' '}
+                {Math.max(0, Math.round((Date.now() - progress.currentStartedAt) / 1000))}s
+              </span>
             )}
+            {progress.status === 'stopped' && <span className="text-white/50">angehalten</span>}
           </div>
         </div>
       )}
