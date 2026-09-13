@@ -14,14 +14,7 @@
 // keeps this to one person. An update from a non-matching id is dropped
 // silently — no reply — so an unauthorized prober can't even confirm the bot
 // is listening.
-import {
-  getSession,
-  getSetting,
-  updateSession,
-  listMessages,
-  replaceMessages,
-  getMessage,
-} from '@/lib/db';
+import { updateSession, listMessages, replaceMessages, getMessage } from '@/lib/db';
 import { upsertMessages, persistFinalAssistantMessage } from '@/lib/chat-persistence';
 import { createJob, subscribe } from '@/lib/generation-jobs';
 import { runGeneration, type ChatMessageIn } from '@/lib/generation-runner';
@@ -181,7 +174,6 @@ async function runTurn(
   sessionId: string,
   assistantMessageId: string,
   messages: ChatMessageIn[],
-  memoryEnabled: boolean,
   token: string,
   chatId: number,
   statusMessageId: number | null,
@@ -221,7 +213,6 @@ async function runTurn(
       // this path. The global default (Settings → Generation) does.
       options: withDefaultNumCtx(undefined),
       toolsEnabled: true,
-      memoryEnabled,
       searxngTemplate: getEffectiveSearxngTemplate(),
       // Settings → Tools individual toggles apply here too, not just the
       // web UI — a tool turned off globally stays off in Telegram as well.
@@ -274,12 +265,6 @@ async function handleMessage(
   upsertMessages(sessionId, [userMessage, assistantMessage]);
   if (isFirstMessage) updateSession(sessionId, { title: deriveSessionTitle(text) });
 
-  // Same effective-memory resolution as POST /api/chat and the scheduler.
-  const memoryEnabled =
-    getSession(sessionId)?.memoryEnabled ??
-    getSetting<{ memoryEnabled: boolean }>('memory')?.memoryEnabled ??
-    true;
-
   // Wraps only what's SENT to the model, not the persisted/displayed
   // message — same split scheduler.ts uses for a fired reminder's prompt.
   // Without a stated reference time, the model has to call get_current_date
@@ -325,7 +310,6 @@ async function handleMessage(
       sessionId,
       assistantMessage.id,
       upstreamMessages,
-      memoryEnabled,
       token,
       chatId,
       statusMessageId,
@@ -379,7 +363,6 @@ async function handleMessage(
         sessionId,
         assistantMessage.id,
         nudge,
-        memoryEnabled,
         token,
         chatId,
         statusMessageId,

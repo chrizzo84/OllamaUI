@@ -18,20 +18,6 @@ export type TraceEvent =
       arguments: unknown;
       result?: unknown;
       error?: string;
-    }
-  /*
-  Which stored facts were put in front of the model for this reply.
-
-  Retrieval is otherwise invisible: the facts are injected into the system
-  prompt, so an answer that used one looks exactly like an answer that
-  invented it. That is the wrong thing to leave unobservable in a memory
-  that writes itself — "why does it think that" should be answerable from
-  the conversation, not only from a separate page.
-  */
-  | {
-      type: 'memory';
-      id: string;
-      facts: { id: string; content: string; relevant: boolean }[];
     };
 
 export interface ChatMessage {

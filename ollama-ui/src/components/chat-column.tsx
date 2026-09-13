@@ -222,57 +222,6 @@ function ThinkingLine({
   );
 }
 
-/**
- * The stored facts retrieval put in front of the model for this reply.
- *
- * Without this the memory is a black box: an answer that used a stored fact
- * is indistinguishable from one that made it up, and "why does it think
- * that" can only be answered by leaving the conversation. Collapsed by
- * default — it is provenance, not content — and marks which facts were
- * chosen *for this question* rather than carried along as grounding.
- */
-function MemoryLine({
-  ev,
-  expanded,
-  onToggle,
-}: {
-  ev: Extract<TraceEvent, { type: 'memory' }>;
-  expanded: boolean;
-  onToggle: () => void;
-}) {
-  const relevant = ev.facts.filter((f) => f.relevant).length;
-  return (
-    <div className="rounded-lg border border-white/10 bg-white/[0.02]">
-      <button
-        onClick={onToggle}
-        className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-white/45 hover:text-white/70"
-      >
-        <Brain className="h-3.5 w-3.5 shrink-0" />
-        <span>
-          {ev.facts.length} {ev.facts.length === 1 ? 'Fakt' : 'Fakten'} aus dem Gedächtnis
-          {relevant > 0 && <span className="text-white/30"> · {relevant} zur Frage passend</span>}
-        </span>
-        <span className="ml-auto text-white/25">{expanded ? '−' : '+'}</span>
-      </button>
-      {expanded && (
-        <ul className="flex flex-col gap-1 border-t border-white/5 px-3 py-2">
-          {ev.facts.map((f) => (
-            <li key={f.id} className="flex items-start gap-2 text-[11px] leading-relaxed">
-              <span
-                className={`mt-1.5 h-1 w-1 shrink-0 rounded-full ${f.relevant ? 'bg-[rgb(var(--accent-glow))]' : 'bg-white/20'}`}
-                title={f.relevant ? 'wegen dieser Frage geholt' : 'immer dabei'}
-              />
-              <span className={f.relevant ? 'text-white/70' : 'text-white/40'}>
-                {f.content.replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (_m, a, b) => b ?? a)}
-              </span>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  );
-}
-
 function ToolLine({
   ev,
   expanded,
@@ -297,23 +246,6 @@ function ToolLine({
   // must not fire for them.
   const hasCustomResultRenderer =
     ev.name === 'get_current_date' || ev.name === 'get_weather' || ev.name === 'calculator';
-  // remember_fact is a background utility call, not something the user needs
-  // to expand/collapse to understand — show what got saved directly, per the
-  // "give a hint when memory is active" requirement.
-  if (ev.name === 'remember_fact') {
-    const fact =
-      ev.arguments && typeof ev.arguments === 'object' && 'fact' in ev.arguments
-        ? String((ev.arguments as { fact?: unknown }).fact ?? '')
-        : '';
-    return (
-      <div className="flex items-center gap-2 rounded-lg border border-violet-500/25 bg-violet-950/20 px-3 py-2 text-[11px] text-violet-200/80">
-        <Brain className="h-3 w-3 text-violet-400/70 shrink-0" />
-        <span>
-          {ev.error ? `Couldn't save to memory: ${ev.error}` : `Saved to memory: "${fact}"`}
-        </span>
-      </div>
-    );
-  }
   return (
     <div className="rounded-lg border border-cyan-500/25 bg-cyan-950/20 overflow-hidden">
       <button
@@ -611,16 +543,6 @@ const MessageBubble = memo(function MessageBubble({
                   ev={ev}
                   expanded={expanded}
                   active={active}
-                  onToggle={() => onToggle(ev.id)}
-                />
-              );
-            }
-            if (ev.type === 'memory') {
-              return (
-                <MemoryLine
-                  key={ev.id}
-                  ev={ev}
-                  expanded={expandedIds.has(ev.id)}
                   onToggle={() => onToggle(ev.id)}
                 />
               );

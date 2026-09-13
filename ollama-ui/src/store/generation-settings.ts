@@ -8,7 +8,7 @@ import {
 /*
 Global generation defaults, persisted server-side (data/app.db, `settings`
 table) rather than in localStorage — same pattern as store/tools.ts and
-store/memory.ts, and the reason this setting exists at all: the per-model
+the other settings stores, and the reason this setting exists at all: the per-model
 num_ctx pill it backstops is browser-local and never reached Telegram or
 scheduled tasks. See src/lib/generation-settings.ts.
 

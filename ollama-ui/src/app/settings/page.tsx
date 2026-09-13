@@ -5,14 +5,11 @@ import { usePrefsStore } from '@/store/prefs';
 import { useToolsStore, useAnyToolEnabled } from '@/store/tools';
 import { TOOL_KEYS, TOOL_LABELS } from '@/lib/tool-settings';
 import { MIN_NUM_CTX, MAX_NUM_CTX, parseNumCtx } from '@/lib/generation-settings';
-import { useMemoryStore } from '@/store/memory';
 import { useGenerationSettingsStore } from '@/store/generation-settings';
 import { useTelegramSettingsStore } from '@/store/telegram';
 import { useEffect } from 'react';
 import { LocalStorageInfo } from '@/components/local-storage-info';
 import { HostManagerPanel } from '@/components/host-manager-panel';
-import Link from 'next/link';
-import { MemoryPanel } from '@/components/memory-panel';
 import { StatusPanel } from '@/components/status-panel';
 import { AuthPanel } from '@/components/auth-panel';
 import { McpPanel } from '@/components/mcp-panel';
@@ -37,9 +34,6 @@ export default function SettingsPage() {
   const hydrateGeneration = useGenerationSettingsStore((s) => s.hydrate);
   const defaultNumCtx = useGenerationSettingsStore((s) => s.defaultNumCtx);
   const setDefaultNumCtx = useGenerationSettingsStore((s) => s.setDefaultNumCtx);
-  const hydrateMemory = useMemoryStore((s) => s.hydrate);
-  const memoryEnabled = useMemoryStore((s) => s.memoryEnabled);
-  const setMemoryEnabled = useMemoryStore((s) => s.setMemoryEnabled);
   const hydrateTelegramSettings = useTelegramSettingsStore((s) => s.hydrate);
   const notifyScheduledTasks = useTelegramSettingsStore((s) => s.notifyScheduledTasks);
   const setNotifyScheduledTasks = useTelegramSettingsStore((s) => s.setNotifyScheduledTasks);
@@ -48,9 +42,8 @@ export default function SettingsPage() {
     hydratePrefs();
     hydrateTools();
     hydrateGeneration();
-    hydrateMemory();
     hydrateTelegramSettings();
-  }, [hydratePrefs, hydrateTools, hydrateGeneration, hydrateMemory, hydrateTelegramSettings]);
+  }, [hydratePrefs, hydrateTools, hydrateGeneration, hydrateTelegramSettings]);
 
   return (
     <div className="p-6 flex flex-col gap-8 max-w-3xl mx-auto items-center">
@@ -279,43 +272,6 @@ export default function SettingsPage() {
                 ))}
               </div>
             </div>
-          </div>
-        </section>
-        <section className="glass-card p-5 flex flex-col gap-4">
-          <div>
-            <h2 className="text-lg font-semibold text-white/90 mb-1">Memory</h2>
-            <p className="text-xs text-white/50 mb-3">
-              Lets the assistant save short, durable facts about you during a chat (via the{' '}
-              <code className="text-white/70">remember_fact</code> tool) and recalls them
-              automatically in future conversations — no need to re-explain preferences or ongoing
-              projects every time. On by default; a specific chat can still turn it off via the
-              memory pill next to the composer.
-            </p>
-            <label className="flex items-center gap-2 cursor-pointer select-none mb-4">
-              <input
-                type="checkbox"
-                className="accent-violet-500"
-                checked={memoryEnabled}
-                onChange={(e) => setMemoryEnabled(e.target.checked)}
-              />
-              <span className="text-xs text-white/70">Enable memory globally</span>
-            </label>
-            {/* The quick list stays here for a fast look and a fast delete;
-                anything that needs context — what kind of fact it is, what it
-                replaced, which facts disagree with each other — belongs on the
-                Memory page, which is built for exactly that. Two surfaces, one
-                of them deliberately shallow. */}
-            <MemoryPanel />
-            <Link
-              href="/memory"
-              className="mt-3 inline-flex items-center gap-1.5 text-xs text-[rgb(var(--accent-glow))] hover:underline"
-            >
-              Open the knowledge base →
-            </Link>
-            <p className="mt-1 text-[11px] text-white/35">
-              Types and history, what the assistant is unsure about, and the facts that contradict
-              each other.
-            </p>
           </div>
         </section>
         <section className="glass-card p-5 flex flex-col gap-4">

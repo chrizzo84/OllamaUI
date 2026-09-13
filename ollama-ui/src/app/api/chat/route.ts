@@ -2,8 +2,8 @@ import { NextRequest } from 'next/server';
 import { resolveOllamaHostServer } from '@/lib/host-resolve-server';
 import { createJob, publish, settleJob, createJobEventStream } from '@/lib/generation-jobs';
 import { upsertMessages, persistFinalAssistantMessage } from '@/lib/chat-persistence';
-import { getSession, getSetting } from '@/lib/db';
-import { runGeneration, injectMemories, type ChatMessageIn } from '@/lib/generation-runner';
+import { getSession } from '@/lib/db';
+import { runGeneration, type ChatMessageIn } from '@/lib/generation-runner';
 import { scheduleVerificationWarning, listVerificationOverride } from '@/lib/schedule-verify';
 import {
   getEffectiveSearxngTemplate,
@@ -30,7 +30,7 @@ client disconnects (tab closed), the stream's `cancel()` only unsubscribes;
 the job keeps running and persists its result directly to the DB. Explicit
 cancellation goes through DELETE /api/chat/jobs/[id] instead.
 
-The actual generation loop (tool-calling, memory injection, benchmark
+The actual generation loop (tool-calling, benchmark
 logging) lives in src/lib/generation-runner.ts — extracted so scheduled
 tasks (src/lib/scheduler.ts) can drive the exact same engine without going
 through this HTTP handler at all.
@@ -76,19 +76,12 @@ export async function POST(req: NextRequest) {
         status: 400,
       });
     }
-    // Effective memory setting is resolved here, server-side, from the DB —
-    // never trusted from the client — so a session's explicit override
-    // (SessionRow.memoryEnabled: true/false) wins over the global default,
-    // and an unset session (null) falls back to it. See db.ts's SessionRow
-    // and api/settings/memory/route.ts.
-    const sessionForMemory = getSession(sessionId);
-    if (!sessionForMemory) {
+    // Checked before anything is written: a request naming a session that
+    // does not exist is a client bug, and answering 404 says so plainly
+    // rather than silently creating orphan messages.
+    if (!getSession(sessionId)) {
       return new Response(JSON.stringify({ error: 'Session not found' }), { status: 404 });
     }
-    const memoryEnabled =
-      sessionForMemory.memoryEnabled ??
-      getSetting<{ memoryEnabled: boolean }>('memory')?.memoryEnabled ??
-      true;
     const base = resolveOllamaHostServer();
     if (!base) {
       return new Response(JSON.stringify({ error: 'No host configured', code: 'NO_HOST' }), {
@@ -127,15 +120,14 @@ export async function POST(req: NextRequest) {
     void runGeneration(job, {
       base,
       model,
-      messages: memoryEnabled ? injectMemories(clientMessages) : clientMessages,
+      messages: clientMessages,
       think,
       options,
       toolsEnabled,
-      memoryEnabled,
       searxngTemplate,
       // Settings → Tools individual toggles (Telegram/scheduled tasks read
       // the same list) — resolved server-side, not trusted from the
-      // client, same reasoning as memoryEnabled just above.
+      // client, not trusted from it.
       excludeTools: getGloballyDisabledToolNames(),
       // A model can say "reminder set"/"scheduled that"/"cancelled that"
       // without ever successfully calling the matching tool (create_reminder,

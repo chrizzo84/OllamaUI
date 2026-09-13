@@ -45,10 +45,9 @@
 - 🏠 Host configuration (cookie + header + env fallback resolution)
 - 💬 Chat console with persisted sessions, personas, reasoning/tool-call traces, and a Compare mode to run two models side by side
 - 🔌 Chat generation survives closing the tab — runs as a server-side job, reconnect from any tab/device to pick a live reply back up; a global "N generating" badge, toast and tab-title flash tell you when a background reply finishes
-- 🛠️ Tool-calling for capable models — `web_search` via SearXNG, `get_current_date`, `get_weather` via Open-Meteo, `calculator`, `create_reminder`, `create_recurring_task`, `list_scheduled_tasks`, `cancel_scheduled_task`, plus `remember_fact` (memory, its own settings section). Each individually toggleable under Settings → Tools, all on by default; a tool turned off there stays off everywhere — web chat, Telegram, scheduled tasks
-- 🧠 Persistent memory, as a small knowledge base — durable facts about you, recalled automatically in future chats; on by default, toggle globally or per-chat. Facts have a **subject**, so a new fact about a thing **replaces** the outdated one instead of standing beside it as a second truth (the old version is kept as history, never deleted), and the replacement is recorded as a **contradiction** when the claim actually changed — an explicit list of the places the store disagreed with itself, rather than a coin flip inside the prompt. Things a fact is about are written as `[[Wikilinks]]` and become **entities** in a graph, so "what do we know about X" has an answer. Retrieval is by relevance to the current conversation under a **token budget**, with identity and pinned facts always present — the previous behaviour injected the newest 50 facts into every prompt, which both dropped the oldest (usually most fundamental) fact as soon as the 51st arrived and spent context and attention on facts about Docker during a conversation about dinner. A fact the model is unsure about lands as a **draft** for review instead of going straight into every prompt. The **Memory page** shows all of it: facts grouped by kind, what each one replaced, which conversation it came from, how often it was actually used — and a **contradiction inbox** at the top, because a disagreement nobody settles doesn't stay open, it gets decided at random inside the prompt, differently every time. A **graph view** draws the whole thing — entities as landmarks, facts coloured by kind and sized by how often retrieval actually used them, contradictions as warning-coloured edges — and clicking any node re-centres on its neighbourhood and lists everything known about it. See [The knowledge base](#the-knowledge-base)
+- 🛠️ Tool-calling for capable models — `web_search` via SearXNG, `get_current_date`, `get_weather` via Open-Meteo, `calculator`, `create_reminder`, `create_recurring_task`, `list_scheduled_tasks`, `cancel_scheduled_task`. Each individually toggleable under Settings → Tools, all on by default; a tool turned off there stays off everywhere — web chat, Telegram, scheduled tasks
 - ⏰ Scheduled tasks — recurring prompts that run automatically at a set time/days, no tab needed; each run lands as a new session with the usual background-job notification. One-off reminders can also be set directly from chat ("remind me tomorrow at 9...") via `create_reminder`; a footer clock shows the server's own time since schedules run on it
-- 📱 Telegram bridge (opt-in) — chat with the app from your phone through a Telegram bot, using the same tool-calling/memory engine as the web UI, including sending photos to a vision model, voice messages (transcribed via a local `whisper.cpp` server), documents (PDF/text/code — attach one to summarize or ask about it), tap-to-cancel buttons on `/tasks`, and `/info`/`/tasks`/`/new`/`/help` slash commands. Locked to a single allowlisted Telegram user id; set `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_USER_ID` and `TELEGRAM_MODEL` in `.env.local` to enable it (unset = bridge stays off), plus `TELEGRAM_VISION_MODEL` for photos and `WHISPER_HOST` for voice messages — the combined Docker image bundles `whisper-server` + a model automatically, so `WHISPER_HOST` there just defaults to it. Scheduled tasks and reminders push their result to Telegram too, not just into a new chat session, so they still reach you with no tab open — toggle this specifically under Settings → Telegram (on by default, independent of the bridge's own configuration). The polling loop backs off exponentially on a Telegram-side outage and auto-restarts if it ever crashes, with a "reconnected" notice once it recovers. The bridge's one persistent conversation is marked in the web UI's session list with a small paper-plane icon so it's not mistaken for an ordinary web chat. Replies are rendered as real Telegram formatting: long ones are split at Markdown block boundaries (never mid-entity, which used to make Telegram reject the message and drop the whole reply back to raw `**asterisks**`), tables become aligned monospace blocks — or one `Key: value` record per row when they're too wide for a phone — code blocks keep their language, and `- [x]` checkboxes stay visible
+- 📱 Telegram bridge (opt-in) — chat with the app from your phone through a Telegram bot, using the same tool-calling engine as the web UI, including sending photos to a vision model, voice messages (transcribed via a local `whisper.cpp` server), documents (PDF/text/code — attach one to summarize or ask about it), tap-to-cancel buttons on `/tasks`, and `/info`/`/tasks`/`/new`/`/help` slash commands. Locked to a single allowlisted Telegram user id; set `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_USER_ID` and `TELEGRAM_MODEL` in `.env.local` to enable it (unset = bridge stays off), plus `TELEGRAM_VISION_MODEL` for photos and `WHISPER_HOST` for voice messages — the combined Docker image bundles `whisper-server` + a model automatically, so `WHISPER_HOST` there just defaults to it. Scheduled tasks and reminders push their result to Telegram too, not just into a new chat session, so they still reach you with no tab open — toggle this specifically under Settings → Telegram (on by default, independent of the bridge's own configuration). The polling loop backs off exponentially on a Telegram-side outage and auto-restarts if it ever crashes, with a "reconnected" notice once it recovers. The bridge's one persistent conversation is marked in the web UI's session list with a small paper-plane icon so it's not mistaken for an ordinary web chat. Replies are rendered as real Telegram formatting: long ones are split at Markdown block boundaries (never mid-entity, which used to make Telegram reject the message and drop the whole reply back to raw `**asterisks**`), tables become aligned monospace blocks — or one `Key: value` record per row when they're too wide for a phone — code blocks keep their language, and `- [x]` checkboxes stay visible
 - 🔁 `create_recurring_task`, `list_scheduled_tasks`, `cancel_scheduled_task` tools — manage scheduled tasks and reminders entirely from chat (Telegram or web), no need to open the Scheduled page; in Telegram, `/tasks` also offers a tap-to-cancel button per task. Every schedule-related claim (created, cancelled, or listed) gets verified against the actual tool-call trace instead of trusting the model's own "done" claim — a fabricated _list_ is replaced outright with the real data rather than just flagged, since it's misinformation about your own data, not just an unconfirmed action
 - 💾 Automatic database backups — a snapshot is taken before the one-way messages migration (and the migration is _refused_ if one can't be written), plus a daily one on startup, kept 7 deep in `data/backups/`. Taken with SQLite's `VACUUM INTO`, so they're consistent rather than a copy of a file being written to. Settings → Status shows when the last one happened
 - 🔒 Optional password gate — set `APP_PASSWORD` and every page and API route requires a login (30-day session cookie, HMAC-signed, `HttpOnly`). Unset = off, so an existing localhost-only install is unaffected. Settings → Access shows which state you're in and warns when the instance is open
@@ -172,7 +171,7 @@ configured host.
 ## 5b. Access Control 🔒
 
 By default the app is **unauthenticated**: anyone who can reach the port can
-read your chats and memories, pull and delete models, and drive your Ollama
+read your chats, pull and delete models, and drive your Ollama
 host. That's fine bound to localhost, and not fine the moment it's reachable
 from anywhere else — which is the normal case for the Docker image and the
 whole point of the Telegram bridge.
@@ -277,11 +276,6 @@ Base path: `/api`
 | `/api/evals/runs/[id]`                                    | GET                   | One run with results so far                       | Poll while `status` is `running`                                                               |
 | `/api/evals/results`                                      | PATCH                 | Score one answer                                  | Body: `{ id, rating }`; `null` clears                                                          |
 | `/api/gpu`                                                | GET                   | Per-card VRAM of the machine running the UI       | Empty list + a `reason` when it can't/shouldn't probe                                          |
-| `/api/memories`                                           | GET/POST/PATCH/DELETE | The knowledge base                                | `?status=` / `?subject=` for drafts and history; PATCH approves, pins, archives, re-classifies |
-| `/api/memories/contradictions`                            | GET/POST              | Open disagreements, and settling one              | POST `{edgeId, keep: 'newer'\|'older'\|'both'}`                                                |
-| `/api/memories/graph`                                     | GET                   | The knowledge graph as nodes and edges            | `?focus=` walks a neighbourhood, `?history=1` includes replaced facts                          |
-| `/api/memories/timeline`                                  | GET                   | What the store learned and unlearned, in order    | Derived from the facts, not a separate log                                                     |
-| `/api/memories/nightshift`                                | GET/POST/DELETE       | The maintenance pass: settings, history, run now  | POST `{run:true}` starts one; DELETE stops it                                                  |
 | Other routes (`chat`, `lamas`, `ps`, `status`, `tools/*`) | —                     | Additional functionality (not all documented yet) | Future docs TBD                                                                                |
 
 Every route above is behind the password gate when `APP_PASSWORD` is set — see
@@ -334,208 +328,6 @@ moved and the old shape is the intuitive-but-wrong one:
 4. History is a tree, not a list: each message has a `parent_id`, and the
    session points at the active leaf per column. A conversation with no
    branches is just a tree where every node has one child.
-
-### The knowledge base
-
-Memory is a small knowledge graph, not a list of strings. Worth knowing
-before touching it, because the retrieval path is where it goes subtly wrong:
-
-1. **Every fact can have a `subject`** — what it is _about_, taken from the
-   first `[[Wikilink]]` unless given explicitly. One active fact per subject:
-   a new one **supersedes** the old, which keeps its row with
-   `status='superseded'`, a `valid_until` and a `supersedes` edge pointing at
-   it. Nothing is deleted, same principle as message branching.
-2. **A replacement that changed the claim writes a `contradicts` edge.** The
-   unresolved ones are the review queue (`listContradictions`) — the places
-   the store disagreed with itself, which otherwise resolve themselves
-   randomly inside the prompt.
-3. **`[[Wikilinks]]` create entities and `about` edges.** That is the whole
-   graph: `about` (fact → thing), `supersedes` and `contradicts` (fact →
-   fact), `derived_from` (fact → the session it came from, so every fact
-   links back to its evidence). An entity nothing points at any more is
-   pruned.
-4. **Retrieval is not "everything".** Only **pinned** facts are
-   unconditional — a person said so. Everything else competes, because
-   "durable" and "relevant to every question" are different axes and
-   conflating them was the first version's mistake: every `identity` fact
-   went into every prompt, so a store with forty durable facts (a bike, a
-   cat, a camera) spent the whole budget on them and pushed out the one the
-   question was about. Measured, then fixed. A small share of the budget
-   (25%, at most four facts) is still reserved for grounding — a name, a
-   language, a tone — so a memory with no pins doesn't forget who it is
-   talking to. The rest goes to relevance, capped by a **token budget**, with
-   leftover budget left unspent rather than padded.
-5. **Two ways to be relevant.** Naming a thing is the stronger signal, so
-   facts attached to an entity the message mentions come first
-   (`recallByEntity`), then FTS5 word matching. Asked "was läuft auf dem
-   Homeserver?", the entity path returns everything known about it, including
-   facts whose wording shares nothing with the question.
-6. **Only what was retrieved _for this conversation_ counts as used.**
-   Counting the grounding facts every time they ride along would make the use
-   count meaningless — the always-present facts would always win it — and
-   feed back into any ranking or decay built on top.
-7. **The FTS query is stemmed by truncation and stop-word filtered.** German
-   inflects at the end of the word, so "Was koche ich?" and a stored "kocht
-   gern Pasta" share no whole word — without prefix matching this returns
-   nothing and looks exactly like the fact was never saved.
-8. **A fact below `DRAFT_CONFIDENCE_THRESHOLD` is stored as a `draft`**:
-   visible for review, never injected, and it displaces nothing. Guessing
-   quietly into the long-term store is the one failure mode that compounds.
-
-Every reply records which facts were put in front of the model, in its own
-trace line next to the reasoning and tool calls — marked by whether each was
-retrieved for that question or carried along as grounding. Retrieval is
-otherwise invisible: an answer that used a stored fact looks exactly like one
-that invented it, which is the wrong thing to leave unobservable in a memory
-that writes itself.
-
-`remember_fact` reports back which of these happened (saved, already known,
-replaced, still a draft), because a model told only `{saved: true}` will
-confidently repeat a fact that was never active.
-
-**A second look, because one pass isn't enough.** Measured against
-a local 35B model on a plainly durable statement ("meine Kiste ist ein i9 mit
-128 GB RAM und einer Grafikkarte"), `remember_fact` fired in **1 of 5** runs
-with the original tool description and **3 of 5** after it was rewritten —
-better, and still not something to rely on. The cause is structural: during
-a reply the model is answering _and_ watching for facts, and the answering
-wins. So once the answer is on screen, the same model — already loaded, so
-no swap — is asked the single narrow question with only this one tool
-available (`src/lib/memory-extract.ts`). A cheap first-person gate keeps it
-off the GPU for "danke" or "schreib mir eine Funktion". Everything it finds
-lands as a **draft**: it was extracted with nobody watching, by a pass whose
-premise is that the model's judgement had just failed.
-
-Entities are also recognised in facts that don't bracket them: once
-`[[Homeserver]]` exists, a later "Backups liegen auf Homeserver" is linked to it
-without rewriting the text — Obsidian calls these unlinked mentions. Models
-bracket inconsistently, and without this half the facts would never reach the
-graph, with which half decided by chance. The pass can also name entities in a
-separate list instead of bracketing them inline, which is the part models
-drop first — every fact it produced in testing had a usable subject and no
-brackets at all.
-
-**Reading past conversations.** Both passes above only see messages as they
-arrive, so everything said before the memory existed is unexamined — and that
-is where the durable facts usually are, since people explain their setup
-once, early, and never repeat it. The Memory page offers a run over them
-(`/api/memories/backfill`), and it reads a **conversation at a time** rather
-than a message at a time. That was measured, not assumed: on the same
-ten-turn conversation, message-by-message found one fact in five model calls;
-the whole transcript in a single call found three, with entities. The extra
-facts come from context a single message cannot carry, at a fifth of the
-cost.
-
-The run is resumable — `memory_scans` records which messages have been read,
-so a stopped or crashed pass never repeats work — sequential, so it cannot
-saturate the GPU the chat is using, and oldest-first, so a later fact
-supersedes an earlier one exactly as it would have live. A conversation that
-grows afterwards comes back for its new messages only, with the whole
-transcript still given as context. Everything it finds lands as a draft.
-
-**A failed call is not a verdict**, and keeping those two apart matters more
-than anything else in this loop. The extractor used to swallow every failure
-and return "found nothing" — an unreachable host, a timeout, the 400 a local
-Ollama returns for a model whose template has no tool support all arrived as
-an empty result, and the run then marked those conversations as examined, for
-good. Found the hard way: a store reporting "alle 11 Nachrichten ausgewertet,
-0 gefunden" and holding not one fact, where re-reading the same four
-conversations produced **8** — the name, the age, the CPU and its RAM, both
-graphics cards, unRAID, Ollama, the home town. The result now carries whether
-the model actually answered; a failed call stops the run with the reason on
-screen and marks nothing. And because a weak model answers honestly and badly
-without ever failing, **"Nochmal lesen"** on the Memory page clears the scan
-marks so the history can be read again with a better one.
-
-The second look reads an answer together with the question it answers. Asked
-where he lived, the reply "Musterstadt!" contains no "ich"
-and no "mein" — the subject is in the question — so the first-person gate
-rejected it and nothing ran; the fact was only stored two messages later,
-when the user asked whether it had been. Short answers to direct questions
-are exactly where the important facts arrive, so a reply that follows a
-question is always looked at, minus bare acknowledgements ("ja", "passt",
-"danke").
-
-The **Memory page** (`/memory`) is where this is visible and correctable.
-Nobody typed these facts, so the page answers the three questions that
-follow from that: what is in there, where did it come from, and what
-disagrees with what. Its inbox offers the three answers a person actually
-has when shown two facts that conflict:
-
-- **Neue gilt** — what the store already assumed; the edge is just closed.
-- **Alte gilt** — the replacement was wrong. The two swap roles, so the
-  correction is recorded rather than the bad write being deleted.
-- **Beide behalten** — they were never the same question. Both stay active,
-  and the older one loses its subject so it stops competing for the single
-  active slot; leaving both with the same subject would mean the next write
-  silently displaces only one of them.
-
-The **graph view** on the same page is an inspection surface rather than
-decoration, and the difference matters: Obsidian's graph shows notes a
-person wrote and already knows, while every node here was written by a
-model. So it is built around the questions that follow from that —
-
-- **Neighbourhoods, not everything.** Clicking a node re-centres the view on
-  it and the server walks a couple of hops out. The unfocused overview is
-  capped and ranked by how connected and how _used_ things are, because a
-  force-directed picture of a few hundred nodes is famously pretty and
-  famously unreadable.
-- **The edges carry the meaning**: `contradicts` in warning colour, replaced
-  facts faded, `about` as the plain structural link. "Historie mitzeichnen"
-  brings superseded facts back into the picture — and into the side panel
-  with them, so the two halves never disagree about what is current.
-- **Size is earned.** A fact's radius comes from `use_count`, so what the
-  model actually leans on is visible at a glance, and so is the dead weight.
-
-- **Every node is reachable.** Drag to move the view, wheel to zoom around
-  the cursor, and pick a node up to put it somewhere else — it stays where it
-  is dropped, and "Neu anordnen" gives every hand-placed node back to the
-  physics. Without that, wherever the layout happened to put something was
-  where it stayed, and anything outside the frame may as well not exist. The
-  view also frames itself while the layout settles (entities by their label,
-  which is far wider than their dot), and stops doing so the moment anyone
-  touches it.
-
-Drawn on a canvas with `d3-force`; the simulation settles in about a second
-and then stops, because a graph that keeps drifting is one whose nodes you
-cannot click.
-
-**The night shift.** A local machine is idle twenty-three hours a day and its
-tokens cost nothing but electricity, which makes work worth doing that would
-never be worth a per-token bill. Once a night (off by default, configurable
-on the Memory page) a maintenance pass: reads conversations that happened
-since the last run, offers merged wordings for facts that overlap without
-being duplicates, and lets episodic facts nobody ever retrieved age into the
-archive.
-
-The rule that makes it acceptable is that **it proposes, it does not
-decide** — everything it extracts or merges lands as a draft in the review
-queue. The one exception is archiving episodic facts, which is reversible and
-touches nothing that shapes behaviour: never identity, never a preference,
-never anything pinned, never anything retrieval has used. Every run is bounded
-(a wall-clock budget, a conversation cap, an abort that takes effect between
-steps) and recorded in `memory_maintenance_runs` with what it touched — a job
-that edits the memory unattended is only acceptable if you can see afterwards
-what it did. It rides on the scheduler's existing minute tick rather than
-keeping a timer of its own.
-
-Which means the panel has to be able to see a run it did not start. It polls
-slowly while idle for exactly that reason: polling only while a run is known
-to be going meant a 03:30 pass was invisible unless the page happened to be
-reloaded during it, so the Ollama log showed the work and the page said "noch
-nie gelaufen". The running step is named, the reading step reports its
-progress as it goes rather than at the end, and a schedule switched on with
-no model chosen says so instead of quietly never running.
-
-The **timeline** answers the remaining question. A memory store has one
-whether anyone draws it or not, and "when did it learn this" is usually the
-answer to "why does it think that": every fact learned, every replacement
-(struck through, with its successor beneath it), every draft and every
-archiving, newest first, each linked back to the conversation it happened
-in. The events are derived from the facts themselves rather than logged
-separately, so there is no second source of truth to drift out of sync.
-
----
 
 ## 8. Python Scraper 🐍
 
@@ -700,7 +492,7 @@ services:
 **Password protection in Docker**: set `APP_PASSWORD` as a container
 environment variable exactly like `OLLAMA_HOST`. This matters more here than
 for a local `pnpm dev` — a container is usually reachable from the rest of the
-network, and without it every chat, memory and model operation is open to
+network, and without it every chat and model operation is open to
 anyone who can reach the port. Optionally add `AUTH_SECRET` to keep sessions
 valid across a password change, and `OLLAMA_UI_DATA_DIR` to point the database
 and uploads at a mounted volume.
@@ -855,8 +647,8 @@ inside the container if the GPU was passed in (see above) — without that,
 - Multi-pull queue (sequential)
 - Download speed & ETA estimation
 - Keyboard shortcuts (focus search, abort pull)
-- RAG over a local folder — embeddings via Ollama's `/api/embed`, alongside the
-  existing memory feature
+- RAG over a local folder — embeddings via Ollama's `/api/embed`, retrieved for
+  a question the user actually asks rather than injected into every prompt
 - Modelfile editor — build a model from a base + system prompt + parameters, so
   a persona can become a real Ollama model usable outside this app
 - MCP: resources and prompts (only tools are implemented today)
@@ -885,7 +677,7 @@ Distributed under the MIT License. See the `LICENSE` file for full text.
 | -------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
 | Framework            | Next.js App Router (Node runtime; webpack build, see §9)                                                                      |
 | Backups              | `VACUUM INTO` snapshots in `data/backups/`, pre-migration + daily, 7 retained                                                 |
-| Persistence          | SQLite via `node:sqlite` — messages, sessions, memories, evals; FTS5 full-text search; attachments on disk, content-addressed |
+| Persistence          | SQLite via `node:sqlite` — messages, sessions, evals;           FTS5 full-text search; attachments on disk, content-addressed |
 | Auth                 | Optional single-user password gate in `src/proxy.ts`, Web Crypto HMAC sessions                                                |
 | Data                 | React Query, NDJSON streaming                                                                                                 |
 | State                | Zustand                                                                                                                       |

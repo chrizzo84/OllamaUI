@@ -13,7 +13,6 @@ const patchSchema = z.object({
     .optional(),
   daysOfWeek: z.array(z.number().int().min(0).max(6)).min(1).optional(),
   toolsEnabled: z.boolean().optional(),
-  memoryEnabled: z.boolean().optional(),
   enabled: z.boolean().optional(),
 });
 
@@ -27,7 +26,6 @@ function toApiShape(r: NonNullable<ReturnType<typeof getScheduledTask>>) {
     daysOfWeek: r.daysOfWeek,
     recurring: r.recurring,
     toolsEnabled: r.toolsEnabled,
-    memoryEnabled: r.memoryEnabled,
     enabled: r.enabled,
     nextRunAt: r.nextRunAt,
     lastRunAt: r.lastRunAt,

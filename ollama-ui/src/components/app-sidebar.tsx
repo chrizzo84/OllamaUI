@@ -19,7 +19,6 @@ import {
   CalendarClock,
   Send,
   ClipboardCheck,
-  Brain,
 } from 'lucide-react';
 import { useSessionsStore } from '@/store/sessions';
 import { HostIndicator } from './header-brand';
@@ -50,7 +49,6 @@ const NAV_ITEMS: NavItem[] = [
     match: (p) => p.startsWith('/running'),
   },
   { href: '/lamas', label: 'Profiles', icon: Layers, match: (p) => p.startsWith('/lamas') },
-  { href: '/memory', label: 'Memory', icon: Brain, match: (p) => p.startsWith('/memory') },
   {
     href: '/benchmarks',
     label: 'Benchmarks',

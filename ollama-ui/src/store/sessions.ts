@@ -9,9 +9,6 @@ export interface SessionMeta {
   modelA: string;
   modelB: string;
   compareMode: boolean;
-  // Per-session override for the global memory setting — null = inherit the
-  // global default (see src/store/memory.ts). See db.ts's SessionRow.
-  memoryEnabled: boolean | null;
   // True only for the single, persistent Telegram bridge conversation — see
   // db.ts's SessionRow. Fixed at creation, never patched from the UI.
   isTelegram: boolean;
@@ -26,16 +23,12 @@ interface RawSessionMeta {
   modelA?: string;
   modelB?: string;
   compareMode?: boolean;
-  memoryEnabled?: boolean | null;
   isTelegram?: boolean;
   updatedAt?: number;
 }
 
 type PatchableFields = Partial<
-  Pick<
-    SessionMeta,
-    'title' | 'titleStatus' | 'profileId' | 'modelA' | 'modelB' | 'compareMode' | 'memoryEnabled'
-  >
+  Pick<SessionMeta, 'title' | 'titleStatus' | 'profileId' | 'modelA' | 'modelB' | 'compareMode'>
 >;
 
 function normalize(o: RawSessionMeta): SessionMeta {
@@ -47,7 +40,6 @@ function normalize(o: RawSessionMeta): SessionMeta {
     modelA: o.modelA || '',
     modelB: o.modelB || '',
     compareMode: !!o.compareMode,
-    memoryEnabled: o.memoryEnabled ?? null,
     isTelegram: !!o.isTelegram,
     updatedAt: typeof o.updatedAt === 'number' ? o.updatedAt : Date.now(),
   };

@@ -13,7 +13,6 @@ interface ScheduledTask {
   daysOfWeek: number[];
   recurring: boolean;
   toolsEnabled: boolean;
-  memoryEnabled: boolean;
   enabled: boolean;
   nextRunAt: number | null;
   lastRunAt: number | null;
@@ -40,7 +39,6 @@ interface FormState {
   timeOfDay: string;
   daysOfWeek: number[];
   toolsEnabled: boolean;
-  memoryEnabled: boolean;
 }
 
 const EMPTY_FORM: FormState = {
@@ -50,7 +48,6 @@ const EMPTY_FORM: FormState = {
   timeOfDay: '08:00',
   daysOfWeek: DEFAULT_DAYS,
   toolsEnabled: true,
-  memoryEnabled: true,
 };
 
 export function SchedulePanel() {
@@ -100,7 +97,6 @@ export function SchedulePanel() {
       timeOfDay: task.timeOfDay,
       daysOfWeek: task.daysOfWeek,
       toolsEnabled: task.toolsEnabled,
-      memoryEnabled: task.memoryEnabled,
     });
     setError(null);
     setShowForm(true);
@@ -252,15 +248,6 @@ export function SchedulePanel() {
                 onChange={(e) => setForm((f) => ({ ...f, toolsEnabled: e.target.checked }))}
               />
               Tools (web search, weather, calculator)
-            </label>
-            <label className="flex items-center gap-1.5 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                className="accent-violet-500"
-                checked={form.memoryEnabled}
-                onChange={(e) => setForm((f) => ({ ...f, memoryEnabled: e.target.checked }))}
-              />
-              Memory
             </label>
           </div>
           {error && <div className="text-[11px] text-amber-300/80">{error}</div>}

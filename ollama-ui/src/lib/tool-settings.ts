@@ -5,9 +5,6 @@
 // everywhere, not just in the web UI. No server-only imports, safe to pull
 // into client bundles too.
 //
-// remember_fact is NOT here — it already has its own richer settings
-// section (Settings → Memory: global + per-chat override, view/manage
-// stored facts), gated by `memoryEnabled` rather than this list.
 export const TOOL_KEYS = [
   'webSearch',
   'getCurrentDate',

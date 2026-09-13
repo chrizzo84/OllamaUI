@@ -13,14 +13,13 @@ import {
   deleteScheduledTask,
   createSession,
   updateSession,
-  getSession,
   getSetting,
   type ScheduledTaskRow,
   getMessage,
 } from '@/lib/db';
 import { upsertMessages } from '@/lib/chat-persistence';
 import { createJob } from '@/lib/generation-jobs';
-import { runGeneration, injectMemories } from '@/lib/generation-runner';
+import { runGeneration } from '@/lib/generation-runner';
 import { computeNextRunAt } from '@/lib/schedule-time';
 import {
   getGloballyDisabledToolNames,
@@ -71,14 +70,6 @@ async function runScheduledTask(task: ScheduledTaskRow): Promise<void> {
   };
   upsertMessages(session.id, [userMessage, assistantMessage]);
 
-  // Same effective-memory resolution as the POST /api/chat handler: a
-  // session-level override (none possible here, this session is brand new)
-  // falls back to the global setting.
-  const memoryEnabled =
-    getSession(session.id)?.memoryEnabled ??
-    getSetting<{ memoryEnabled: boolean }>('memory')?.memoryEnabled ??
-    true;
-
   // A one-off reminder's prompt is phrased as an instruction the model wrote
   // to itself (see CREATE_REMINDER_TOOL's description in
   // generation-runner.ts), delivered here with no other context — without
@@ -86,8 +77,7 @@ async function runScheduledTask(task: ScheduledTaskRow): Promise<void> {
   // mistake it for a fresh request to schedule *another* reminder instead of
   // recognizing "this is the reminder, firing now" (observed live in
   // testing). Only wraps what's SENT to the model — the persisted/displayed
-  // user message stays the clean original text, same split already used for
-  // memory injection (injectMemories) below.
+  // user message stays the clean original text.
   const promptForModel = task.recurring
     ? task.prompt
     : `[System: it is now the exact moment a reminder you set is due to be delivered. This is not a request to schedule anything, and the timing is correct — do not comment on dates or timing at all.]\n\nDeliver this reminder to the user now, as your entire reply, in your own words: "${task.prompt}"`;
@@ -100,30 +90,22 @@ async function runScheduledTask(task: ScheduledTaskRow): Promise<void> {
   await runGeneration(job, {
     base,
     model: task.model,
-    messages: memoryEnabled
-      ? injectMemories([{ role: 'user', content: promptForModel }])
-      : [{ role: 'user', content: promptForModel }],
+    messages: [{ role: 'user', content: promptForModel }],
     think: false,
     // Same reasoning as the Telegram bridge: a scheduled run has no browser
     // behind it, so the global default (Settings → Generation) is the only
     // context-window setting that can reach it.
     options: withDefaultNumCtx(undefined),
     toolsEnabled: task.toolsEnabled,
-    memoryEnabled,
     searxngTemplate: getEffectiveSearxngTemplate(),
     // A one-off reminder is itself the fired create_reminder call — hide it
     // during delivery so the model can't mistake "deliver this now" for
     // "schedule this again" (see buildTools' doc comment in
-    // generation-runner.ts). remember_fact is hidden for the same reason:
-    // with create_reminder gone, a model still primed to "do something"
-    // rather than just reply reached for remember_fact instead, filing the
-    // reminder text away as a durable memory instead of speaking it
-    // (observed live in testing) — a delivery run has no legitimate reason
-    // to persist a new memory either way. create_recurring_task is excluded
-    // for the same "don't schedule something new while just delivering
-    // this one" reasoning as create_reminder.
+    // generation-runner.ts). create_recurring_task is excluded for the same
+    // "don't schedule something new while just delivering this one"
+    // reasoning as create_reminder.
     excludeTools: [
-      ...(task.recurring ? [] : ['create_reminder', 'remember_fact', 'create_recurring_task']),
+      ...(task.recurring ? [] : ['create_reminder', 'create_recurring_task']),
       // Settings → Tools individual toggles apply here too, not just the
       // web UI/Telegram — a tool turned off globally stays off everywhere.
       ...getGloballyDisabledToolNames(),
@@ -182,34 +164,6 @@ function tick(): void {
     void runScheduledTask(task).catch((e) => {
       console.error(`Scheduled task "${task.name}" (${task.id}) failed:`, e);
     });
-  }
-
-  void maybeRunNightShift();
-}
-
-/*
-The memory's maintenance pass rides on this same minute tick rather than
-keeping a timer of its own: it needs exactly what the scheduler already has —
-a heartbeat that survives an idle server and starts without an HTTP request.
-Imported lazily so the scheduler does not pull the memory graph into its
-module tree just to check a clock.
-*/
-async function maybeRunNightShift(): Promise<void> {
-  try {
-    const { isNightShiftDue, runNightShift, getNightShiftSettings } =
-      await import('@/lib/memory-nightshift');
-    const settings = getNightShiftSettings();
-    if (!isNightShiftDue(new Date(), settings)) return;
-
-    const base = resolveOllamaHostServer();
-    if (!base) return; // nothing to talk to; try again next tick
-    const model = settings.model || process.env.TELEGRAM_MODEL || '';
-    if (!model) return; // no model configured for unattended work
-
-    await runNightShift({ base, model, trigger: 'schedule', settings });
-  } catch (e) {
-    // Maintenance failing must never take the scheduler's own tick with it.
-    console.error('Memory night shift failed:', e);
   }
 }
 

@@ -17,10 +17,6 @@ export interface SessionRow {
   modelA: string;
   modelB: string;
   compareMode: boolean;
-  // Per-session override for the global memory setting. null = inherit the
-  // global default (see src/app/api/settings/memory/route.ts); an explicit
-  // true/false wins regardless of the global value.
-  memoryEnabled: boolean | null;
   // True only for the single, persistent Telegram bridge conversation (see
   // createNewTelegramSession in telegram-bridge.ts) — lets the web UI mark
   // it visually so it's not mistaken for an ordinary web chat. Fixed at
@@ -41,7 +37,6 @@ interface SessionDbRow {
   model_a: string;
   model_b: string;
   compare_mode: number;
-  memory_enabled: number | null;
   is_telegram: number;
   head_a: string | null;
   head_b: string | null;
@@ -58,7 +53,6 @@ function rowToSession(r: SessionDbRow): SessionRow {
     modelA: r.model_a,
     modelB: r.model_b,
     compareMode: !!r.compare_mode,
-    memoryEnabled: r.memory_enabled === null ? null : !!r.memory_enabled,
     isTelegram: !!r.is_telegram,
     headA: r.head_a,
     headB: r.head_b,
@@ -99,7 +93,6 @@ export function createSession(data: {
     modelA: '',
     modelB: '',
     compareMode: false,
-    memoryEnabled: null,
     isTelegram: data.isTelegram ?? false,
     headA: null,
     headB: null,
@@ -107,7 +100,7 @@ export function createSession(data: {
     updated_at: now,
   };
   db.prepare(
-    'INSERT INTO sessions (id, title, title_status, profile_id, model_a, model_b, compare_mode, memory_enabled, is_telegram, head_a, head_b, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    'INSERT INTO sessions (id, title, title_status, profile_id, model_a, model_b, compare_mode, is_telegram, head_a, head_b, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
   ).run(
     row.id,
     row.title,
@@ -116,7 +109,6 @@ export function createSession(data: {
     row.modelA,
     row.modelB,
     row.compareMode ? 1 : 0,
-    row.memoryEnabled === null ? null : row.memoryEnabled ? 1 : 0,
     row.isTelegram ? 1 : 0,
     row.headA,
     row.headB,
@@ -148,7 +140,6 @@ export function updateSession(
       | 'modelA'
       | 'modelB'
       | 'compareMode'
-      | 'memoryEnabled'
       | 'headA'
       | 'headB'
     >
@@ -158,7 +149,7 @@ export function updateSession(
   if (!existing) return undefined;
   const updated: SessionRow = { ...existing, ...patch, updated_at: Date.now() };
   db.prepare(
-    'UPDATE sessions SET title=?, title_status=?, profile_id=?, model_a=?, model_b=?, compare_mode=?, memory_enabled=?, head_a=?, head_b=?, updated_at=? WHERE id=?',
+    'UPDATE sessions SET title=?, title_status=?, profile_id=?, model_a=?, model_b=?, compare_mode=?, head_a=?, head_b=?, updated_at=? WHERE id=?',
   ).run(
     updated.title,
     updated.titleStatus,
@@ -166,7 +157,6 @@ export function updateSession(
     updated.modelA,
     updated.modelB,
     updated.compareMode ? 1 : 0,
-    updated.memoryEnabled === null ? null : updated.memoryEnabled ? 1 : 0,
     updated.headA,
     updated.headB,
     updated.updated_at,

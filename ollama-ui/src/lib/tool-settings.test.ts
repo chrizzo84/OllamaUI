@@ -37,10 +37,6 @@ describe('tool settings tables', () => {
     for (const key of TOOL_KEYS) expect(TOOL_NAMES[key]).toMatch(/^[a-z][a-z0-9_]*$/);
   });
 
-  it('does not list remember_fact — memory has its own settings section', () => {
-    expect(Object.values(TOOL_NAMES)).not.toContain('remember_fact');
-  });
-
   it('defaults every tool to on', () => {
     for (const key of TOOL_KEYS) expect(DEFAULT_TOOL_TOGGLES[key]).toBe(true);
   });

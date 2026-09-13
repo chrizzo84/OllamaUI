@@ -10,7 +10,6 @@ const createSchema = z.object({
   timeOfDay: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Expected "HH:MM"'),
   daysOfWeek: z.array(z.number().int().min(0).max(6)).min(1),
   toolsEnabled: z.boolean().optional(),
-  memoryEnabled: z.boolean().optional(),
 });
 
 function toApiShape(r: ReturnType<typeof createScheduledTask>) {
@@ -23,7 +22,6 @@ function toApiShape(r: ReturnType<typeof createScheduledTask>) {
     daysOfWeek: r.daysOfWeek,
     recurring: r.recurring,
     toolsEnabled: r.toolsEnabled,
-    memoryEnabled: r.memoryEnabled,
     enabled: r.enabled,
     nextRunAt: r.nextRunAt,
     lastRunAt: r.lastRunAt,
@@ -49,7 +47,6 @@ export async function POST(req: NextRequest) {
     daysOfWeek: parsed.data.daysOfWeek,
     recurring: true, // this form only ever creates recurring tasks — one-offs come from create_reminder
     toolsEnabled: parsed.data.toolsEnabled ?? true,
-    memoryEnabled: parsed.data.memoryEnabled ?? true,
     nextRunAt,
   });
   return Response.json(toApiShape(row));

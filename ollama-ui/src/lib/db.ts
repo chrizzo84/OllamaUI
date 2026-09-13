@@ -16,6 +16,5 @@ export * from './db/messages';
 export * from './db/evals';
 export * from './db/search';
 export * from './db/settings';
-export * from './db/memories';
 export * from './db/benchmarks';
 export * from './db/scheduled-tasks';

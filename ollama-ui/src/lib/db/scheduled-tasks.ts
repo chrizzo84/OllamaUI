@@ -16,7 +16,6 @@ export interface ScheduledTaskRow {
   // new nextRunAt. true = the normal recurring task created via /schedule.
   recurring: boolean;
   toolsEnabled: boolean;
-  memoryEnabled: boolean;
   enabled: boolean;
   nextRunAt: number | null;
   lastRunAt: number | null;
@@ -34,7 +33,6 @@ interface ScheduledTaskDbRow {
   days_of_week: string;
   recurring: number;
   tools_enabled: number;
-  memory_enabled: number;
   enabled: number;
   next_run_at: number | null;
   last_run_at: number | null;
@@ -59,7 +57,6 @@ function rowToScheduledTask(r: ScheduledTaskDbRow): ScheduledTaskRow {
     daysOfWeek,
     recurring: !!r.recurring,
     toolsEnabled: !!r.tools_enabled,
-    memoryEnabled: !!r.memory_enabled,
     enabled: !!r.enabled,
     nextRunAt: r.next_run_at,
     lastRunAt: r.last_run_at,
@@ -88,7 +85,6 @@ export function createScheduledTask(data: {
   daysOfWeek: number[];
   recurring?: boolean; // defaults true — the manual /schedule form only ever creates recurring tasks
   toolsEnabled: boolean;
-  memoryEnabled: boolean;
   nextRunAt: number;
 }): ScheduledTaskRow {
   const now = Date.now();
@@ -101,7 +97,6 @@ export function createScheduledTask(data: {
     daysOfWeek: data.daysOfWeek,
     recurring: data.recurring ?? true,
     toolsEnabled: data.toolsEnabled,
-    memoryEnabled: data.memoryEnabled,
     enabled: true,
     nextRunAt: data.nextRunAt,
     lastRunAt: null,
@@ -111,7 +106,7 @@ export function createScheduledTask(data: {
   };
   db.prepare(
     `INSERT INTO scheduled_tasks
-      (id, name, prompt, model, time_of_day, days_of_week, recurring, tools_enabled, memory_enabled, enabled, next_run_at, last_run_at, last_run_session_id, created_at, updated_at)
+      (id, name, prompt, model, time_of_day, days_of_week, recurring, tools_enabled, enabled, next_run_at, last_run_at, last_run_session_id, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     row.id,
@@ -122,7 +117,6 @@ export function createScheduledTask(data: {
     JSON.stringify(row.daysOfWeek),
     row.recurring ? 1 : 0,
     row.toolsEnabled ? 1 : 0,
-    row.memoryEnabled ? 1 : 0,
     row.enabled ? 1 : 0,
     row.nextRunAt,
     row.lastRunAt,
@@ -145,7 +139,6 @@ export function updateScheduledTask(
       | 'daysOfWeek'
       | 'recurring'
       | 'toolsEnabled'
-      | 'memoryEnabled'
       | 'enabled'
       | 'nextRunAt'
       | 'lastRunAt'
@@ -158,7 +151,7 @@ export function updateScheduledTask(
   const updated: ScheduledTaskRow = { ...existing, ...patch, updated_at: Date.now() };
   db.prepare(
     `UPDATE scheduled_tasks SET
-      name=?, prompt=?, model=?, time_of_day=?, days_of_week=?, recurring=?, tools_enabled=?, memory_enabled=?,
+      name=?, prompt=?, model=?, time_of_day=?, days_of_week=?, recurring=?, tools_enabled=?,
       enabled=?, next_run_at=?, last_run_at=?, last_run_session_id=?, updated_at=?
       WHERE id=?`,
   ).run(
@@ -169,7 +162,6 @@ export function updateScheduledTask(
     JSON.stringify(updated.daysOfWeek),
     updated.recurring ? 1 : 0,
     updated.toolsEnabled ? 1 : 0,
-    updated.memoryEnabled ? 1 : 0,
     updated.enabled ? 1 : 0,
     updated.nextRunAt,
     updated.lastRunAt,

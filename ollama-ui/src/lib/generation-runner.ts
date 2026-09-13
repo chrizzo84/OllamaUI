@@ -16,15 +16,8 @@ import {
   type Job,
 } from '@/lib/generation-jobs';
 import { persistFinalAssistantMessage } from '@/lib/chat-persistence';
-import { extractDurableFacts, alreadySavedDuringReply } from '@/lib/memory-extract';
 import {
-  remember,
-  isMemoryType,
-  recallWithProvenance,
-  markMemoriesUsed,
-  buildMemoryBlock,
   recordBenchmarkRun,
-  markAnsweredMessageScanned,
   createScheduledTask,
   listScheduledTasks,
   deleteScheduledTask,
@@ -227,7 +220,7 @@ const CREATE_RECURRING_TASK_TOOL = {
   function: {
     name: 'create_recurring_task',
     description:
-      'Schedule a prompt that runs automatically on a repeating schedule (e.g. "every weekday morning at 8, check the weather"), even if this chat is closed by then — each run lands as a new chat message, with tools and memory available, same as a normal reply. Same effect as adding it on the Scheduled page in the app. For a single one-off moment instead, use create_reminder.',
+      'Schedule a prompt that runs automatically on a repeating schedule (e.g. "every weekday morning at 8, check the weather"), even if this chat is closed by then — each run lands as a new chat message, with tools available, same as a normal reply. Same effect as adding it on the Scheduled page in the app. For a single one-off moment instead, use create_reminder.',
     parameters: {
       type: 'object',
       properties: {
@@ -285,67 +278,6 @@ const CANCEL_SCHEDULED_TASK_TOOL = {
   },
 };
 
-const REMEMBER_FACT_TOOL = {
-  type: 'function',
-  function: {
-    name: 'remember_fact',
-    /*
-    Rewritten after measuring it: the previous wording, which led with "only
-    use this for things worth remembering long-term", saved a plainly durable
-    fact ("meine Kiste ist ein Mini-PC mit 32 GB RAM und einer Grafikkarte") in 1 of
-    5 runs against a local 35B model, and never with the [[links]] it asked for.
-    Naming the categories instead of warning against over-saving, and saying
-    outright that a question can contain a fact, took that to 3 of 5, with
-    links and a subject every time.
-
-    Longer is not better here: a further revision that also forbade bracketing
-    plain values dropped it back to 0 of 5. Every additional rule makes a
-    small model more hesitant to call the tool at all, so what survives here
-    is what measurably earned its place.
-    */
-    description:
-      'Remember something about the user across conversations. Call this whenever they state something about themselves that will still be true next week — their name, their language, the hardware they own, the tools and services they run, what they are working on, how they want you to answer. A question can still contain such a fact: "reicht meine Grafikkarte?" states which card they own. Call it once per fact, so a message containing three facts means three calls. Do not save what is only true inside this conversation. Wrap the things the fact is about in [[double brackets]]: "hat eine [[Grafikkarte]] und 128 GB RAM in seinem [[Arbeitsrechner]]".',
-    parameters: {
-      type: 'object',
-      properties: {
-        fact: {
-          type: 'string',
-          description:
-            "The fact, one sentence, in the user's language, with [[links]] around the things it is about.",
-        },
-        type: {
-          type: 'string',
-          enum: ['identity', 'state', 'preference', 'episodic'],
-          description:
-            'identity: durable traits — name, age, language, hardware they own. state: their current situation, which will change. preference: how they want you to work. episodic: something that happened at a point in time.',
-        },
-        /*
-        Asking for the subject outright rather than deriving it from the first
-        link: without one a fact can never be replaced, and the stored
-        "Der Nutzer heißt Alex und ist 30 Jahre alt" had no subject and
-        no links at all, so nothing could ever supersede it. Models that skip
-        the brackets still tend to fill in a plain field.
-        */
-        subject: {
-          type: 'string',
-          description:
-            'What the fact is about, one to three words ("grafikkarte", "name", "arbeitsrechner"). A later fact with the same subject replaces this one, so give one whenever the fact could change.',
-        },
-        confidence: {
-          type: 'number',
-          description:
-            'How sure you are, 0 to 1. Below 0.5 the fact is saved for review instead of being used — use that when you are inferring rather than being told.',
-        },
-      },
-      required: ['fact'],
-    },
-  },
-};
-
-// remember_fact is gated by its own `memoryEnabled` flag, independent of
-// `toolsEnabled` (web_search/get_current_date) — a user who wants memory but
-// not web search, or vice versa, shouldn't have to enable both together.
-//
 // `excludeNames` drops specific tools by name — used when a one-off reminder
 // fires (see scheduler.ts) to hide create_reminder itself. Without that, a
 // model handling "this is the reminder, deliver it now" would still see
@@ -354,11 +286,7 @@ const REMEMBER_FACT_TOOL = {
 // testing: llama3.1:8b did this on 2/2 runs, either leaking the resulting
 // tool error into the visible reply or silently mis-calling the tool before
 // recovering).
-function buildBuiltinTools(
-  toolsEnabled: boolean,
-  memoryEnabled: boolean,
-  excludeNames: string[] = [],
-) {
+function buildBuiltinTools(toolsEnabled: boolean, excludeNames: string[] = []) {
   return [
     ...(toolsEnabled
       ? [
@@ -372,7 +300,6 @@ function buildBuiltinTools(
           CANCEL_SCHEDULED_TASK_TOOL,
         ]
       : []),
-    ...(memoryEnabled ? [REMEMBER_FACT_TOOL] : []),
   ].filter((t) => !excludeNames.includes(t.function.name));
 }
 
@@ -380,18 +307,13 @@ function buildBuiltinTools(
 Everything the model may call this turn: the built-in tools above plus
 whatever the configured MCP servers currently advertise.
 
-MCP tools are only offered when tool calling is on at all — memory alone
-(memoryEnabled without toolsEnabled) should not quietly pull in external
-servers. A server that is unreachable contributes nothing and logs why;
+MCP tools are only offered when tool calling is on at all. A server that is
+unreachable contributes nothing and logs why;
 listAllTools never throws, so one broken server cannot cost the user their
 reply.
 */
-async function buildTools(
-  toolsEnabled: boolean,
-  memoryEnabled: boolean,
-  excludeNames: string[] = [],
-) {
-  const builtin = buildBuiltinTools(toolsEnabled, memoryEnabled, excludeNames);
+async function buildTools(toolsEnabled: boolean, excludeNames: string[] = []) {
+  const builtin = buildBuiltinTools(toolsEnabled, excludeNames);
   if (!toolsEnabled) return builtin;
 
   const servers = listMcpServers();
@@ -432,43 +354,6 @@ async function executeTool(
       },
     };
   }
-  if (name === 'remember_fact') {
-    const a = (args && typeof args === 'object' ? args : {}) as {
-      fact?: unknown;
-      type?: unknown;
-      subject?: unknown;
-      confidence?: unknown;
-    };
-    if (typeof a.fact !== 'string' || !a.fact.trim()) {
-      return { error: 'Missing required "fact" argument' };
-    }
-    const stored = remember({
-      content: a.fact.trim(),
-      type: isMemoryType(a.type) ? a.type : undefined,
-      // Undefined (not null) when absent, so remember() falls back to the
-      // first [[link]] rather than storing a fact that can never be replaced.
-      subject: typeof a.subject === 'string' && a.subject.trim() ? a.subject.trim() : undefined,
-      confidence: typeof a.confidence === 'number' ? a.confidence : undefined,
-      sourceSessionId: sessionId,
-    });
-    /*
-    The result says what actually happened, because all three outcomes are
-    things the model should know and would otherwise guess at: a duplicate
-    means "you already knew this, stop saving it again", a replacement means
-    the older fact is no longer in play, and a draft means the fact is NOT in
-    use yet. Answering a bare `{saved: true}` to a call that quietly changed
-    the store is how a model ends up confidently repeating a fact that was
-    never active.
-    */
-    return {
-      result: {
-        saved: !stored.duplicate,
-        alreadyKnown: stored.duplicate,
-        status: stored.memory.status,
-        ...(stored.superseded ? { replaced: stored.superseded.content } : {}),
-      },
-    };
-  }
   if (name === 'create_reminder') {
     const a = (args && typeof args === 'object' ? args : {}) as {
       message?: unknown;
@@ -500,7 +385,6 @@ async function executeTool(
       daysOfWeek: [],
       recurring: false,
       toolsEnabled: true,
-      memoryEnabled: true,
       nextRunAt: when.getTime(),
     });
     // The weekday travels with every date a tool hands back: a model asked to
@@ -550,7 +434,6 @@ async function executeTool(
       daysOfWeek,
       recurring: true,
       toolsEnabled: true,
-      memoryEnabled: true,
       nextRunAt,
     });
     return {
@@ -668,7 +551,6 @@ export interface GenerationParams {
   think: boolean;
   options: unknown;
   toolsEnabled: boolean;
-  memoryEnabled: boolean;
   searxngTemplate: string | null;
   // Tool names to hide from the model for this run — see buildTools' doc
   // comment. Optional; empty/absent means the normal full set.
@@ -704,7 +586,7 @@ live in that message's `trace` (TraceEvent in store/chat.ts), and used to be
 dropped entirely when the history went back upstream. The model was
 therefore shown a conversation in which it had apparently answered every
 "look this up" without ever touching a tool — precedent that pushes it to
-skip the tool next time and answer from memory instead. Models with a weak
+skip the tool next time and answer from its own knowledge instead. Models with a weak
 tool-calling prior follow that precedent readily.
 
 Emitted in the shape Ollama expects: one assistant message carrying
@@ -743,7 +625,7 @@ export function replayToolTrace(trace: TraceEvent[] | undefined): ChatMessageIn[
 // whether anyone is still listening. Never throws past its own catch-alls;
 // every exit path settles the job and persists something.
 export async function runGeneration(job: Job, params: GenerationParams): Promise<void> {
-  const { base, model, think, options, toolsEnabled, memoryEnabled, searxngTemplate } = params;
+  const { base, model, think, options, toolsEnabled, searxngTemplate } = params;
   const excludeTools = params.excludeTools ?? [];
   const messages: ChatMessageIn[] = params.messages.flatMap((m) => {
     // Ollama wants the image bytes inline as base64. They are stored as
@@ -782,18 +664,6 @@ export async function runGeneration(job: Job, params: GenerationParams): Promise
   let evalDurationTotalNs = 0;
   let lastPromptTokens: number | undefined;
   const trace: TraceEvent[] = [];
-  /*
-  First entry in the trace, before any thinking: the facts retrieval put in
-  front of the model for this reply. Recorded here rather than at the
-  injection site because this is where the trace lives, and injectMemories
-  runs in three different entry points.
-  */
-  {
-    const injected = takeLastInjectedMemories();
-    if (injected.length) {
-      trace.push({ type: 'memory', id: safeUuid(), facts: injected });
-    }
-  }
   let openThinkingId: string | null = null;
 
   function buildStats(): ChatStats {
@@ -861,71 +731,6 @@ export async function runGeneration(job: Job, params: GenerationParams): Promise
     // Always last: tells an attached response stream it's safe to close now
     // (see the POST handler's subscriber).
     publish(job.id, { streamEnd: true });
-
-    /*
-    Second look at what the user just said, once they already have their
-    answer — see src/lib/memory-extract.ts for why this exists: during a
-    reply the model is answering *and* watching for facts, and the answering
-    wins. Measured on a local 35B model, a plainly durable statement was saved
-    in 3 of 5 runs even after the tool description was rewritten for it.
-
-    Deliberately fire-and-forget after streamEnd: the reply is already on
-    screen, so this costs the user nothing but a little GPU time on a model
-    that is still loaded anyway. Skipped entirely when the model did save
-    something during the reply, and everything it finds lands as a draft for
-    review rather than in the next prompt.
-    */
-    if (status === 'done' && memoryEnabled) {
-      const reversed = [...params.messages].reverse();
-      const lastUserIndex = reversed.findIndex((m) => m.role === 'user');
-      const text =
-        lastUserIndex >= 0 && typeof reversed[lastUserIndex].content === 'string'
-          ? (reversed[lastUserIndex].content as string)
-          : '';
-      /*
-      The reply before it goes along, because an answer to a question carries
-      its subject in the question: asked where they live, "Musterstadt im
-      Bergland!" states where they live, while on its own it states
-      nothing at all. That case was being dropped entirely.
-      */
-      const priorAssistant = reversed
-        .slice(lastUserIndex + 1)
-        .find((m) => m.role === 'assistant' && typeof m.content === 'string' && m.content.trim());
-      /*
-      Marked as examined either way — whether the model saved something
-      during the reply or the second look did it afterwards. Without this the
-      backfill reads the same conversation again later and stores the same
-      fact in different words, which is how the store filled up with
-      near-duplicates: "Der Nutzer Alex wohnt in X" beside "Der Nutzer wohnt
-      in X".
-      */
-      const markScanned = () => {
-        try {
-          // job.id is the assistant message; the question it answers is its
-          // parent in the message tree.
-          markAnsweredMessageScanned(job.id);
-        } catch {
-          /* not worth failing a finished reply over */
-        }
-      };
-
-      if (alreadySavedDuringReply(trace)) {
-        markScanned();
-      } else if (text) {
-        void extractDurableFacts({
-          base,
-          model,
-          userText: text,
-          priorAssistantText:
-            typeof priorAssistant?.content === 'string' ? priorAssistant.content : undefined,
-          sessionId: job.sessionId,
-        })
-          .then(markScanned)
-          .catch(() => {
-            /* a failed second look must never surface as a failed reply */
-          });
-      }
-    }
   }
 
   function finishError(message: string) {
@@ -969,8 +774,8 @@ export async function runGeneration(job: Job, params: GenerationParams): Promise
           // Omit tools on the final iteration so the model can't get stuck
           // requesting one more tool call that we'd have to drop; it's
           // forced to answer in plain text instead.
-          ...((toolsEnabled || memoryEnabled) && !isLastIteration
-            ? { tools: await buildTools(toolsEnabled, memoryEnabled, excludeTools) }
+          ...(toolsEnabled && !isLastIteration
+            ? { tools: await buildTools(toolsEnabled, excludeTools) }
             : {}),
         }),
       });
@@ -1111,7 +916,7 @@ export async function runGeneration(job: Job, params: GenerationParams): Promise
     }
 
     const validToolCalls = turnToolCalls.filter((c) => c.function?.name);
-    if (validToolCalls.length && (toolsEnabled || memoryEnabled) && !isLastIteration) {
+    if (validToolCalls.length && toolsEnabled && !isLastIteration) {
       messages.push({ role: 'assistant', content: turnContent, tool_calls: validToolCalls });
       openThinkingId = null;
       for (const call of validToolCalls) {
@@ -1153,78 +958,4 @@ export async function runGeneration(job: Job, params: GenerationParams): Promise
 
   // Safety net: model kept calling tools past the iteration cap.
   await finishDone('done');
-}
-
-// Recall doesn't depend on the model choosing to call a tool (unreliable
-// across models) — stored facts are injected as context automatically
-// whenever memory is effectively on for this session. Capped at the 50 most
-// recent facts (listMemories() already orders newest-first) to bound token
-// cost regardless of how many accumulate; the user prunes the full list from
-// Settings. Merges into an existing system message (persona prompt) rather
-// than adding a second one, for template compatibility across models.
-/**
- * Picks the memories this particular conversation should carry and puts them
- * in the system prompt.
- *
- * This used to take the newest 50 facts and inject all of them, every time.
- * Two things were wrong with that at once: the newest-50 window drops the
- * oldest fact as soon as the 51st arrives — and the oldest is usually the
- * most fundamental one — while injecting all of them spends context and
- * attention on facts about Docker during a conversation about dinner. Small
- * local models, which is what this app runs, degrade measurably when carrying
- * irrelevant context.
- *
- * So: identity and pinned facts unconditionally, the rest ranked against the
- * conversation itself and capped by a token budget (see recallMemories).
- * Retrieved facts are marked as used, which is what later tells apart the
- * memories that earn their place from the ones that should decay.
- *
- * Only the last few messages form the query — the recent turns are what the
- * reply is actually about, and a long conversation's early history would
- * otherwise dominate the ranking forever.
- */
-const RECALL_QUERY_MESSAGES = 4;
-
-/**
- * The facts the last injectMemories call put in front of the model, so the
- * caller can record them in the reply's trace. Module-level because
- * injectMemories is called by three different entry points (chat route,
- * scheduler, Telegram) and threading a return value through all of them
- * would change every signature for one diagnostic.
- */
-let lastInjected: { id: string; content: string; relevant: boolean }[] = [];
-
-export function takeLastInjectedMemories(): { id: string; content: string; relevant: boolean }[] {
-  const facts = lastInjected;
-  lastInjected = [];
-  return facts;
-}
-
-export function injectMemories(messages: ChatMessageIn[]): ChatMessageIn[] {
-  const query = messages
-    .filter((m) => m.role === 'user' || m.role === 'assistant')
-    .slice(-RECALL_QUERY_MESSAGES)
-    .map((m) => (typeof m.content === 'string' ? m.content : ''))
-    .join(' ')
-    .slice(0, 4000);
-  const { memories: facts, matchedByRelevance } = recallWithProvenance({ query });
-  if (facts.length === 0) return messages;
-  // Only the facts retrieval picked *for this conversation* count as used —
-  // see recallWithProvenance for why counting the unconditional ones would
-  // corrupt the figure.
-  markMemoriesUsed(matchedByRelevance);
-  lastInjected = facts.map((f) => ({
-    id: f.id,
-    content: f.content,
-    relevant: matchedByRelevance.includes(f.id),
-  }));
-  const block = buildMemoryBlock(facts);
-  if (!block) return messages;
-  if (messages[0]?.role === 'system') {
-    return [
-      { ...messages[0], content: `${block}\n\n${messages[0].content}` },
-      ...messages.slice(1),
-    ];
-  }
-  return [{ role: 'system', content: block }, ...messages];
 }

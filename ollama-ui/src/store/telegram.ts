@@ -5,7 +5,7 @@ import { create } from 'zustand';
 // scheduler.ts's runScheduledTask) — separate from whether the Telegram
 // bridge itself is configured (that's env vars, TELEGRAM_BOT_TOKEN etc.,
 // not something toggleable from the UI). Defaults ON. Persisted server-side
-// (data/app.db, `settings` table), same pattern as store/memory.ts.
+// (data/app.db, `settings` table), same pattern as the other server-backed settings stores.
 interface TelegramSettingsState {
   notifyScheduledTasks: boolean;
   hydrated: boolean;

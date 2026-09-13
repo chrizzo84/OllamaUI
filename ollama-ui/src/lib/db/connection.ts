@@ -23,7 +23,7 @@
  * (all three failed differently) — which is why `next dev` was run without
  * it. That is fixed: under 16.3.3 the default Turbopack dev server serves
  * database-backed routes normally (checked against a running dev server:
- * /api/hosts and /api/memories both answer from SQLite). The note stays
+ * /api/hosts and /api/sessions both answer from SQLite). The note stays
  * because the symptom is worth recognising if it ever returns.
  *
  * `next build` is a separate matter and still pins `--webpack`: Turbopack
@@ -191,116 +191,6 @@ function initDb(): DatabaseSync {
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
     );
-    CREATE TABLE IF NOT EXISTS memories (
-      id TEXT PRIMARY KEY,
-      content TEXT NOT NULL,
-      source_session_id TEXT,
-      created_at INTEGER NOT NULL
-    );
-
-    /*
-    The knowledge graph over those memories.
-
-    An entity is a thing memories are *about* — written as [[Wikilinks]]
-    inside a memory's text and extracted from there, so the fact stays
-    readable prose and the graph falls out of it rather than having to be
-    maintained separately. The id is a slug, so [[Ollama Host]] and
-    [[ollama-host]] are the same node.
-
-    memory_edges is deliberately one generic table rather than a column per
-    relationship: supersedes, contradicts, about and derived_from all need
-    the same treatment (query both directions, render as a graph), and a
-    fifth kind should not need a migration. to_kind says which table to_id
-    points into, since an edge can end at a memory, an entity or the session
-    a memory came from.
-    */
-    CREATE TABLE IF NOT EXISTS entities (
-      id TEXT PRIMARY KEY,
-      label TEXT NOT NULL,
-      created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL
-    );
-    CREATE TABLE IF NOT EXISTS memory_edges (
-      id TEXT PRIMARY KEY,
-      from_id TEXT NOT NULL,
-      to_kind TEXT NOT NULL,
-      to_id TEXT NOT NULL,
-      kind TEXT NOT NULL,
-      created_at INTEGER NOT NULL,
-      resolved_at INTEGER,
-      FOREIGN KEY (from_id) REFERENCES memories(id) ON DELETE CASCADE
-    );
-    CREATE INDEX IF NOT EXISTS idx_memory_edges_from ON memory_edges(from_id, kind);
-    CREATE INDEX IF NOT EXISTS idx_memory_edges_to ON memory_edges(to_kind, to_id, kind);
-
-    /*
-    Relevance index over memory content. Retrieval used to be
-    ORDER BY created_at DESC LIMIT 50 — a ring buffer that dropped the
-    oldest (usually most fundamental) fact as soon as the 51st arrived, and
-    put all 50 into every prompt regardless of what was being discussed.
-    Same external-content FTS5 setup as messages_fts above.
-    */
-    /*
-    Which messages the fact extractor has already looked at.
-
-    The per-reply pass only ever sees the message being answered, so every
-    conversation from before the memory existed is unexamined — and re-reading
-    them costs one model call each, which is minutes of GPU time, not
-    something to repeat on every run. This table is what makes the backfill
-    resumable and idempotent: a message is scanned once, and a later run
-    picks up where the last one stopped.
-
-    The found column records how many drafts that message produced, so the Memory page
-    can say what a run actually yielded rather than only that it finished.
-    */
-    CREATE TABLE IF NOT EXISTS memory_scans (
-      message_id TEXT PRIMARY KEY,
-      scanned_at INTEGER NOT NULL,
-      found INTEGER NOT NULL DEFAULT 0,
-      FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE
-    );
-
-    /*
-    What the maintenance pass did, and when.
-
-    A job that edits the memory unattended while nobody watches is the
-    riskiest thing in this app, and the only thing that makes it acceptable
-    is being able to see afterwards what it touched. Each run records its
-    counts and, on failure, why it stopped — kept as rows rather than derived,
-    because unlike the memory timeline this is not reconstructible from the
-    facts themselves.
-    */
-    CREATE TABLE IF NOT EXISTS memory_maintenance_runs (
-      id TEXT PRIMARY KEY,
-      trigger TEXT NOT NULL,
-      status TEXT NOT NULL,
-      model TEXT,
-      started_at INTEGER NOT NULL,
-      finished_at INTEGER,
-      conversations_read INTEGER NOT NULL DEFAULT 0,
-      facts_found INTEGER NOT NULL DEFAULT 0,
-      merges_proposed INTEGER NOT NULL DEFAULT 0,
-      archived INTEGER NOT NULL DEFAULT 0,
-      error TEXT
-    );
-    CREATE INDEX IF NOT EXISTS idx_maintenance_started ON memory_maintenance_runs(started_at DESC);
-
-    CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
-      content,
-      content='memories',
-      content_rowid='rowid',
-      tokenize='unicode61 remove_diacritics 2'
-    );
-    CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN
-      INSERT INTO memories_fts(rowid, content) VALUES (new.rowid, new.content);
-    END;
-    CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN
-      INSERT INTO memories_fts(memories_fts, rowid, content) VALUES ('delete', old.rowid, old.content);
-    END;
-    CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
-      INSERT INTO memories_fts(memories_fts, rowid, content) VALUES ('delete', old.rowid, old.content);
-      INSERT INTO memories_fts(rowid, content) VALUES (new.rowid, new.content);
-    END;
     CREATE TABLE IF NOT EXISTS benchmark_runs (
       id TEXT PRIMARY KEY,
       model TEXT NOT NULL,
@@ -431,7 +321,6 @@ function initDb(): DatabaseSync {
       days_of_week TEXT NOT NULL DEFAULT '[0,1,2,3,4,5,6]',
       recurring INTEGER NOT NULL DEFAULT 1,
       tools_enabled INTEGER NOT NULL DEFAULT 1,
-      memory_enabled INTEGER NOT NULL DEFAULT 1,
       enabled INTEGER NOT NULL DEFAULT 1,
       next_run_at INTEGER,
       last_run_at INTEGER,
@@ -440,12 +329,6 @@ function initDb(): DatabaseSync {
       updated_at INTEGER NOT NULL
     );
   `);
-  // `sessions` predates the per-session memory override — a plain `CREATE
-  // TABLE IF NOT EXISTS` above won't add a column to an already-existing
-  // table, so existing databases need an explicit migration. NULL = inherit
-  // the global memory setting (see src/app/api/settings/memory/route.ts),
-  // same nullable-override semantics as profile_id.
-  ensureColumn(instance, 'sessions', 'memory_enabled', 'INTEGER');
   // `sessions` also predates the Telegram bridge — its one persistent
   // conversation is flagged so the web UI can mark it visually (see
   // app-sidebar.tsx). Set once at creation (createNewTelegramSession in
@@ -461,51 +344,7 @@ function initDb(): DatabaseSync {
   ensureColumn(instance, 'sessions', 'head_a', 'TEXT');
   ensureColumn(instance, 'sessions', 'head_b', 'TEXT');
 
-  /*
-  `memories` predates everything that makes it a knowledge base rather than a
-  list of strings. Each column is additive with a default that reproduces the
-  old behaviour exactly, so an existing database keeps working and its rows
-  simply start out as untyped, keyless, active facts.
-
-    type          identity | state | preference | episodic | procedural.
-                  Pre-existing rows are 'unsorted' — honest about not knowing,
-                  and sortable later (the night shift's first job) rather than
-                  guessed at during a migration.
-    subject       what the fact is *about*, the key that makes replacing
-                  possible: a new fact about 'ollama-host' supersedes the old
-                  one instead of standing next to it as a second truth.
-                  NULL for facts that aren't about one thing (episodic ones).
-    status        active | superseded | archived | draft. Nothing is deleted:
-                  a superseded fact stays as history, which is the same
-                  principle as message branching (an old version is kept, not
-                  overwritten).
-    superseded_by the memory that replaced this one — the history chain.
-    valid_from /  when the fact started and stopped being true. Distinct from
-    valid_until   created_at, which is when it was *learned*.
-    confidence    0..1. Below the write gate it lands as a draft for review
-                  rather than going straight into every prompt.
-    use_count /   how often retrieval actually picked this fact. The honest
-    last_used_at  signal for what earns its place in the context window, and
-                  what should decay into the archive.
-    pinned        always injected, never decays.
-  */
-  ensureColumn(instance, 'memories', 'type', "TEXT NOT NULL DEFAULT 'unsorted'");
-  ensureColumn(instance, 'memories', 'subject', 'TEXT');
-  ensureColumn(instance, 'memories', 'status', "TEXT NOT NULL DEFAULT 'active'");
-  ensureColumn(instance, 'memories', 'superseded_by', 'TEXT');
-  ensureColumn(instance, 'memories', 'valid_from', 'INTEGER');
-  ensureColumn(instance, 'memories', 'valid_until', 'INTEGER');
-  ensureColumn(instance, 'memories', 'confidence', 'REAL NOT NULL DEFAULT 1');
-  ensureColumn(instance, 'memories', 'use_count', 'INTEGER NOT NULL DEFAULT 0');
-  ensureColumn(instance, 'memories', 'last_used_at', 'INTEGER');
-  ensureColumn(instance, 'memories', 'pinned', 'INTEGER NOT NULL DEFAULT 0');
-  ensureColumn(instance, 'memories', 'updated_at', 'INTEGER NOT NULL DEFAULT 0');
-  instance.exec('CREATE INDEX IF NOT EXISTS idx_memories_subject ON memories(status, subject)');
-  // memories_fts is created above, but an existing database already holds
-  // rows the triggers never saw. `rebuild` reindexes from the table in one
-  // pass; on a memory table (tens to a few thousand short rows) that is
-  // cheap enough to do unconditionally rather than track whether it's needed.
-  instance.exec("INSERT INTO memories_fts(memories_fts) VALUES('rebuild')");
+  dropMemorySystem(instance);
   migrateMessagesOutOfSessionBlob(instance);
   /*
   Routine snapshot, after the schema is settled so what's captured is always
@@ -514,6 +353,48 @@ function initDb(): DatabaseSync {
   */
   backupPeriodically(instance, dataDir);
   return instance;
+}
+
+/**
+ * Removes the tables of the memory system.
+ *
+ * It was a knowledge base that wrote itself: facts extracted from
+ * conversations, an entity graph over them, a nightly maintenance pass, and
+ * injection of whatever seemed relevant into every prompt. It was taken out
+ * because it could not be trusted — the failure people actually saw was a
+ * weather forecast that advised on cooling their graphics card, because a
+ * question matching no stored fact fell back to "then take the most recent
+ * ones" and the model dutifully worked them in.
+ *
+ * Dropped rather than left behind: the tables hold personal claims about the
+ * user that nothing reads any more, and a store of personal data with no
+ * reader and no interface is worse than no store at all. Facts that were
+ * already there are gone with it; there is no way back short of a backup
+ * (see backup.ts, which keeps a daily snapshot).
+ */
+function dropMemorySystem(instance: DatabaseSync): void {
+  for (const statement of [
+    'DROP TRIGGER IF EXISTS memories_ai',
+    'DROP TRIGGER IF EXISTS memories_ad',
+    'DROP TRIGGER IF EXISTS memories_au',
+    'DROP TABLE IF EXISTS memories_fts',
+    'DROP TABLE IF EXISTS memory_edges',
+    'DROP TABLE IF EXISTS memory_scans',
+    'DROP TABLE IF EXISTS memory_maintenance_runs',
+    'DROP TABLE IF EXISTS entities',
+    'DROP TABLE IF EXISTS memories',
+    // The per-chat and per-task switches that turned it on and off.
+    'ALTER TABLE sessions DROP COLUMN memory_enabled',
+    'ALTER TABLE scheduled_tasks DROP COLUMN memory_enabled',
+  ]) {
+    // One at a time and forgiving: a database from any version of this app
+    // should open, whether it has all of these, some of them, or none.
+    try {
+      instance.exec(statement);
+    } catch {
+      /* already gone, or never existed */
+    }
+  }
 }
 
 /*
